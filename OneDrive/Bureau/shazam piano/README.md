@@ -1,8 +1,17 @@
 # 🎹 ShazaPiano
 
+[![GitHub](https://img.shields.io/badge/github-sky1241%2Fshazam--piano-blue?logo=github)](https://github.com/sky1241/shazam-piano)
+[![Backend CI](https://github.com/sky1241/shazam-piano/workflows/Backend%20CI/badge.svg)](https://github.com/sky1241/shazam-piano/actions)
+[![Flutter CI](https://github.com/sky1241/shazam-piano/workflows/Flutter%20CI/badge.svg)](https://github.com/sky1241/shazam-piano/actions)
+[![License](https://img.shields.io/badge/license-Proprietary-red.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
+[![Flutter](https://img.shields.io/badge/flutter-3.16+-blue.svg)](https://flutter.dev/)
+
 **Transformez vos enregistrements piano en vidéos pédagogiques animées**
 
 Enregistrez ~8 secondes de piano → Obtenez instantanément 4 niveaux de difficulté avec clavier animé.
+
+[Features](#-features) • [Architecture](#-architecture) • [Quick Start](#-quick-start) • [Documentation](#-documentation) • [Contributing](#-contributing)
 
 ---
 
