@@ -1,19 +1,21 @@
 # ShazaPiano - État du Projet
 
 **Dernière mise à jour** : 24 Novembre 2025  
-**Commit actuel** : `25fec45` - MVP backend et Flutter UI implémentés
+**Commit actuel** : En cours - State management, Firebase, Practice Mode
 
 ---
 
 ## 📊 Progression Globale
 
-### Milestone M1 - MVP (~70% completé) ✨
+### Milestone M1 - MVP (~95% completé) 🚀
 
 | Composant | Status | % |
 |-----------|--------|---|
 | **Backend** | ✅ Complet | 100% |
-| **Flutter UI** | 🟡 Avancé | 70% |
-| **Intégrations** | ⏳ À faire | 0% |
+| **Flutter UI** | ✅ Complet | 100% |
+| **State Management** | ✅ Complet | 100% |
+| **Firebase/IAP** | ✅ Configuré | 90% |
+| **Practice Mode** | ✅ Implémenté | 95% |
 
 ---
 
@@ -53,7 +55,7 @@
 - ✅ Validation taille fichier & durée
 - ✅ Metadata extraction (key, tempo, duration)
 
-### Flutter (70% ✅)
+### Flutter (100% ✅)
 
 #### Architecture & Config
 - ✅ Clean Architecture (core/data/domain/presentation)
@@ -82,6 +84,30 @@
 #### App Structure
 - ✅ Main app avec theme dark
 - ✅ Navigation basique
+
+#### State Management (Riverpod)
+- ✅ App providers (Dio, API Client)
+- ✅ Recording provider avec states
+- ✅ Process provider pour upload/processing
+- ✅ IAP provider avec purchase/restore
+- ✅ Clean state management architecture
+
+#### Practice Mode
+- ✅ Pitch Detector (MPM algorithm)
+- ✅ Real-time frequency detection
+- ✅ MIDI note conversion
+- ✅ Cents calculation
+- ✅ Accuracy classification (correct/close/wrong)
+- ✅ Virtual piano keyboard UI
+- ✅ Score tracking
+
+#### Firebase Integration
+- ✅ Firebase Service wrapper
+- ✅ Auth anonyme setup
+- ✅ Firestore integration
+- ✅ Analytics events
+- ✅ Crashlytics setup
+- ✅ Documentation complète (SETUP_FIREBASE.md)
 
 ---
 
