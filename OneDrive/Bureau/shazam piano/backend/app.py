@@ -16,9 +16,9 @@ from pydantic import BaseModel
 from loguru import logger
 
 from config import settings, init_directories, get_level_config, ERROR_MESSAGES
-# from inference import extract_melody_from_audio
-# from arranger import arrange_midi
-# from render import render_video
+from inference import process_audio_to_midi
+from arranger import arrange_level
+from render import render_level_video
 
 # ============================================
 # App Setup
@@ -149,25 +149,97 @@ async def process_audio(
         
         logger.info(f"Received file: {input_path.name} ({file_size / 1024 / 1024:.2f} MB)")
         
-        # TODO: Process audio and generate videos
-        # For now, return mock response
+        # Process audio and generate videos
         results = []
         
-        for level in requested_levels:
-            level_config = get_level_config(level)
-            results.append(
-                LevelResult(
-                    level=level,
-                    name=level_config["name"],
-                    preview_url=f"/media/out/{job_id}_L{level}_preview.mp4",
-                    video_url=f"/media/out/{job_id}_L{level}_full.mp4",
-                    midi_url=f"/media/out/{job_id}_L{level}.mid",
-                    key_guess="C",
-                    tempo_guess=120,
-                    duration_sec=8.0,
-                    status="pending"  # Will be "success" after processing
-                )
+        try:
+            # Step 1: Extract MIDI from audio
+            logger.info("Step 1: Extracting MIDI from audio...")
+            midi_path = settings.OUTPUT_DIR / f"{job_id}_raw.mid"
+            base_midi, metadata = process_audio_to_midi(
+                audio_path=input_path,
+                output_path=midi_path,
+                clean=True
             )
+            
+            key_guess = metadata.get("key", "C")
+            tempo_guess = metadata.get("tempo", 120)
+            
+            logger.success(f"MIDI extracted: {metadata['num_notes']} notes, Key={key_guess}, Tempo={tempo_guess}")
+            
+            # Step 2: Generate videos for each requested level (parallel processing possible)
+            for level in requested_levels:
+                try:
+                    level_config = get_level_config(level)
+                    logger.info(f"Step 2.{level}: Processing Level {level} - {level_config['name']}")
+                    
+                    # Arrange MIDI for this level
+                    arranged_midi = arrange_level(
+                        midi=base_midi,
+                        level=level,
+                        key=key_guess,
+                        tempo=tempo_guess
+                    )
+                    
+                    # Render video
+                    full_video, preview_video, audio_file = render_level_video(
+                        midi=arranged_midi,
+                        level=level,
+                        level_name=level_config["name"],
+                        output_dir=settings.OUTPUT_DIR,
+                        job_id=job_id,
+                        with_audio=with_audio
+                    )
+                    
+                    # Build result
+                    results.append(
+                        LevelResult(
+                            level=level,
+                            name=level_config["name"],
+                            preview_url=f"/media/out/{preview_video.name}",
+                            video_url=f"/media/out/{full_video.name}",
+                            midi_url=f"/media/out/{job_id}_L{level}.mid",
+                            key_guess=key_guess,
+                            tempo_guess=tempo_guess,
+                            duration_sec=arranged_midi.get_end_time(),
+                            status="success"
+                        )
+                    )
+                    
+                    logger.success(f"✅ Level {level} completed!")
+                    
+                except Exception as level_error:
+                    logger.error(f"Level {level} failed: {level_error}")
+                    results.append(
+                        LevelResult(
+                            level=level,
+                            name=level_config["name"],
+                            preview_url="",
+                            video_url="",
+                            midi_url="",
+                            status="error",
+                            error=str(level_error)
+                        )
+                    )
+            
+            logger.success(f"🎉 Job {job_id} completed! {len([r for r in results if r.status == 'success'])}/{len(requested_levels)} levels successful")
+            
+        except Exception as e:
+            logger.error(f"Processing failed: {e}")
+            # Return error results for all levels
+            for level in requested_levels:
+                level_config = get_level_config(level)
+                results.append(
+                    LevelResult(
+                        level=level,
+                        name=level_config["name"],
+                        preview_url="",
+                        video_url="",
+                        midi_url="",
+                        status="error",
+                        error=str(e)
+                    )
+                )
         
         return ProcessResponse(
             job_id=job_id,
