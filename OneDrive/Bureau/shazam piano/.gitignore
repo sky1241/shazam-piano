@@ -1,23 +1,90 @@
-# Système Windows
+# ============================================
+# ShazaPiano - Global .gitignore
+# ============================================
+
+# ===== Backend (Python) =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Backend media files (temporary)
+backend/media/in/*
+backend/media/out/*
+!backend/media/.gitkeep
+
+# ===== Frontend (Flutter) =====
+# Dart/Flutter
+app/.dart_tool/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/.packages
+app/build/
+app/ios/Flutter/App.framework
+app/ios/Flutter/Flutter.framework
+app/ios/Flutter/Flutter.podspec
+app/ios/Pods/
+app/pubspec.lock
+
+# Coverage
+app/coverage/
+app/test/.test_coverage.dart
+
+# Android
+app/android/app/*.jks
+app/android/key.properties
+app/android/.gradle/
+app/android/local.properties
+*.iml
+
+# Gradle cache (IMPORTANT!)
+.gradle/
+gradle/
+
+# iOS
+app/ios/.generated/
+app/ios/Flutter/flutter_export_environment.sh
+app/ios/Runner.xcworkspace/
+app/ios/Runner.xcodeproj/project.xcworkspace/
+app/ios/Runner.xcodeproj/xcuserdata/
+app/ios/.symlinks/
+app/ios/Pods/
+*.ipa
+
+# ===== Infrastructure =====
+infra/ssl/
+infra/logs/
+
+# ===== IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.iml
+
+# ===== OS =====
+.DS_Store
 Thumbs.db
 ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
-*.cab
-*.msi
-*.msix
-*.msm
-*.msp
-*.lnk
 
-# Fichiers système
+# Windows system files
 NTUSER.DAT*
 ntuser.*
 *.LOG*
 *.blf
 *.regtrans-ms
-
-# Dossiers système Windows
 AppData/
 Local Settings/
 Application Data/
@@ -29,27 +96,21 @@ Mes documents/
 Voisinage*/
 Mod*les/
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-venv/
-env/
-ENV/
-.venv
+# ===== Secrets & Environment =====
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+google-services.json
+GoogleService-Info.plist
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# Logs
+# ===== Logs =====
 *.log
+logs/
 
-# OS
-.DS_Store
+# ===== Temp & Cache =====
+*.tmp
+*.cache
+.cache/
 
