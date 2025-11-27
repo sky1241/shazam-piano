@@ -150,3 +150,4 @@ def init_directories():
     settings.INPUT_DIR.mkdir(parents=True, exist_ok=True)
     settings.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+

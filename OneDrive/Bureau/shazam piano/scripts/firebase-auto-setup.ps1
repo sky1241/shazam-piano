@@ -140,3 +140,4 @@ Write-Host "  Vérifie Firebase Console > Authentication pour voir user créé"
 Write-Host ""
 Write-Host "Firebase prêt ! 🔥" -ForegroundColor Green
 
+

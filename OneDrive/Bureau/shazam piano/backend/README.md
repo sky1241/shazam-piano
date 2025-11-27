@@ -201,3 +201,4 @@ pytest --cov=. --cov-report=html
 
 Propriétaire - ShazaPiano © 2025
 
+

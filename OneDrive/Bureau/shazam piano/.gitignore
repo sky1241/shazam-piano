@@ -85,16 +85,47 @@ ntuser.*
 *.LOG*
 *.blf
 *.regtrans-ms
-AppData/
-Local Settings/
-Application Data/
-Cookies/
-Recent/
-SendTo/
-Menu D*marrer/
-Mes documents/
-Voisinage*/
-Mod*les/
+
+# User directories (should never be in project)
+/**/AppData/
+/**/Local Settings/
+/**/Application Data/
+/**/Cookies/
+/**/Recent/
+/**/SendTo/
+/**/Menu D*marrer/
+/**/Mes documents/
+/**/Documents/
+/**/Downloads/
+/**/Favorites/
+/**/Music/
+/**/Pictures/
+/**/Videos/
+/**/Contacts/
+/**/Links/
+/**/Saved Games/
+/**/Searches/
+/**/.config/
+/**/.gradle/
+/**/.android/
+/**/Voisinage*/
+/**/Mod*les/
+/**/*.lnk
+/**/desktop.ini
+/**/.849C*
+/**/.dbus-keyrings/
+/**/.emulator_console_auth_token
+/**/.gitconfig
+/**/.javacpp/
+/**/.lesshst
+/**/.skiko/
+/**/.viminfo
+/**/.cursor/
+/**/IntelGraphicsProfiles/
+/**/StudioProjects/
+/**/3D Objects/
+/**/Personal Vault.lnk
+/**/*Prise en main*.pdf
 
 # ===== Secrets & Environment =====
 .env
@@ -102,8 +133,10 @@ Mod*les/
 .env.*.local
 *.key
 *.pem
-google-services.json
-GoogleService-Info.plist
+**/google-services.json
+!**/*google-services.json.example
+**/GoogleService-Info.plist
+!**/*GoogleService-Info.plist.example
 
 # ===== Logs =====
 *.log

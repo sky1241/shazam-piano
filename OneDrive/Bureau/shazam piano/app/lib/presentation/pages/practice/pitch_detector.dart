@@ -140,7 +140,7 @@ class PitchDetector {
 
   /// Convert MIDI note to frequency
   double midiNoteToFrequency(int note) {
-    return 440 * pow(2, (note - 69) / 12);
+    return (440 * pow(2, (note - 69) / 12)).toDouble();
   }
 
   /// Calculate cents difference between two frequencies
@@ -168,4 +168,5 @@ enum NoteAccuracy {
   wrong,    // >50 cents
   miss,     // No note detected
 }
+
 

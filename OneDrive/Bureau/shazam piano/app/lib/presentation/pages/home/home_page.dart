@@ -1,18 +1,25 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../widgets/big_record_button.dart';
 import '../../widgets/mode_chip.dart';
+import '../../widgets/app_logo.dart';
+import '../../state/recording_provider.dart';
+import '../../state/process_provider.dart';
+import '../previews/previews_page.dart';
+import '../settings/settings_page.dart';
+import '../history/history_page.dart';
 
-class HomePage extends StatefulWidget {
+class HomePage extends ConsumerStatefulWidget {
   const HomePage({super.key});
 
   @override
-  State<HomePage> createState() => _HomePageState();
+  ConsumerState<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends ConsumerState<HomePage> {
   RecordButtonState _buttonState = RecordButtonState.idle;
   final Map<int, ModeChipStatus> _levelStatuses = {
     1: ModeChipStatus.queued,
@@ -23,14 +30,25 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    final isLandscape = mediaQuery.orientation == Orientation.landscape;
+    
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(
           gradient: AppColors.backgroundGradient,
         ),
         child: SafeArea(
-          child: Column(
-            children: [
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return SingleChildScrollView(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: constraints.maxHeight,
+                  ),
+                  child: IntrinsicHeight(
+                    child: Column(
+                      children: [
               // App bar
               Padding(
                 padding: const EdgeInsets.all(AppConstants.spacing16),
@@ -42,31 +60,32 @@ class _HomePageState extends State<HomePage> {
                         Icons.menu,
                         color: AppColors.textPrimary,
                       ),
-                      onPressed: () {
-                        // TODO: Open menu
-                      },
+                      onPressed: _openSettings,
                     ),
-                    Text(
-                      'ShazaPiano',
-                      style: AppTextStyles.title,
+                    const AppLogo(
+                      width: 120,
+                      height: 40,
                     ),
                     IconButton(
                       icon: Icon(
                         Icons.history,
                         color: AppColors.textPrimary,
                       ),
-                      onPressed: () {
-                        // TODO: Open history
-                      },
+                      onPressed: _openHistory,
                     ),
                   ],
                 ),
               ),
 
-              const Spacer(),
+              Flexible(
+                flex: 1,
+                child: Container(),
+              ),
 
               // Main content: Big record button
-              Column(
+              Flexible(
+                flex: 2,
+                child: Column(
                 children: [
                   BigRecordButton(
                     state: _buttonState,
@@ -87,9 +106,13 @@ class _HomePageState extends State<HomePage> {
                     textAlign: TextAlign.center,
                   ),
                 ],
+                ),
               ),
 
-              const Spacer(),
+              Flexible(
+                flex: 1,
+                child: Container(),
+              ),
 
               // Level status chips
               Padding(
@@ -117,7 +140,12 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
               ),
-            ],
+                    ],
+                  ),
+                ),
+              ),
+            );
+            },
           ),
         ),
       ),
@@ -147,58 +175,150 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _handleRecordButtonTap() async {
+    final recordingNotifier = ref.read(recordingProvider.notifier);
+    final processNotifier = ref.read(processProvider.notifier);
+
     if (_buttonState == RecordButtonState.idle) {
       // Start recording
       setState(() {
         _buttonState = RecordButtonState.recording;
       });
 
-      // TODO: Implement actual recording
-      // For now, simulate with delay
-      await Future.delayed(const Duration(seconds: 8));
+      // Start actual audio recording
+      await recordingNotifier.startRecording();
+      
+      // Recording started, wait for user to stop
+      // (button will be tapped again to stop)
+    } else if (_buttonState == RecordButtonState.recording) {
+      // Stop recording
+      await recordingNotifier.stopRecording();
+      
+      final recordingState = ref.read(recordingProvider);
+      
+      if (recordingState.hasError) {
+        // Show error
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(recordingState.error ?? 'Erreur d\'enregistrement'),
+              backgroundColor: AppColors.error,
+            ),
+          );
+          setState(() {
+            _buttonState = RecordButtonState.idle;
+          });
+        }
+        return;
+      }
 
+      if (!recordingState.hasRecording) {
+        // No recording file
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Aucun enregistrement trouvé'),
+              backgroundColor: AppColors.error,
+            ),
+          );
+          setState(() {
+            _buttonState = RecordButtonState.idle;
+          });
+        }
+        return;
+      }
+
+      // Start processing
       setState(() {
         _buttonState = RecordButtonState.processing;
         _levelStatuses[1] = ModeChipStatus.processing;
       });
 
-      // TODO: Upload and process
-      // Simulate processing
-      await _simulateProcessing();
-    } else if (_buttonState == RecordButtonState.recording) {
-      // Stop recording
-      setState(() {
-        _buttonState = RecordButtonState.processing;
-      });
+      // Upload and process the recording
+      final recordedFile = recordingState.recordedFile!;
+      await processNotifier.processAudio(
+        audioFile: recordedFile,
+        withAudio: false,
+        levels: [1, 2, 3, 4],
+      );
+      
+      final processState = ref.read(processProvider);
+      
+      if (processState.hasError) {
+        // Show error
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(processState.error ?? 'Erreur de traitement'),
+              backgroundColor: AppColors.error,
+            ),
+          );
+          setState(() {
+            _buttonState = RecordButtonState.idle;
+            for (int i = 1; i <= 4; i++) {
+              _levelStatuses[i] = ModeChipStatus.queued;
+            }
+          });
+        }
+        return;
+      }
 
-      // TODO: Process recording
+      // Simulate progression through levels
       await _simulateProcessing();
+
+      // Navigate to previews page with results
+      if (mounted && processState.result != null) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => PreviewsPage(
+              levels: processState.result!.levels,
+              isUnlocked: false, // TODO: Check IAP status
+            ),
+          ),
+        );
+        
+        // Reset state
+        setState(() {
+          _buttonState = RecordButtonState.idle;
+          for (int i = 1; i <= 4; i++) {
+            _levelStatuses[i] = ModeChipStatus.queued;
+          }
+        });
+      }
     }
   }
 
   Future<void> _simulateProcessing() async {
-    // Simulate processing each level
+    // Simulate processing each level for visual feedback
     for (int i = 1; i <= 4; i++) {
       await Future.delayed(const Duration(seconds: 2));
-      setState(() {
-        _levelStatuses[i] = ModeChipStatus.completed;
-        if (i < 4) {
-          _levelStatuses[i + 1] = ModeChipStatus.processing;
-        }
-      });
+      if (mounted) {
+        setState(() {
+          _levelStatuses[i] = ModeChipStatus.completed;
+          if (i < 4) {
+            _levelStatuses[i + 1] = ModeChipStatus.processing;
+          }
+        });
+      }
     }
-
-    // Navigate to previews
+    
     await Future.delayed(const Duration(seconds: 1));
-    if (mounted) {
-      // TODO: Navigate to PreviewsPage
-      setState(() {
-        _buttonState = RecordButtonState.idle;
-        for (int i = 1; i <= 4; i++) {
-          _levelStatuses[i] = ModeChipStatus.queued;
-        }
-      });
-    }
+  }
+
+  void _openSettings() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => const SettingsPage(),
+      ),
+    );
+  }
+
+  void _openHistory() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => const HistoryPage(),
+      ),
+    );
   }
 }
+
 

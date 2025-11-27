@@ -41,7 +41,7 @@ class AppTheme {
       ),
 
       // Card
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         color: AppColors.card,
         elevation: 0,
         shape: RoundedRectangleBorder(
@@ -87,4 +87,5 @@ class AppTheme {
   // Private constructor
   AppTheme._();
 }
+
 

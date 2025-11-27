@@ -143,3 +143,4 @@ echo "  Vérifie Firebase Console > Authentication pour voir user créé"
 echo ""
 echo -e "${GREEN}Firebase prêt ! 🔥${NC}"
 
+

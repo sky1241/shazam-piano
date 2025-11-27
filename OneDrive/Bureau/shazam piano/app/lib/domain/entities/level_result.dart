@@ -29,3 +29,4 @@ class LevelResult {
   bool get isPending => status == 'pending';
 }
 
+

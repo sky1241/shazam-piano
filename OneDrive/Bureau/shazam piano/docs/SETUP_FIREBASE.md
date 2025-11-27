@@ -217,3 +217,4 @@ flutter run --dart-define=BACKEND_BASE=http://10.0.2.2:8000
 
 **🔥 Firebase est maintenant prêt pour ShazaPiano !**
 
+

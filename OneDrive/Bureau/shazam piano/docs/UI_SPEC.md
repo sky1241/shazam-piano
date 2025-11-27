@@ -176,3 +176,4 @@ buttonGradient: [#2AE6BE → #21C7A3]
 - Optimized for video playback
 - Controls overlay bottom
 
+

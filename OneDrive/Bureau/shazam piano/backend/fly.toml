@@ -44,3 +44,4 @@ primary_region = "cdg" # Paris
 [deploy]
   release_command = "python -c 'from config import init_directories; init_directories()'"
 
+

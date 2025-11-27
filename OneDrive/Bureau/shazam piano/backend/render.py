@@ -400,3 +400,4 @@ def render_level_video(
     logger.success(f"✅ Level {level} complete!")
     return full_video_path, preview_video_path, audio_path
 
+

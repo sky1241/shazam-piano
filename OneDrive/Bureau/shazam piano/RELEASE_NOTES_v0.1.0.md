@@ -288,3 +288,4 @@ Cette app utilise IA pour générer arrangements. Les résultats peuvent varier 
 
 **- L'équipe ShazaPiano**
 
+

@@ -52,3 +52,4 @@ echo "Coverage reports:"
 echo "  - Backend: backend/htmlcov/index.html"
 echo "  - Flutter: app/coverage/lcov.info"
 
+

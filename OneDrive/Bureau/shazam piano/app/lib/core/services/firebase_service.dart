@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -15,17 +16,30 @@ class FirebaseService {
   static Future<void> initialize() async {
     try {
       await Firebase.initializeApp();
+      print('✅ Firebase Core initialized');
       
-      // Setup Crashlytics
-      await _setupCrashlytics();
+      // Setup Crashlytics (non-blocking)
+      try {
+        await _setupCrashlytics();
+        print('✅ Crashlytics initialized');
+      } catch (e) {
+        print('⚠️ Crashlytics setup failed (non-critical): $e');
+      }
       
-      // Setup anonymous auth
-      await _setupAuth();
+      // Setup anonymous auth (non-blocking)
+      try {
+        await _setupAuth();
+        print('✅ Anonymous auth initialized');
+      } catch (e) {
+        print('⚠️ Anonymous auth failed (non-critical): $e');
+      }
       
       print('✅ Firebase initialized successfully');
-    } catch (e) {
+    } catch (e, stackTrace) {
       print('❌ Firebase initialization failed: $e');
-      rethrow;
+      print('Stack trace: $stackTrace');
+      // Don't rethrow - allow app to continue without Firebase
+      // This is important for development/testing
     }
   }
 
@@ -91,4 +105,5 @@ class FirebaseService {
     await analytics.logScreenView(screenName: screenName);
   }
 }
+
 

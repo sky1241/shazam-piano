@@ -22,6 +22,10 @@ class AppColors {
   static const Color warning = Color(0xFFF6C35D);
   static const Color error = Color(0xFFFF6B6B);
 
+  // Piano Keys
+  static const Color whiteKey = Color(0xFFE9F5F1);
+  static const Color blackKey = Color(0xFF1E2A2E);
+
   // Gradients
   static const LinearGradient buttonGradient = LinearGradient(
     colors: [primary, primaryVariant],
@@ -41,4 +45,5 @@ class AppColors {
   // Private constructor
   AppColors._();
 }
+
 

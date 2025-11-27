@@ -56,3 +56,4 @@ Enregistrer ~8s de piano → Extraire mélodie → Générer 4 vidéos de clavie
 - **Frontend**: APK/AAB → Google Play Console
 - **CI/CD**: GitHub Actions
 
+

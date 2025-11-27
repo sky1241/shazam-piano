@@ -11,7 +11,7 @@ class VideoTile extends StatelessWidget {
   final String? thumbnailUrl;
   final bool isUnlocked;
   final bool isLoading;
-  final String? key;
+  final String? videoKey;
   final int? tempo;
   final VoidCallback? onTap;
 
@@ -23,7 +23,7 @@ class VideoTile extends StatelessWidget {
     this.thumbnailUrl,
     this.isUnlocked = false,
     this.isLoading = false,
-    this.key,
+    this.videoKey,
     this.tempo,
     this.onTap,
   });
@@ -88,7 +88,7 @@ class VideoTile extends StatelessWidget {
                               ),
                               const SizedBox(width: 4),
                               Text(
-                                key!,
+                                videoKey!,
                                 style: AppTextStyles.caption,
                               ),
                               const SizedBox(width: AppConstants.spacing12),
@@ -188,4 +188,5 @@ class VideoTile extends StatelessWidget {
     );
   }
 }
+
 

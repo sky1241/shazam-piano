@@ -46,6 +46,7 @@ class AppConstants {
   // Radius
   static const double radiusButton = 24.0;
   static const double radiusCard = 16.0;
+  static const double borderRadiusCard = 16.0;
 
   // Button
   static const double recordButtonSize = 220.0;
@@ -56,4 +57,5 @@ class AppConstants {
   // Private constructor
   AppConstants._();
 }
+
 

@@ -190,3 +190,4 @@
 - [ ] Mode multi-instruments
 - [ ] Accompagnements jazz/classique personnalisés
 
+

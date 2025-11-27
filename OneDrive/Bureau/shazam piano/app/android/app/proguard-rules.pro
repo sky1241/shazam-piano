@@ -33,3 +33,4 @@
 # Keep data models
 -keep class com.ludo.shazapiano.data.models.** { *; }
 
+

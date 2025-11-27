@@ -1,10 +1,15 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:developer' as developer;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import '../../core/constants/app_constants.dart';
 import 'recording_state.dart';
+
+// Logger helpers
+void _logInfo(String message) => developer.log(message, name: 'RecordingProvider');
+void _logWarning(String message) => developer.log(message, name: 'RecordingProvider', level: 900);
 
 /// Recording state provider
 final recordingProvider = StateNotifierProvider<RecordingNotifier, RecordingState>((ref) {
@@ -54,8 +59,12 @@ class RecordingNotifier extends StateNotifier<RecordingState> {
           final duration = DateTime.now().difference(_startTime!);
           state = state.copyWith(recordingDuration: duration);
 
-          // Auto-stop at max duration
-          if (duration.inSeconds >= AppConstants.maxRecordingDurationSec) {
+          // Auto-stop at recommended duration (8s) or max (30s)
+          if (duration.inSeconds >= AppConstants.recommendedRecordingDurationSec) {
+            _logInfo('Auto-stopping recording after ${duration.inSeconds}s');
+            stopRecording();
+          } else if (duration.inSeconds >= AppConstants.maxRecordingDurationSec) {
+            _logWarning('Max duration reached, stopping...');
             stopRecording();
           }
         }
@@ -132,4 +141,5 @@ class RecordingNotifier extends StateNotifier<RecordingState> {
     super.dispose();
   }
 }
+
 
