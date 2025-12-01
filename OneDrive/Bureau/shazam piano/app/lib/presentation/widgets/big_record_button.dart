@@ -65,7 +65,7 @@ class _BigRecordButtonState extends State<BigRecordButton>
                 gradient: AppColors.buttonGradient,
                 boxShadow: [
                   BoxShadow(
-                    color: AppColors.primary.withOpacity(0.3),
+                    color: AppColors.primary.withValues(alpha: 0.3),
                     blurRadius: AppConstants.shadowBlur,
                     spreadRadius: 5,
                   ),
@@ -109,5 +109,4 @@ enum RecordButtonState {
   recording,
   processing,
 }
-
 

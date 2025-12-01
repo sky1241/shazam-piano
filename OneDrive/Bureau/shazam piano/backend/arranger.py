@@ -4,6 +4,7 @@ Transforms basic melody into 4 difficulty levels
 """
 from typing import List, Tuple
 from copy import deepcopy
+import math
 
 import pretty_midi
 import numpy as np
@@ -26,14 +27,13 @@ def quantize_notes(notes: List[pretty_midi.Note], grid: float) -> List[pretty_mi
     quantized = []
     
     for note in notes:
-        # Quantize start time
-        new_start = round(note.start / grid) * grid
+        # Snap start to previous grid boundary
+        new_start = math.floor(note.start / grid) * grid
         
-        # Quantize duration
-        duration = note.end - note.start
-        new_duration = max(grid, round(duration / grid) * grid)
-        new_end = new_start + new_duration
-        
+        # Snap end to next grid boundary to avoid shortening notes too much
+        new_end = math.ceil(note.end / grid) * grid
+        new_duration = max(grid, new_end - new_start)
+
         quantized.append(
             pretty_midi.Note(
                 velocity=note.velocity,
@@ -396,5 +396,4 @@ def arrange_level(
     logger.success(f"Level {level} arranged: {len(arranged_midi.instruments)} tracks, {sum(len(inst.notes) for inst in arranged_midi.instruments)} notes")
     
     return arranged_midi
-
 

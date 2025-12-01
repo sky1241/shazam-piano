@@ -41,11 +41,11 @@ class _PlayerPageState extends State<PlayerPage> {
       });
 
       // Use preview or full video based on unlock status
-      final videoUrl = widget.isUnlocked 
-          ? widget.level.videoUrl 
+      final videoUrl = widget.isUnlocked
+          ? widget.level.videoUrl
           : widget.level.previewUrl;
 
-      if (videoUrl == null) {
+      if (videoUrl.isEmpty) {
         setState(() {
           _error = 'Aucune vidéo disponible';
           _isLoading = false;
@@ -153,7 +153,7 @@ class _PlayerPageState extends State<PlayerPage> {
                       Container(
                         padding: const EdgeInsets.all(AppConstants.spacing12),
                         decoration: BoxDecoration(
-                          color: AppColors.warning.withOpacity(0.1),
+                          color: AppColors.warning.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Row(
@@ -206,10 +206,10 @@ class _PlayerPageState extends State<PlayerPage> {
                     width: double.infinity,
                     child: ElevatedButton(
                       onPressed: _handleUnlock,
-                      child: const Text('Débloquer pour 1\$ 🔓'),
                       style: ElevatedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 16),
                       ),
+                      child: const Text('Debloquer pour 1\$'),
                     ),
                   ),
               ],
@@ -327,4 +327,3 @@ class _PlayerPageState extends State<PlayerPage> {
     );
   }
 }
-

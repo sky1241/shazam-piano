@@ -1,3 +1,5 @@
+// ignore_for_file: unused_element
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_colors.dart';
@@ -262,7 +264,7 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
                     ],
                   ),
                 );
-              }).toList(),
+              }),
               const SizedBox(height: AppConstants.spacing24),
               SizedBox(
                 width: double.infinity,
@@ -302,5 +304,3 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
     );
   }
 }
-
-

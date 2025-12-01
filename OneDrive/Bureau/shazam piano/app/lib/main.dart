@@ -11,15 +11,15 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Initialize app config
-  final config = AppConfig.fromEnvironment();
+  AppConfig.fromEnvironment();
 
   // Initialize Firebase with error handling
   try {
     await FirebaseService.initialize();
-    print('✅ App initialization successful');
+    debugPrint('App initialization successful');
   } catch (e, stackTrace) {
-    print('❌ App initialization failed: $e');
-    print('Stack trace: $stackTrace');
+    debugPrint('App initialization failed: $e');
+    debugPrint('Stack trace: $stackTrace');
     // Continue anyway - Firebase errors shouldn't crash the app
   }
 
@@ -36,8 +36,8 @@ void main() async {
       );
     },
     (error, stackTrace) {
-      print('❌ Uncaught error: $error');
-      print('Stack trace: $stackTrace');
+      debugPrint('Uncaught error: $error');
+      debugPrint('Stack trace: $stackTrace');
       // Log to Crashlytics if available
       try {
         FirebaseService.crashlytics.recordError(error, stackTrace);

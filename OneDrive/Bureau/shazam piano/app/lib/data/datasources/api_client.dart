@@ -7,7 +7,11 @@ part 'api_client.g.dart';
 
 @RestApi()
 abstract class ApiClient {
-  factory ApiClient(Dio dio, {String baseUrl}) = _ApiClient;
+  factory ApiClient(
+    Dio dio, {
+    String baseUrl,
+    ParseErrorLogger? errorLogger,
+  }) = _ApiClient;
 
   @GET('/health')
   Future<Map<String, dynamic>> getHealth();
@@ -23,5 +27,4 @@ abstract class ApiClient {
   @DELETE('/cleanup/{jobId}')
   Future<Map<String, dynamic>> cleanupJob(@Path('jobId') String jobId);
 }
-
 

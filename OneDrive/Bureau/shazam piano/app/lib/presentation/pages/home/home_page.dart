@@ -30,9 +30,6 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    final mediaQuery = MediaQuery.of(context);
-    final isLandscape = mediaQuery.orientation == Orientation.landscape;
-    
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(
@@ -320,5 +317,3 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 }
-
-

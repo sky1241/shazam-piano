@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import List, Optional
 from datetime import datetime
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Form
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -104,7 +104,7 @@ async def health():
 async def process_audio(
     audio: UploadFile = File(...),
     with_audio: bool = Query(False, description="Include synthesized audio in video"),
-    levels: Optional[str] = Query("1,2,3,4", description="Comma-separated levels (e.g., '1,2,3,4')")
+    levels: Optional[str] = Form("1,2,3,4")
 ):
     """
     Process audio and generate piano videos for specified levels.
@@ -314,4 +314,3 @@ if __name__ == "__main__":
         port=settings.PORT,
         reload=settings.DEBUG,
     )
-

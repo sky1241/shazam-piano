@@ -18,12 +18,10 @@ class PracticePage extends StatefulWidget {
 }
 
 class _PracticePageState extends State<PracticePage> {
-  final PitchDetector _pitchDetector = PitchDetector();
-  
   bool _isListening = false;
   int? _detectedNote;
   int? _expectedNote;
-  NoteAccuracy _accuracy = NoteAccuracy.miss;
+  final NoteAccuracy _accuracy = NoteAccuracy.miss;
   int _score = 0;
   int _totalNotes = 0;
   int _correctNotes = 0;
@@ -93,7 +91,7 @@ class _PracticePageState extends State<PracticePage> {
                 vertical: AppConstants.spacing12,
               ),
               decoration: BoxDecoration(
-                color: _getAccuracyColor().withOpacity(0.2),
+                color: _getAccuracyColor().withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(AppConstants.radiusCard),
                 border: Border.all(
                   color: _getAccuracyColor(),
@@ -190,7 +188,7 @@ class _PracticePageState extends State<PracticePage> {
     if (isDetected && isExpected) {
       keyColor = _getAccuracyColor();
     } else if (isExpected) {
-      keyColor = AppColors.primary.withOpacity(0.5);
+      keyColor = AppColors.primary.withValues(alpha: 0.5);
     } else if (isBlack) {
       keyColor = AppColors.blackKey;
     } else {
@@ -269,35 +267,4 @@ class _PracticePageState extends State<PracticePage> {
       _expectedNote = null;
     });
   }
-
-  // This would be called when processing audio samples
-  void _onAudioSample(List<double> samples) {
-    // Convert to Float32List if needed
-    // final frequency = _pitchDetector.detectPitch(samples);
-    
-    // if (frequency != null) {
-    //   final note = _pitchDetector.frequencyToMidiNote(frequency);
-    //   
-    //   if (_expectedNote != null) {
-    //     final expectedFreq = _pitchDetector.midiNoteToFrequency(_expectedNote!);
-    //     final cents = _pitchDetector.centsDifference(expectedFreq, frequency);
-    //     final accuracy = _pitchDetector.classifyAccuracy(cents);
-    //     
-    //     setState(() {
-    //       _detectedNote = note;
-    //       _accuracy = accuracy;
-    //       _totalNotes++;
-    //       
-    //       if (accuracy == NoteAccuracy.correct) {
-    //         _correctNotes++;
-    //         _score += 100;
-    //       } else if (accuracy == NoteAccuracy.close) {
-    //         _score += 60;
-    //       }
-    //     });
-    //   }
-    // }
-  }
 }
-
-

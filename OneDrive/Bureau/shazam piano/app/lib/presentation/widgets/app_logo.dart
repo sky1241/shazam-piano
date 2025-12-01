@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import '../../core/constants/app_constants.dart';
 
 /// App Logo Widget using SVG
 class AppLogo extends StatelessWidget {

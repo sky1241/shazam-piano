@@ -112,7 +112,7 @@ class _PaywallModalState extends ConsumerState<PaywallModal> {
               Container(
                 padding: const EdgeInsets.all(AppConstants.spacing12),
                 decoration: BoxDecoration(
-                  color: AppColors.error.withOpacity(0.1),
+                  color: AppColors.error.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(

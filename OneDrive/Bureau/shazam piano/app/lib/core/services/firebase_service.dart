@@ -16,28 +16,28 @@ class FirebaseService {
   static Future<void> initialize() async {
     try {
       await Firebase.initializeApp();
-      print('✅ Firebase Core initialized');
+      debugPrint('Firebase Core initialized');
       
       // Setup Crashlytics (non-blocking)
       try {
         await _setupCrashlytics();
-        print('✅ Crashlytics initialized');
+        debugPrint('Crashlytics initialized');
       } catch (e) {
-        print('⚠️ Crashlytics setup failed (non-critical): $e');
+        debugPrint('Crashlytics setup failed (non-critical): $e');
       }
       
       // Setup anonymous auth (non-blocking)
       try {
         await _setupAuth();
-        print('✅ Anonymous auth initialized');
+        debugPrint('Anonymous auth initialized');
       } catch (e) {
-        print('⚠️ Anonymous auth failed (non-critical): $e');
+        debugPrint('Anonymous auth failed (non-critical): $e');
       }
       
-      print('✅ Firebase initialized successfully');
+      debugPrint('Firebase initialized successfully');
     } catch (e, stackTrace) {
-      print('❌ Firebase initialization failed: $e');
-      print('Stack trace: $stackTrace');
+      debugPrint('Firebase initialization failed: $e');
+      debugPrint('Stack trace: $stackTrace');
       // Don't rethrow - allow app to continue without Firebase
       // This is important for development/testing
     }
@@ -53,7 +53,7 @@ class FirebaseService {
   static Future<void> _setupAuth() async {
     if (auth.currentUser == null) {
       await auth.signInAnonymously();
-      print('✅ Signed in anonymously: ${auth.currentUser?.uid}');
+      debugPrint('Signed in anonymously: ${auth.currentUser?.uid}');
     }
   }
 
@@ -105,5 +105,4 @@ class FirebaseService {
     await analytics.logScreenView(screenName: screenName);
   }
 }
-
 

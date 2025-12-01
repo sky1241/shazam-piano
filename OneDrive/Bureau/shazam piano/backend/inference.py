@@ -2,6 +2,7 @@
 ShazaPiano - MIDI Extraction from Audio
 Uses Spotify's BasicPitch for audio-to-MIDI conversion
 """
+import math
 import subprocess
 from pathlib import Path
 from typing import Tuple, Optional
@@ -259,6 +260,35 @@ def clean_midi(midi: pretty_midi.PrettyMIDI, min_duration_ms: int = 50) -> prett
     return cleaned_midi
 
 
+def frequencyToMidiNote(frequency: float) -> int:
+    """
+    Convert frequency (Hz) to nearest MIDI note number.
+    
+    Args:
+        frequency: Frequency in Hz
+        
+    Returns:
+        MIDI note number (integer)
+    """
+    if frequency <= 0:
+        raise ValueError("Frequency must be positive")
+    midi_note = 69 + 12 * math.log2(frequency / 440.0)
+    return int(round(midi_note))
+
+
+def midiNoteToFrequency(midi_note: int) -> float:
+    """
+    Convert MIDI note number to frequency (Hz).
+    
+    Args:
+        midi_note: MIDI note number
+        
+    Returns:
+        Frequency in Hz
+    """
+    return 440.0 * (2 ** ((midi_note - 69) / 12))
+
+
 # ============================================
 # Public API
 # ============================================
@@ -300,5 +330,4 @@ def process_audio_to_midi(
         logger.success(f"Saved MIDI: {output_path.name}")
     
     return midi, metadata
-
 
