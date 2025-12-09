@@ -89,7 +89,9 @@ def render_keyboard_frame(
     active_notes: set,
     width: int,
     height: int,
-    level_name: str = ""
+    level_name: str = "",
+    current_time: float = 0.0,
+    upcoming_notes: Optional[list] = None
 ) -> Image.Image:
     """
     Render single frame of piano keyboard
@@ -107,25 +109,81 @@ def render_keyboard_frame(
     img = Image.new('RGB', (width, height), COLOR_BACKGROUND)
     draw = ImageDraw.Draw(img)
     
-    # Calculate keyboard position (centered)
+    # Calculate keyboard position (bottom of screen, scaled to fit width)
     total_white_keys = 35  # 5 octaves = 35 white keys
-    keyboard_width = total_white_keys * WHITE_KEY_WIDTH
+    
+    # Scale keys to fill 80% of screen width with dynamic sizing
+    available_width = int(width * 0.85)  # Use 85% of screen width
+    dynamic_white_key_width = max(10, available_width // total_white_keys)  # Scale keys but min 10px
+    keyboard_width = total_white_keys * dynamic_white_key_width
     keyboard_x = (width - keyboard_width) // 2
-    keyboard_y = (height - WHITE_KEY_HEIGHT) // 2
+    
+    # Piano goes at bottom with small padding (15px)
+    piano_bottom_padding = 15
+    keyboard_y = height - WHITE_KEY_HEIGHT - piano_bottom_padding
+
+    # Precompute scaling helpers so falling bars and keys align perfectly
+    scaled_black_key_width = max(6, (dynamic_white_key_width * BLACK_KEY_WIDTH) // WHITE_KEY_WIDTH)
+    def scale_x(x_base: int) -> int:
+        """Scale base x (using WHITE_KEY_WIDTH grid) to the dynamic key width grid."""
+        return keyboard_x + (x_base * dynamic_white_key_width) // WHITE_KEY_WIDTH
+
+    # Draw falling notes
+    if upcoming_notes:
+        lookahead = settings.VIDEO_LOOKAHEAD_SEC
+        fall_area = min(settings.VIDEO_FALLING_AREA_HEIGHT, max(200, int(height * 0.7)))
+        speed_px = settings.VIDEO_FALLING_SPEED_PX_PER_SEC
+        fall_color = (255, 204, 0)
+        bar_start_y = keyboard_y - fall_area - settings.VIDEO_BAR_START_Y_OFFSET
+        
+        for pitch, start, end in upcoming_notes:
+            dt = start - current_time
+            if dt < 0 or dt > lookahead:
+                continue
+            
+            # Distance bar will fall = dt * speed (pixels per second)
+            # Bottom of the bar must touch keyboard_y when dt = 0
+            fall_distance = dt * speed_px
+            bar_bottom = keyboard_y - fall_distance
+
+            # Horizontal position scaled to current key sizes
+            x_base, _, is_black = get_key_position(pitch)
+            x = scale_x(x_base)
+            key_width = scaled_black_key_width if is_black else dynamic_white_key_width
+            bar_width = max(4, key_width - 4)
+
+            note_duration = max(0.1, end - start)
+            bar_height = max(20, min(140, int(note_duration * speed_px * 0.3)))
+            bar_top = bar_bottom - bar_height
+
+            # Clamp so the bar doesn't start above the visible fall area
+            min_top = keyboard_y - fall_area - settings.VIDEO_BAR_START_Y_OFFSET
+            if bar_top < min_top:
+                bar_top = min_top
+
+            # Center bar on the key width for cleaner alignment
+            x_offset = (key_width - bar_width) // 2
+            draw.rectangle(
+                [x + x_offset, bar_top, x + x_offset + bar_width, bar_bottom],
+                fill=fall_color,
+                outline=None,
+            )
     
     # Draw white keys first
     for midi_note in range(FIRST_KEY, LAST_KEY + 1):
         if not is_black_key(midi_note):
             x, y, _ = get_key_position(midi_note)
-            x += keyboard_x
+            # Scale position and size by ratio
+            key_width = dynamic_white_key_width
+            x = scale_x(x)
             y += keyboard_y
             
             # Active or inactive
             color = COLOR_WHITE_KEY_ACTIVE if midi_note in active_notes else COLOR_WHITE_KEY
             
-            # Draw key
+            # Draw key with scaled width
             draw.rectangle(
-                [x, y, x + WHITE_KEY_WIDTH - 2, y + WHITE_KEY_HEIGHT],
+                [x, y, x + key_width - 2, y + WHITE_KEY_HEIGHT],
                 fill=color,
                 outline=COLOR_BACKGROUND,
                 width=2
@@ -135,13 +193,15 @@ def render_keyboard_frame(
     for midi_note in range(FIRST_KEY, LAST_KEY + 1):
         if is_black_key(midi_note):
             x, y, _ = get_key_position(midi_note)
-            x += keyboard_x
+            # Scale position and size by ratio
+            black_key_width = max(6, (dynamic_white_key_width * BLACK_KEY_WIDTH) // WHITE_KEY_WIDTH)
+            x = scale_x(x)
             y += keyboard_y
             
             color = COLOR_BLACK_KEY_ACTIVE if midi_note in active_notes else COLOR_BLACK_KEY
             
             draw.rectangle(
-                [x, y, x + BLACK_KEY_WIDTH, y + BLACK_KEY_HEIGHT],
+                [x, y, x + black_key_width, y + BLACK_KEY_HEIGHT],
                 fill=color,
                 outline=COLOR_BACKGROUND,
                 width=1
@@ -167,7 +227,8 @@ def render_keyboard_frame(
 def generate_video_frames(
     midi: pretty_midi.PrettyMIDI,
     level: int,
-    level_name: str
+    level_name: str,
+    max_duration: float | None = None,
 ) -> list:
     """
     Generate all video frames from MIDI
@@ -187,8 +248,13 @@ def generate_video_frames(
     height = settings.VIDEO_HEIGHT
     
     # Calculate duration
-    duration = midi.get_end_time()
-    num_frames = int(duration * fps) + fps  # Add 1 second padding
+    midi_duration = midi.get_end_time()
+    # Force target duration: limit to max_duration if specified (e.g., 16s)
+    if max_duration:
+        duration = min(max_duration, midi_duration)
+    else:
+        duration = midi_duration
+    num_frames = int(duration * fps)
     
     frames = []
     
@@ -196,6 +262,8 @@ def generate_video_frames(
     all_notes = []
     for instrument in midi.instruments:
         all_notes.extend(instrument.notes)
+    # Convert to tuples for speed
+    all_notes = [(n.pitch, n.start, n.end) for n in all_notes]
     
     # Generate each frame
     for frame_idx in range(num_frames):
@@ -203,16 +271,24 @@ def generate_video_frames(
         
         # Find active notes at this time
         active_notes = set()
-        for note in all_notes:
-            if note.start <= time <= note.end:
-                active_notes.add(note.pitch)
-        
+        for pitch, start, end in all_notes:
+            if start <= time <= end:
+                active_notes.add(pitch)
+
+        # Upcoming notes for falling bars
+        upcoming = [
+            note for note in all_notes
+            if time <= note[1] <= time + settings.VIDEO_LOOKAHEAD_SEC
+        ]
+
         # Render frame
         frame = render_keyboard_frame(
             active_notes=active_notes,
             width=width,
             height=height,
-            level_name=f"Niveau {level}: {level_name}"
+            level_name=f"Niveau {level}: {level_name}",
+            current_time=time,
+            upcoming_notes=upcoming,
         )
         
         frames.append(np.array(frame))
@@ -229,7 +305,8 @@ def create_video_from_frames(
     frames: list,
     output_path: Path,
     fps: int = 30,
-    audio_path: Optional[Path] = None
+    audio_path: Optional[Path] = None,
+    max_duration: Optional[float] = None
 ) -> Path:
     """
     Create MP4 video from frames
@@ -239,19 +316,35 @@ def create_video_from_frames(
         output_path: Output video path
         fps: Frames per second
         audio_path: Optional audio file to add
+        max_duration: Optional max duration in seconds (will trim if exceeded)
         
     Returns:
         Path to created video
     """
     logger.info(f"Creating video: {output_path.name}")
     
+    video_duration = len(frames) / fps
+    
+    # Clamp duration if max_duration specified
+    if max_duration and video_duration > max_duration:
+        clamped_frames = int(max_duration * fps)
+        frames = frames[:clamped_frames]
+        video_duration = max_duration
+        logger.info(f"Clamped frames to {clamped_frames} for {video_duration}s max duration")
+
     # Create video clip
     clip = ImageSequenceClip(frames, fps=fps)
     
     # Add audio if provided
     if audio_path and audio_path.exists():
         audio = AudioFileClip(str(audio_path))
-        clip = clip.set_audio(audio)
+        try:
+          audio = audio.subclip(0, video_duration)
+        except Exception:
+          pass
+        clip = clip.set_audio(audio.set_duration(video_duration))
+    
+    clip = clip.set_duration(video_duration)
     
     # Write video
     clip.write_videofile(
@@ -285,20 +378,22 @@ def create_preview_video(full_video_path: Path, duration_sec: int = 16) -> Path:
         full_video_path.stem + "_preview" + full_video_path.suffix
     )
     
-    logger.info(f"Creating {duration_sec}s preview...")
+    logger.info(f"Creating {duration_sec}s preview with FFmpeg trim...")
     
-    # Use FFmpeg to trim video
+    # Use FFmpeg to trim video to exact duration with fast encoding
     cmd = [
         'ffmpeg',
         '-i', str(full_video_path),
-        '-t', str(duration_sec),  # Duration
-        '-c', 'copy',  # Copy codec (fast)
-        '-y',  # Overwrite
+        '-t', str(float(duration_sec)),  # Duration in seconds
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',  # Fastest encode
+        '-c:a', 'aac',
+        '-y',
         str(preview_path)
     ]
     
     try:
-        subprocess.run(cmd, capture_output=True, check=True, timeout=30)
+        subprocess.run(cmd, capture_output=True, check=True, timeout=60)
         logger.success(f"Preview created: {preview_path.name}")
         return preview_path
     except Exception as e:
@@ -384,20 +479,27 @@ def render_level_video(
         audio_file = synthesize_audio(midi, audio_path)
     
     # Generate frames
-    frames = generate_video_frames(midi, level, level_name)
+    frames = generate_video_frames(
+        midi,
+        level,
+        level_name,
+        max_duration=settings.FULL_VIDEO_MAX_DURATION_SEC,
+    )
     
     # Create full video
     full_video_path = create_video_from_frames(
         frames,
         full_video_path,
         fps=settings.VIDEO_FPS,
-        audio_path=audio_file
+        audio_path=audio_file,
+        max_duration=settings.FULL_VIDEO_MAX_DURATION_SEC
     )
     
-    # Create preview (16s)
-    preview_video_path = create_preview_video(full_video_path, duration_sec=16)
+    # Create preview (16s by config)
+    preview_video_path = create_preview_video(
+        full_video_path,
+        duration_sec=settings.PREVIEW_DURATION_SEC,
+    )
     
     logger.success(f"✅ Level {level} complete!")
     return full_video_path, preview_video_path, audio_path
-
-

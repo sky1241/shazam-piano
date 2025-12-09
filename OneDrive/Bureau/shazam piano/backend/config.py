@@ -14,6 +14,21 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     DEBUG: bool = True
+    BASE_URL: str = "http://127.0.0.1:8000"  # used to build absolute media URLs for clients
+    
+    # ACRCloud (optional)
+    ACR_HOST: str | None = None
+    ACR_ACCESS_KEY: str | None = None
+    ACR_ACCESS_SECRET: str | None = None
+    
+    # Separation (optional)
+    USE_SPLEETER: bool = True  # keeps HPSS separation via librosa if True
+    USE_DEMUCS: bool = False   # set True si demucs installé (Python 3.10 recommandé)
+    SEPARATION_TARGET: str = "vocals"  # HPSS target stem label
+    DEMUCS_MODEL: str = "mdx_extra"    # demucs model name
+    DEMUCS_TARGET: str = "vocals"      # demucs stem to extract (vocals/melody/other)
+    DEMUCS_DEVICE: str = "cpu"         # cpu ou cuda
+    DEMUCS_TIMEOUT: int = 180          # secondes max pour demucs
     
     # Paths
     BASE_DIR: Path = Path(__file__).parent
@@ -27,13 +42,19 @@ class Settings(BaseSettings):
     
     # Processing timeouts
     FFMPEG_TIMEOUT: int = 15
-    BASICPITCH_TIMEOUT: int = 10
-    RENDER_TIMEOUT: int = 20
+    BASICPITCH_TIMEOUT: int = 60  # Augmenté car BasicPitch est lent
+    RENDER_TIMEOUT: int = 30
     
     # Video settings
-    VIDEO_WIDTH: int = 1280
-    VIDEO_HEIGHT: int = 360
-    VIDEO_FPS: int = 30
+    VIDEO_WIDTH: int = 960
+    VIDEO_HEIGHT: int = 540  # 16:9 plein ecran - réduit pour tests rapides
+    VIDEO_FPS: int = 24  # réduit pour tests rapides
+    PREVIEW_DURATION_SEC: int = 10
+    FULL_VIDEO_MAX_DURATION_SEC: int | None = 10  # limite toutes les videos a 16s
+    VIDEO_LOOKAHEAD_SEC: float = 2.2  # 2.2s lookahead pour meilleure visibilité
+    VIDEO_FALLING_SPEED_PX_PER_SEC: int = 300
+    VIDEO_FALLING_AREA_HEIGHT: int = 500
+    VIDEO_BAR_START_Y_OFFSET: int = 0  # Barres commencent en haut
     
     # Concurrency
     MAX_CONCURRENT_JOBS: int = 4
@@ -149,5 +170,3 @@ def init_directories():
     """Create necessary directories"""
     settings.INPUT_DIR.mkdir(parents=True, exist_ok=True)
     settings.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-
