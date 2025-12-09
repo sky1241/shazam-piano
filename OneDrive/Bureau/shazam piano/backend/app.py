@@ -19,6 +19,8 @@ from config import settings, init_directories, get_level_config, ERROR_MESSAGES
 from inference import process_audio_to_midi
 from arranger import arrange_level
 from render import render_level_video
+from identify import identify_audio
+from separation import separate_melody
 
 # ============================================
 # App Setup
@@ -67,6 +69,9 @@ class ProcessResponse(BaseModel):
     job_id: str
     timestamp: str
     levels: List[LevelResult]
+    identified_title: Optional[str] = None
+    identified_artist: Optional[str] = None
+    identified_album: Optional[str] = None
 
 
 class HealthResponse(BaseModel):
@@ -151,21 +156,73 @@ async def process_audio(
         
         # Process audio and generate videos
         results = []
+        identified = None
         
         try:
+            # Optional: identify track via ACRCloud
+            logger.info("Attempting to identify audio track...")
+            try:
+                identified = identify_audio(input_path)
+                if identified:
+                    logger.success(f"✓ Identified track: title='{identified.get('title')}', artist='{identified.get('artist')}'")
+                else:
+                    logger.warning("Could not identify track")
+            except Exception as id_error:
+                logger.warning(f"Identification failed (non-fatal): {id_error}")
+                identified = None
+
+            # Optional: separate melody to help detection
+            logger.info("Attempting melody separation...")
+            try:
+                separated_path = separate_melody(input_path)
+                if separated_path:
+                    logger.success(f"✓ Separated melody: {separated_path.name}")
+                    midi_source = separated_path
+                else:
+                    logger.info("No separation applied, using original audio")
+                    midi_source = input_path
+            except Exception as sep_error:
+                logger.warning(f"Separation failed (non-fatal): {sep_error}")
+                midi_source = input_path
+
             # Step 1: Extract MIDI from audio
-            logger.info("Step 1: Extracting MIDI from audio...")
-            midi_path = settings.OUTPUT_DIR / f"{job_id}_raw.mid"
-            base_midi, metadata = process_audio_to_midi(
-                audio_path=input_path,
-                output_path=midi_path,
-                clean=True
-            )
+            logger.info("=" * 60)
+            logger.info("STARTING MIDI EXTRACTION")
+            logger.info("=" * 60)
+            logger.info(f"Input audio: {midi_source.name}")
             
-            key_guess = metadata.get("key", "C")
-            tempo_guess = metadata.get("tempo", 120)
-            
-            logger.success(f"MIDI extracted: {metadata['num_notes']} notes, Key={key_guess}, Tempo={tempo_guess}")
+            try:
+                midi_path = settings.OUTPUT_DIR / f"{job_id}_raw.mid"
+                logger.info(f"Calling process_audio_to_midi()...")
+                logger.info(f"  audio_path: {midi_source}")
+                logger.info(f"  output_path: {midi_path}")
+                
+                base_midi, metadata = process_audio_to_midi(
+                    audio_path=midi_source,
+                    output_path=midi_path,
+                    clean=False
+                )
+                
+                key_guess = metadata.get("key", "C")
+                tempo_guess = metadata.get("tempo", 120)
+                num_notes = metadata.get("num_notes", 0)
+                
+                logger.success(f"=" * 60)
+                logger.success(f"✅ MIDI EXTRACTION COMPLETE")
+                logger.success(f"=" * 60)
+                logger.success(f"Extracted: {num_notes} notes")
+                logger.success(f"Key: {key_guess}, Tempo: {tempo_guess} BPM")
+                logger.success(f"Duration: {metadata.get('duration', 0):.2f}s")
+                logger.success(f"Saved to: {midi_path.name}")
+                
+            except Exception as midi_error:
+                logger.error("=" * 60)
+                logger.error(f"❌ MIDI EXTRACTION FAILED")
+                logger.error("=" * 60)
+                logger.error(f"Error: {type(midi_error).__name__}: {midi_error}")
+                import traceback
+                logger.error(f"Traceback:\n{traceback.format_exc()}")
+                raise
             
             # Step 2: Generate videos for each requested level (parallel processing possible)
             for level in requested_levels:
@@ -192,13 +249,14 @@ async def process_audio(
                     )
                     
                     # Build result
+                    base = settings.BASE_URL.rstrip("/")
                     results.append(
                         LevelResult(
                             level=level,
                             name=level_config["name"],
-                            preview_url=f"/media/out/{preview_video.name}",
-                            video_url=f"/media/out/{full_video.name}",
-                            midi_url=f"/media/out/{job_id}_L{level}.mid",
+                            preview_url=f"{base}/media/out/{preview_video.name}",
+                            video_url=f"{base}/media/out/{full_video.name}",
+                            midi_url=f"{base}/media/out/{job_id}_L{level}.mid",
                             key_guess=key_guess,
                             tempo_guess=tempo_guess,
                             duration_sec=arranged_midi.get_end_time(),
@@ -244,7 +302,10 @@ async def process_audio(
         return ProcessResponse(
             job_id=job_id,
             timestamp=datetime.utcnow().isoformat(),
-            levels=results
+            levels=results,
+            identified_title=identified.get("title") if identified else None,
+            identified_artist=identified.get("artist") if identified else None,
+            identified_album=identified.get("album") if identified else None,
         )
         
     except HTTPException:

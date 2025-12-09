@@ -1,4 +1,5 @@
 import 'package:json_annotation/json_annotation.dart';
+import '../../core/constants/app_constants.dart';
 import '../../domain/entities/level_result.dart';
 
 part 'level_result_dto.g.dart';
@@ -41,12 +42,20 @@ class LevelResultDto {
   Map<String, dynamic> toJson() => _$LevelResultDtoToJson(this);
 
   LevelResult toDomain() {
+    String _abs(String url) {
+      if (url.isEmpty) return url;
+      if (url.startsWith('http')) return url;
+      final base = AppConstants.backendBaseUrl.trim().replaceAll(RegExp(r'/$'), '');
+      if (url.startsWith('/')) return '$base$url';
+      return '$base/$url';
+    }
+
     return LevelResult(
       level: level,
       name: name,
-      previewUrl: previewUrl,
-      videoUrl: videoUrl,
-      midiUrl: midiUrl,
+      previewUrl: _abs(previewUrl),
+      videoUrl: _abs(videoUrl),
+      midiUrl: _abs(midiUrl),
       keyGuess: keyGuess,
       tempoGuess: tempoGuess,
       durationSec: durationSec,
@@ -55,5 +64,4 @@ class LevelResultDto {
     );
   }
 }
-
 

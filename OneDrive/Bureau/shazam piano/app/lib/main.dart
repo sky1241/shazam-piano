@@ -6,46 +6,35 @@ import 'core/config/app_config.dart';
 import 'core/services/firebase_service.dart';
 import 'presentation/pages/home/home_page.dart';
 
-void main() async {
-  // Ensure Flutter bindings are initialized
-  WidgetsFlutterBinding.ensureInitialized();
+void main() {
+  // Keep all initialization and runApp in the same zone to avoid zone mismatch.
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    AppConfig.fromEnvironment();
 
-  // Initialize app config
-  AppConfig.fromEnvironment();
-
-  // Initialize Firebase with error handling
-  try {
-    await FirebaseService.initialize();
-    debugPrint('App initialization successful');
-  } catch (e, stackTrace) {
-    debugPrint('App initialization failed: $e');
-    debugPrint('Stack trace: $stackTrace');
-    // Continue anyway - Firebase errors shouldn't crash the app
-  }
-
-  // Run app with error handling
-  runZonedGuarded(
-    () {
-      runApp(
-        ProviderScope(
-          overrides: [
-            // Add config provider override here
-          ],
-          child: const ShazaPianoApp(),
-        ),
-      );
-    },
-    (error, stackTrace) {
-      debugPrint('Uncaught error: $error');
+    try {
+      await FirebaseService.initialize();
+      debugPrint('App initialization successful');
+    } catch (e, stackTrace) {
+      debugPrint('App initialization failed: $e');
       debugPrint('Stack trace: $stackTrace');
-      // Log to Crashlytics if available
-      try {
-        FirebaseService.crashlytics.recordError(error, stackTrace);
-      } catch (_) {
-        // Ignore if Crashlytics not initialized
-      }
-    },
-  );
+    }
+
+    runApp(
+      ProviderScope(
+        overrides: [
+          // Add config provider override here
+        ],
+        child: const ShazaPianoApp(),
+      ),
+    );
+  }, (error, stackTrace) {
+    debugPrint('Uncaught error: $error');
+    debugPrint('Stack trace: $stackTrace');
+    try {
+      FirebaseService.crashlytics.recordError(error, stackTrace);
+    } catch (_) {}
+  });
 }
 
 class ShazaPianoApp extends StatelessWidget {

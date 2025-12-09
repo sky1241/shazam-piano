@@ -3,7 +3,7 @@ class AppConstants {
   // API
   static const String backendBaseUrl = String.fromEnvironment(
     'BACKEND_BASE',
-    defaultValue: 'http://10.0.2.2:8000', // Android emulator
+    defaultValue: 'http://127.0.0.1:8000', // Device + adb reverse tcp:8000 tcp:8000
   );
 
   // Recording
@@ -57,5 +57,4 @@ class AppConstants {
   // Private constructor
   AppConstants._();
 }
-
 

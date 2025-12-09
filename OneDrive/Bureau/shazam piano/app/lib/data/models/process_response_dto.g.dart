@@ -13,6 +13,9 @@ ProcessResponseDto _$ProcessResponseDtoFromJson(Map<String, dynamic> json) =>
       levels: (json['levels'] as List<dynamic>)
           .map((e) => LevelResultDto.fromJson(e as Map<String, dynamic>))
           .toList(),
+      identifiedTitle: json['identified_title'] as String?,
+      identifiedArtist: json['identified_artist'] as String?,
+      identifiedAlbum: json['identified_album'] as String?,
     );
 
 Map<String, dynamic> _$ProcessResponseDtoToJson(ProcessResponseDto instance) =>
@@ -20,4 +23,7 @@ Map<String, dynamic> _$ProcessResponseDtoToJson(ProcessResponseDto instance) =>
       'job_id': instance.jobId,
       'timestamp': instance.timestamp,
       'levels': instance.levels,
+      'identified_title': instance.identifiedTitle,
+      'identified_artist': instance.identifiedArtist,
+      'identified_album': instance.identifiedAlbum,
     };

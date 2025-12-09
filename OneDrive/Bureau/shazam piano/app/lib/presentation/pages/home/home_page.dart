@@ -8,9 +8,11 @@ import '../../widgets/mode_chip.dart';
 import '../../widgets/app_logo.dart';
 import '../../state/recording_provider.dart';
 import '../../state/process_provider.dart';
+import '../../state/history_provider.dart';
 import '../previews/previews_page.dart';
 import '../settings/settings_page.dart';
 import '../history/history_page.dart';
+import '../results/result_bottom_sheet.dart';
 
 class HomePage extends ConsumerStatefulWidget {
   const HomePage({super.key});
@@ -197,7 +199,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(recordingState.error ?? 'Erreur d\'enregistrement'),
+              content: Text(recordingState.error ?? 'Erreur d enregistrement'),
               backgroundColor: AppColors.error,
             ),
           );
@@ -262,13 +264,46 @@ class _HomePageState extends ConsumerState<HomePage> {
       // Simulate progression through levels
       await _simulateProcessing();
 
-      // Navigate to previews page with results
+      // Show identification + navigate to previews page with results
       if (mounted && processState.result != null) {
+        // Save in history
+        ref.read(historyProvider.notifier).add(processState.result!);
+
+        // If no identification, prompt user to record full song
+        if (processState.result!.identifiedTitle == null &&
+            processState.result!.identifiedArtist == null) {
+          // ignore: use_build_context_synchronously
+          showDialog<void>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('Titre non reconnu'),
+              content: const Text(
+                'Titre non reconnu. Pour de meilleurs resultats, enregistre toute la musique et evite le bruit.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
+        }
+
+        showModalBottomSheet(
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: Colors.transparent,
+          builder: (_) => ResultBottomSheet(result: processState.result!),
+        );
+
         Navigator.of(context).push(
           MaterialPageRoute(
             builder: (context) => PreviewsPage(
               levels: processState.result!.levels,
-              isUnlocked: false, // TODO: Check IAP status
+              isUnlocked: true, // full videos available
+              trackTitle: processState.result!.identifiedTitle,
+              trackArtist: processState.result!.identifiedArtist,
             ),
           ),
         );
@@ -317,3 +352,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 }
+
+
+
+

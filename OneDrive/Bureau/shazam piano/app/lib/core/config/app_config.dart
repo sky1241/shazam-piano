@@ -14,7 +14,7 @@ class AppConfig {
   /// Development configuration
   factory AppConfig.dev() {
     return const AppConfig(
-      backendBaseUrl: 'http://10.0.2.2:8000', // Android emulator
+      backendBaseUrl: 'http://127.0.0.1:8000', // Device + adb reverse
       debugMode: true,
       environment: 'dev',
     );
@@ -41,5 +41,4 @@ class AppConfig {
     }
   }
 }
-
 

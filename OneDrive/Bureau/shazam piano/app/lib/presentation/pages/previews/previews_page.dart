@@ -14,11 +14,15 @@ import '../player/player_page.dart';
 class PreviewsPage extends ConsumerStatefulWidget {
   final List<LevelResult> levels;
   final bool isUnlocked;
+  final String? trackTitle;
+  final String? trackArtist;
 
   const PreviewsPage({
     super.key,
     required this.levels,
     this.isUnlocked = false,
+    this.trackTitle,
+    this.trackArtist,
   });
 
   @override
@@ -28,10 +32,27 @@ class PreviewsPage extends ConsumerStatefulWidget {
 class _PreviewsPageState extends ConsumerState<PreviewsPage> {
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+        return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(
-        title: const Text('Tes vidéos piano'),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Tes videos piano'),
+            if (widget.trackTitle != null)
+              Text(
+                widget.trackTitle!,
+                style: AppTextStyles.caption,
+              ),
+            if (widget.trackArtist != null)
+              Text(
+                widget.trackArtist!,
+                style: AppTextStyles.caption.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+              ),
+          ],
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.share),
@@ -138,12 +159,23 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
   }
 
   void _handleVideoTileTap(LevelResult level) {
+    if (!level.isSuccess || level.previewUrl.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Aucune video disponible pour ce niveau.'),
+        ),
+      );
+      return;
+    }
+
     // Navigate to Player (will handle unlock status internally)
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => PlayerPage(
           level: level,
           isUnlocked: widget.isUnlocked,
+          trackTitle: widget.trackTitle,
+          trackArtist: widget.trackArtist,
         ),
       ),
     );
@@ -304,3 +336,16 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
     );
   }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+

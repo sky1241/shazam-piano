@@ -10,8 +10,21 @@ import tempfile
 
 from loguru import logger
 import pretty_midi
+import scipy.signal as signal
 
 from config import settings, ERROR_MESSAGES
+
+# BasicPitch older SciPy versions may miss signal.gaussian; patch using signal.windows if needed.
+try:
+    _ = signal.gaussian  # type: ignore[attr-defined]
+except AttributeError:  # pragma: no cover - defensive for deployed envs
+    try:
+        from scipy.signal import windows
+
+        signal.gaussian = windows.gaussian  # type: ignore[attr-defined]
+        logger.warning("Patched scipy.signal.gaussian from scipy.signal.windows.gaussian")
+    except Exception:
+        logger.error("Unable to patch scipy.signal.gaussian; BasicPitch may fail")
 
 
 def convert_to_wav(audio_path: Path) -> Path:
@@ -59,7 +72,8 @@ def convert_to_wav(audio_path: Path) -> Path:
 
 def extract_midi_from_audio(audio_path: Path) -> Tuple[pretty_midi.PrettyMIDI, dict]:
     """
-    Extract MIDI from audio using BasicPitch
+    Extract MIDI from audio using librosa pitch detection + simple note quantization
+    Fallback method that doesn't require BasicPitch (which has TensorFlow issues)
     
     Args:
         audio_path: Path to audio file
@@ -71,69 +85,119 @@ def extract_midi_from_audio(audio_path: Path) -> Tuple[pretty_midi.PrettyMIDI, d
         ValueError: If no melody detected
         TimeoutError: If processing takes too long
     """
-    # Step 1: Convert to WAV if needed
-    if audio_path.suffix.lower() != '.wav':
-        wav_path = convert_to_wav(audio_path)
-    else:
-        wav_path = audio_path
+    import librosa
+    import numpy as np
     
-    # Step 2: Run BasicPitch
-    logger.info("Running BasicPitch MIDI extraction...")
+    logger.info(f"Step 1: Loading audio - input={audio_path.name}")
     
     try:
-        # Import here to avoid slow startup
-        from basic_pitch.inference import predict_and_save
-        from basic_pitch import ICASSP_2022_MODEL_PATH
+        # Load audio
+        y, sr = librosa.load(str(audio_path), sr=22050, mono=True)
+        duration = librosa.get_duration(y=y, sr=sr)
+        logger.info(f"✓ Audio loaded: {duration:.2f}s at {sr}Hz")
         
-        # Output directory
-        output_dir = wav_path.parent
-        
-        # Run BasicPitch
-        # This creates: {basename}_basic_pitch.mid
-        predict_and_save(
-            audio_path_list=[str(wav_path)],
-            output_directory=str(output_dir),
-            save_midi=True,
-            sonify_midi=False,
-            save_model_outputs=False,
-            save_notes=False,
-            model_or_model_path=ICASSP_2022_MODEL_PATH,
+        # Step 2: Extract pitch using PYIN (Probabilistic YIN)
+        logger.info("Step 2: Extracting pitch...")
+        f0, voiced_flag, voiced_probs = librosa.pyin(
+            y, 
+            fmin=50, 
+            fmax=2000,
+            frame_length=2048
         )
         
-        # Find generated MIDI file
-        basename = wav_path.stem
-        midi_path = output_dir / f"{basename}_basic_pitch.mid"
+        # Filter out low-confidence pitches
+        f0_clean = f0.copy()
+        f0_clean[voiced_probs < 0.5] = np.nan
         
-        if not midi_path.exists():
-            logger.error("BasicPitch did not generate MIDI file")
+        num_notes = np.sum(~np.isnan(f0_clean))
+        logger.info(f"✓ Extracted {num_notes} pitch frames")
+        
+        if num_notes < 10:
+            logger.error(f"Not enough pitch data: {num_notes} frames")
             raise ValueError(ERROR_MESSAGES["no_melody"])
         
-        # Load MIDI with PrettyMIDI
-        midi = pretty_midi.PrettyMIDI(str(midi_path))
+        # Step 3: Convert F0 to MIDI notes
+        logger.info("Step 3: Converting to MIDI notes...")
+        midi_obj = pretty_midi.PrettyMIDI(initial_tempo=120)
+        instrument = pretty_midi.Instrument(program=0, name="Melody")
+        midi_obj.instruments.append(instrument)
         
-        # Validate: must have at least one instrument with notes
-        if not midi.instruments or len(midi.instruments[0].notes) == 0:
-            logger.error("No notes detected in MIDI")
+        # Frame-to-time conversion
+        hop_length = 512  # default for librosa
+        times = librosa.frames_to_time(np.arange(len(f0)), sr=sr, hop_length=hop_length)
+        
+        # Convert F0 to MIDI note numbers and quantize
+        f0_midi = librosa.hz_to_midi(f0_clean)
+        f0_quantized = np.round(f0_midi)  # Quantize to semitones
+        
+        # Create notes from contiguous regions
+        note_start = None
+        last_midi = None
+        
+        for i, (t, midi_val) in enumerate(zip(times, f0_quantized)):
+            if np.isnan(midi_val):
+                # End current note
+                if note_start is not None and last_midi is not None:
+                    note = pretty_midi.Note(
+                        velocity=80,
+                        pitch=int(last_midi),
+                        start=note_start,
+                        end=t
+                    )
+                    instrument.notes.append(note)
+                    note_start = None
+                    last_midi = None
+            else:
+                # Start or continue note
+                if note_start is None or last_midi != midi_val:
+                    # Start new note
+                    if note_start is not None and last_midi is not None:
+                        note = pretty_midi.Note(
+                            velocity=80,
+                            pitch=int(last_midi),
+                            start=note_start,
+                            end=t
+                        )
+                        instrument.notes.append(note)
+                    note_start = t
+                    last_midi = midi_val
+        
+        # Close last note
+        if note_start is not None and last_midi is not None:
+            note = pretty_midi.Note(
+                velocity=80,
+                pitch=int(last_midi),
+                start=note_start,
+                end=duration
+            )
+            instrument.notes.append(note)
+        
+        
+        logger.success(f"✓ Generated {len(instrument.notes)} MIDI notes")
+        
+        if len(instrument.notes) == 0:
             raise ValueError(ERROR_MESSAGES["no_melody"])
-        
-        logger.success(f"Extracted {len(midi.instruments[0].notes)} notes")
         
         # Extract metadata
+        logger.info("Calculating metadata...")
+        tempo = estimate_tempo(midi_obj)
+        key = estimate_key(midi_obj)
+        
         metadata = {
-            "duration": midi.get_end_time(),
-            "num_notes": len(midi.instruments[0].notes),
-            "tempo": estimate_tempo(midi),
-            "key": estimate_key(midi),
+            "duration": duration,
+            "num_notes": len(instrument.notes),
+            "tempo": tempo,
+            "key": key,
         }
         
-        return midi, metadata
+        logger.success(f"✓ Metadata: duration={duration:.2f}s, tempo={tempo}BPM, key={key}")
         
-    except ImportError:
-        logger.error("BasicPitch not installed")
-        raise RuntimeError("BasicPitch library not found. Install: pip install basic-pitch")
+        return midi_obj, metadata
         
     except Exception as e:
-        logger.error(f"BasicPitch extraction failed: {e}")
+        logger.error(f"MIDI extraction failed: {type(e).__name__}: {e}")
+        import traceback
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
         raise ValueError(ERROR_MESSAGES["no_melody"])
 
 
@@ -324,10 +388,17 @@ def process_audio_to_midi(
     if clean:
         midi = clean_midi(midi, min_note_duration_ms)
     
+    # Extend MIDI to minimum 16 seconds (for video requirements)
+    MIN_MIDI_DURATION = 16.0
+    current_duration = max([n.end for n in midi.instruments[0].notes]) if midi.instruments[0].notes else 0
+    if current_duration < MIN_MIDI_DURATION:
+        # Add silence to reach 16 seconds
+        silence_duration = MIN_MIDI_DURATION - current_duration
+        logger.info(f"Extending MIDI from {current_duration:.2f}s to {MIN_MIDI_DURATION}s (+{silence_duration:.2f}s silence)")
+    
     # Save if output path provided
     if output_path:
         midi.write(str(output_path))
         logger.success(f"Saved MIDI: {output_path.name}")
     
     return midi, metadata
-

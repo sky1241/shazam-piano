@@ -10,11 +10,20 @@ class ProcessResponseDto {
   final String jobId;
   final String timestamp;
   final List<LevelResultDto> levels;
+  @JsonKey(name: 'identified_title')
+  final String? identifiedTitle;
+  @JsonKey(name: 'identified_artist')
+  final String? identifiedArtist;
+  @JsonKey(name: 'identified_album')
+  final String? identifiedAlbum;
 
   const ProcessResponseDto({
     required this.jobId,
     required this.timestamp,
     required this.levels,
+    this.identifiedTitle,
+    this.identifiedArtist,
+    this.identifiedAlbum,
   });
 
   factory ProcessResponseDto.fromJson(Map<String, dynamic> json) =>
@@ -27,8 +36,10 @@ class ProcessResponseDto {
       jobId: jobId,
       timestamp: timestamp,
       levels: levels.map((dto) => dto.toDomain()).toList(),
+      identifiedTitle: identifiedTitle,
+      identifiedArtist: identifiedArtist,
+      identifiedAlbum: identifiedAlbum,
     );
   }
 }
-
 

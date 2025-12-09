@@ -10,11 +10,15 @@ import '../practice/practice_page.dart';
 class PlayerPage extends StatefulWidget {
   final LevelResult level;
   final bool isUnlocked;
+  final String? trackTitle;
+  final String? trackArtist;
 
   const PlayerPage({
     super.key,
     required this.level,
     required this.isUnlocked,
+    this.trackTitle,
+    this.trackArtist,
   });
 
   @override
@@ -22,10 +26,12 @@ class PlayerPage extends StatefulWidget {
 }
 
 class _PlayerPageState extends State<PlayerPage> {
-  late VideoPlayerController _videoPlayerController;
+  VideoPlayerController? _videoPlayerController;
   ChewieController? _chewieController;
   bool _isLoading = true;
   String? _error;
+  bool _isFullScreen = false;
+  double _videoSpeed = 1.0;
 
   @override
   void initState() {
@@ -40,14 +46,34 @@ class _PlayerPageState extends State<PlayerPage> {
         _error = null;
       });
 
+      String _resolveUrl(String url) {
+        if (url.isEmpty) return url;
+        if (url.startsWith('http')) return url;
+        final baseRaw = AppConstants.backendBaseUrl.trim();
+        final base = baseRaw.isEmpty ? 'http://127.0.0.1:8000' : baseRaw;
+        final baseWithSlash =
+            base.endsWith('/') ? base : '$base/'; // ensure trailing slash
+        final cleaned = url.startsWith('/') ? url.substring(1) : url;
+        final resolved =
+            Uri.parse(baseWithSlash).resolve(cleaned).toString();
+        // Debug base + resolved
+        // ignore: avoid_print
+        print('[Player] base=$base resolved=$resolved');
+        return resolved;
+      }
+
       // Use preview or full video based on unlock status
-      final videoUrl = widget.isUnlocked
-          ? widget.level.videoUrl
-          : widget.level.previewUrl;
+      final videoUrl = _resolveUrl(
+        widget.isUnlocked ? widget.level.videoUrl : widget.level.previewUrl,
+      );
+
+      // Debug: log final URL used by the player
+      // ignore: avoid_print
+      print('[Player] loading video: $videoUrl');
 
       if (videoUrl.isEmpty) {
         setState(() {
-          _error = 'Aucune vidéo disponible';
+          _error = 'Aucune video disponible';
           _isLoading = false;
         });
         return;
@@ -57,13 +83,19 @@ class _PlayerPageState extends State<PlayerPage> {
         Uri.parse(videoUrl),
       );
 
-      await _videoPlayerController.initialize();
+      await _videoPlayerController!.initialize();
+
+      final aspect = _videoPlayerController!.value.aspectRatio == 0
+          ? (16 / 9)
+          : _videoPlayerController!.value.aspectRatio;
 
       _chewieController = ChewieController(
-        videoPlayerController: _videoPlayerController,
+        videoPlayerController: _videoPlayerController!,
         autoPlay: true,
         looping: true,
-        aspectRatio: 16 / 9,
+        aspectRatio: aspect,
+        allowFullScreen: true,
+        allowMuting: true,
         showControls: true,
         materialProgressColors: ChewieProgressColors(
           playedColor: AppColors.primary,
@@ -86,13 +118,58 @@ class _PlayerPageState extends State<PlayerPage> {
 
   @override
   void dispose() {
-    _videoPlayerController.dispose();
+    _videoPlayerController?.dispose();
     _chewieController?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+    
+    if (isLandscape) {
+      return Scaffold(
+        backgroundColor: AppColors.bg,
+        body: SafeArea(
+          child: Column(
+            children: [
+              // Top bar with title
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(widget.level.name, style: AppTextStyles.body.copyWith(fontWeight: FontWeight.w600)),
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.share),
+                          onPressed: _handleShare,
+                        ),
+                        if (widget.isUnlocked)
+                          IconButton(
+                            icon: const Icon(Icons.download),
+                            onPressed: _handleDownload,
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              // Video player area (takes remaining space)
+              Expanded(
+                child: Container(
+                  color: Colors.black,
+                  child: _buildVideoPlayer(),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    
+    // Portrait mode (original layout)
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(
@@ -113,14 +190,59 @@ class _PlayerPageState extends State<PlayerPage> {
         child: SingleChildScrollView(
           child: Column(
             children: [
+              if (widget.trackTitle != null || widget.trackArtist != null)
+                Padding(
+                  padding: const EdgeInsets.all(AppConstants.spacing16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (widget.trackTitle != null)
+                        Text(
+                          widget.trackTitle!,
+                          style: AppTextStyles.title,
+                        ),
+                      if (widget.trackArtist != null)
+                        Padding(
+                          padding:
+                              const EdgeInsets.only(top: AppConstants.spacing4),
+                          child: Text(
+                            widget.trackArtist!,
+                            style: AppTextStyles.body.copyWith(
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+
+              // Track info + Video Player
+              if (widget.trackTitle != null)
+                Padding(
+                  padding: const EdgeInsets.all(AppConstants.spacing12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(widget.trackTitle!, style: AppTextStyles.title),
+                      if (widget.trackArtist != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            widget.trackArtist!,
+                            style: AppTextStyles.caption.copyWith(
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+
               // Video Player
-              AspectRatio(
-            aspectRatio: 16 / 9,
-            child: Container(
-              color: Colors.black,
-              child: _buildVideoPlayer(),
-            ),
-          ),
+              Container(
+                color: Colors.black,
+                child: _buildVideoPlayer(),
+              ),
 
           // Metadata Card
           Padding(
@@ -137,7 +259,7 @@ class _PlayerPageState extends State<PlayerPage> {
                     ),
                     const SizedBox(height: AppConstants.spacing8),
                     _buildMetadataRow(
-                      'Tonalité',
+                      'Tonalite',
                       widget.level.keyGuess ?? 'N/A',
                     ),
                     _buildMetadataRow(
@@ -145,8 +267,8 @@ class _PlayerPageState extends State<PlayerPage> {
                       '${widget.level.tempoGuess ?? 0} BPM',
                     ),
                     _buildMetadataRow(
-                      'Durée',
-                      widget.isUnlocked ? 'Complète' : '16s preview',
+                      'Duree',
+                      widget.isUnlocked ? 'Complete' : '16s preview',
                     ),
                     if (!widget.isUnlocked) ...[
                       const SizedBox(height: AppConstants.spacing16),
@@ -166,7 +288,7 @@ class _PlayerPageState extends State<PlayerPage> {
                             const SizedBox(width: AppConstants.spacing8),
                             Expanded(
                               child: Text(
-                                'Débloquez pour la vidéo complète',
+                                'Debloquez pour la video complete',
                                 style: AppTextStyles.caption.copyWith(
                                   color: AppColors.warning,
                                 ),
@@ -195,7 +317,7 @@ class _PlayerPageState extends State<PlayerPage> {
                     child: ElevatedButton.icon(
                       onPressed: _handlePracticeMode,
                       icon: const Icon(Icons.piano),
-                      label: const Text('Mode Pratique 🎹'),
+                      label: const Text('Mode Pratique (beta)'),
                       style: ElevatedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 16),
                       ),
@@ -222,7 +344,7 @@ class _PlayerPageState extends State<PlayerPage> {
     );
   }
 
-  Widget _buildVideoPlayer() {
+    Widget _buildVideoPlayer() {
     if (_isLoading) {
       return const Center(
         child: CircularProgressIndicator(
@@ -233,39 +355,120 @@ class _PlayerPageState extends State<PlayerPage> {
 
     if (_error != null) {
       return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(
-              Icons.error_outline,
-              color: AppColors.error,
-              size: 48,
-            ),
-            const SizedBox(height: AppConstants.spacing16),
-            Text(
-              _error!,
-              style: AppTextStyles.body.copyWith(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(AppConstants.spacing16),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(
+                Icons.error_outline,
                 color: AppColors.error,
+                size: 48,
               ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: AppConstants.spacing16),
-            TextButton(
-              onPressed: _initializePlayer,
-              child: const Text('Réessayer'),
-            ),
-          ],
+              const SizedBox(height: AppConstants.spacing16),
+              Text(
+                _error!,
+                style: AppTextStyles.body.copyWith(
+                  color: AppColors.error,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: AppConstants.spacing16),
+              TextButton(
+                onPressed: _initializePlayer,
+                child: const Text('Reessayer'),
+              ),
+            ],
+          ),
         ),
       );
     }
 
     if (_chewieController == null) {
       return const Center(
-        child: Text('Aucune vidéo'),
+        child: Text('Aucune video'),
       );
     }
 
-    return Chewie(controller: _chewieController!);
+    final size = _videoPlayerController?.value.size;
+    final aspectRatio = (size?.aspectRatio ?? 16 / 9);
+    
+    return Stack(
+      children: [
+        Center(
+          child: AspectRatio(
+            aspectRatio: aspectRatio,
+            child: Chewie(controller: _chewieController!),
+          ),
+        ),
+        // Custom speed + fullscreen controls (overlay)
+        Positioned(
+          bottom: 10,
+          right: 10,
+          child: Row(
+            children: [
+              // Speed control menu
+              PopupMenuButton<double>(
+                initialValue: _videoSpeed,
+                onSelected: (speed) {
+                  setState(() {
+                    _videoSpeed = speed;
+                  });
+                  _videoPlayerController?.setPlaybackSpeed(speed);
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 0.5,
+                    child: Text('0.5x'),
+                  ),
+                  const PopupMenuItem(
+                    value: 0.75,
+                    child: Text('0.75x'),
+                  ),
+                  const PopupMenuItem(
+                    value: 1.0,
+                    child: Text('1.0x (Normal)'),
+                  ),
+                  const PopupMenuItem(
+                    value: 1.25,
+                    child: Text('1.25x'),
+                  ),
+                  const PopupMenuItem(
+                    value: 1.5,
+                    child: Text('1.5x'),
+                  ),
+                ],
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.speed, color: Colors.white, size: 20),
+                      const SizedBox(width: 4),
+                      Text(
+                        '${_videoSpeed.toStringAsFixed(2)}x',
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Fullscreen exit button
+              IconButton(
+                icon: const Icon(Icons.fullscreen_exit, color: Colors.white),
+                onPressed: () {
+                  // Exit fullscreen (navigate back or dismiss)
+                  if (Navigator.canPop(context)) {
+                    Navigator.pop(context);
+                  }
+                },
+                iconSize: 24,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildMetadataRow(String label, String value) {
@@ -294,7 +497,7 @@ class _PlayerPageState extends State<PlayerPage> {
   void _handleShare() {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Partage en cours d\'implémentation'),
+        content: Text('Partage en cours d implementation'),
       ),
     );
   }
@@ -302,7 +505,7 @@ class _PlayerPageState extends State<PlayerPage> {
   void _handleDownload() {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Téléchargement en cours d\'implémentation'),
+        content: Text('Telechargement en cours d implementation'),
       ),
     );
   }
@@ -321,9 +524,11 @@ class _PlayerPageState extends State<PlayerPage> {
     // TODO: Show paywall modal
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Paywall en cours d\'implémentation'),
+        content: Text('Paywall en cours d implementation'),
         backgroundColor: AppColors.warning,
       ),
     );
   }
 }
+
+

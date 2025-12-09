@@ -15,7 +15,7 @@ final dioProvider = Provider<Dio>((ref) {
   final dio = Dio(BaseOptions(
     baseUrl: config.backendBaseUrl,
     connectTimeout: const Duration(seconds: 30),
-    receiveTimeout: const Duration(minutes: 5), // Video processing can take time
+    receiveTimeout: const Duration(minutes: 15), // BasicPitch + video rendering can be very slow
     headers: {
       'Accept': 'application/json',
     },
