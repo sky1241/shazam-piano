@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     VIDEO_WIDTH: int = 960
     VIDEO_HEIGHT: int = 540  # 16:9 plein ecran - réduit pour tests rapides
     VIDEO_FPS: int = 24  # réduit pour tests rapides
+    VIDEO_TIME_OFFSET_MS: int = -60  # global timing offset (ms), negative to advance (helps sync bars with audio)
     PREVIEW_DURATION_SEC: int = 10
     FULL_VIDEO_MAX_DURATION_SEC: int | None = 10  # limite toutes les videos a 16s
     VIDEO_LOOKAHEAD_SEC: float = 2.2  # 2.2s lookahead pour meilleure visibilité

@@ -190,53 +190,7 @@ class _PlayerPageState extends State<PlayerPage> {
         child: SingleChildScrollView(
           child: Column(
             children: [
-              if (widget.trackTitle != null || widget.trackArtist != null)
-                Padding(
-                  padding: const EdgeInsets.all(AppConstants.spacing16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (widget.trackTitle != null)
-                        Text(
-                          widget.trackTitle!,
-                          style: AppTextStyles.title,
-                        ),
-                      if (widget.trackArtist != null)
-                        Padding(
-                          padding:
-                              const EdgeInsets.only(top: AppConstants.spacing4),
-                          child: Text(
-                            widget.trackArtist!,
-                            style: AppTextStyles.body.copyWith(
-                              color: AppColors.textSecondary,
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-
-              // Track info + Video Player
-              if (widget.trackTitle != null)
-                Padding(
-                  padding: const EdgeInsets.all(AppConstants.spacing12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(widget.trackTitle!, style: AppTextStyles.title),
-                      if (widget.trackArtist != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                            widget.trackArtist!,
-                            style: AppTextStyles.caption.copyWith(
-                              color: AppColors.textSecondary,
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
+              // Track title/artist hidden to avoid duplicate overlays with rendered video
 
               // Video Player
               Container(
@@ -530,5 +484,4 @@ class _PlayerPageState extends State<PlayerPage> {
     );
   }
 }
-
 

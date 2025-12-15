@@ -91,7 +91,8 @@ def render_keyboard_frame(
     height: int,
     level_name: str = "",
     current_time: float = 0.0,
-    upcoming_notes: Optional[list] = None
+    upcoming_notes: Optional[list] = None,
+    show_level_label: bool = False,
 ) -> Image.Image:
     """
     Render single frame of piano keyboard
@@ -112,14 +113,14 @@ def render_keyboard_frame(
     # Calculate keyboard position (bottom of screen, scaled to fit width)
     total_white_keys = 35  # 5 octaves = 35 white keys
     
-    # Scale keys to fill 80% of screen width with dynamic sizing
+    # Scale keys to fill 85% of screen width with dynamic sizing
     available_width = int(width * 0.85)  # Use 85% of screen width
     dynamic_white_key_width = max(10, available_width // total_white_keys)  # Scale keys but min 10px
     keyboard_width = total_white_keys * dynamic_white_key_width
     keyboard_x = (width - keyboard_width) // 2
     
-    # Piano goes at bottom with small padding (15px)
-    piano_bottom_padding = 15
+    # Piano sits flush at bottom (no gap) so falling bars disappear behind it
+    piano_bottom_padding = 0
     keyboard_y = height - WHITE_KEY_HEIGHT - piano_bottom_padding
 
     # Precompute scaling helpers so falling bars and keys align perfectly
@@ -137,14 +138,22 @@ def render_keyboard_frame(
         bar_start_y = keyboard_y - fall_area - settings.VIDEO_BAR_START_Y_OFFSET
         
         for pitch, start, end in upcoming_notes:
-            dt = start - current_time
-            if dt < 0 or dt > lookahead:
+            if current_time > end:
                 continue
-            
+
+            # Only keep future notes within lookahead OR active notes still sustaining
+            time_to_start = start - current_time
+            if time_to_start > lookahead:
+                continue
+
             # Distance bar will fall = dt * speed (pixels per second)
-            # Bottom of the bar must touch keyboard_y when dt = 0
-            fall_distance = dt * speed_px
-            bar_bottom = keyboard_y - fall_distance
+            # Before start: bar falls toward the keyboard. After start: keep falling past the keyboard until note end.
+            if time_to_start >= 0:
+                fall_distance = time_to_start * speed_px
+                bar_bottom = keyboard_y - fall_distance
+            else:
+                elapsed = -time_to_start  # time since note started
+                bar_bottom = keyboard_y + elapsed * speed_px
 
             # Horizontal position scaled to current key sizes
             x_base, _, is_black = get_key_position(pitch)
@@ -153,18 +162,30 @@ def render_keyboard_frame(
             bar_width = max(4, key_width - 4)
 
             note_duration = max(0.1, end - start)
-            bar_height = max(20, min(140, int(note_duration * speed_px * 0.3)))
+            # Make bar height proportional to how long the key will stay pressed
+            bar_height = int(note_duration * speed_px)
+            bar_height = max(20, bar_height)
             bar_top = bar_bottom - bar_height
 
-            # Clamp so the bar doesn't start above the visible fall area
+            # Clamp so pre-start bars don't start above the visible fall area
             min_top = keyboard_y - fall_area - settings.VIDEO_BAR_START_Y_OFFSET
-            if bar_top < min_top:
-                bar_top = min_top
+            min_bottom = min_top + 1  # ensure bottom stays >= top
+            if time_to_start >= 0:
+                if bar_bottom < min_bottom:
+                    bar_bottom = min_bottom
+                    bar_top = bar_bottom - bar_height
+                bar_top = max(bar_top, min_top)
+
+            # Ensure bottom is not above top (Pillow constraint)
+            if bar_bottom <= bar_top:
+                bar_bottom = bar_top + 1
 
             # Center bar on the key width for cleaner alignment
             x_offset = (key_width - bar_width) // 2
+            y0 = bar_top
+            y1 = bar_bottom
             draw.rectangle(
-                [x + x_offset, bar_top, x + x_offset + bar_width, bar_bottom],
+                [x + x_offset, y0, x + x_offset + bar_width, y1],
                 fill=fall_color,
                 outline=None,
             )
@@ -207,21 +228,42 @@ def render_keyboard_frame(
                 width=1
             )
     
-    # Draw level name at top
-    if level_name:
-        try:
-            font = ImageFont.truetype("arial.ttf", 32)
-        except:
-            font = ImageFont.load_default()
-        
-        text_bbox = draw.textbbox((0, 0), level_name, font=font)
-        text_width = text_bbox[2] - text_bbox[0]
-        text_x = (width - text_width) // 2
-        text_y = 30
-        
-        draw.text((text_x, text_y), level_name, fill=COLOR_TEXT, font=font)
+    # Level label intentionally disabled to avoid duplicate overlays
+
+    # Mask area below keys to hide falling bars once they pass the keyboard
+    draw.rectangle(
+        [0, keyboard_y + WHITE_KEY_HEIGHT, width, height],
+        fill=COLOR_BACKGROUND,
+        outline=None,
+    )
     
     return img
+
+
+def _sanitize_notes(notes: list[tuple[int, float, float]], frame_dt: float) -> list[tuple[int, float, float]]:
+    """
+    Ensure successive notes of the same pitch don't overlap.
+    Only shortens ends if they overlap the next note (tiny gap).
+    """
+    by_pitch = {}
+    for pitch, start, end in notes:
+        by_pitch.setdefault(pitch, []).append([start, end])
+
+    sanitized = []
+    for pitch, spans in by_pitch.items():
+        spans.sort(key=lambda x: x[0])
+        for idx, (start, end) in enumerate(spans):
+            if idx + 1 < len(spans):
+                next_start = spans[idx + 1][0]
+                max_end = next_start - 0.05  # small gap if overlapping next note
+                if end > max_end:
+                    end = max(start, max_end)
+            # Ensure minimal positive duration
+            min_dur = max(0.01, 0.5 * frame_dt)
+            if end - start < min_dur:
+                end = start + min_dur
+            sanitized.append((pitch, start, end))
+    return sanitized
 
 
 def generate_video_frames(
@@ -246,6 +288,8 @@ def generate_video_frames(
     fps = settings.VIDEO_FPS
     width = settings.VIDEO_WIDTH
     height = settings.VIDEO_HEIGHT
+    frame_dt = 1.0 / fps
+    time_offset = settings.VIDEO_TIME_OFFSET_MS / 1000.0
     
     # Calculate duration
     midi_duration = midi.get_end_time()
@@ -262,33 +306,42 @@ def generate_video_frames(
     all_notes = []
     for instrument in midi.instruments:
         all_notes.extend(instrument.notes)
-    # Convert to tuples for speed
+    # Convert to tuples for speed (keep all pitches, we'll clamp positions visually)
     all_notes = [(n.pitch, n.start, n.end) for n in all_notes]
-    
+    all_notes = _sanitize_notes(all_notes, frame_dt)
+    release_epsilon = 0.02  # tiny release margin to avoid sticky keys
+
     # Generate each frame
     for frame_idx in range(num_frames):
-        time = frame_idx / fps
+        time = frame_idx * frame_dt + time_offset  # frame start time for precise alignment
         
-        # Find active notes at this time
+        # Find active notes at this time (with global offset)
         active_notes = set()
         for pitch, start, end in all_notes:
-            if start <= time <= end:
+            s = start + time_offset
+            e = end + time_offset
+            tolerance_start = 0.05 * frame_dt
+            tolerance_end = 0.1 * frame_dt
+            if (s - tolerance_start) <= time <= (e + tolerance_end - release_epsilon):
                 active_notes.add(pitch)
 
         # Upcoming notes for falling bars
-        upcoming = [
-            note for note in all_notes
-            if time <= note[1] <= time + settings.VIDEO_LOOKAHEAD_SEC
-        ]
+        upcoming = []
+        for pitch, start, end in all_notes:
+            s = start + time_offset
+            e = end + time_offset
+            if (time <= s <= time + settings.VIDEO_LOOKAHEAD_SEC) or (s <= time <= e):
+                upcoming.append((pitch, s, e))
 
         # Render frame
         frame = render_keyboard_frame(
             active_notes=active_notes,
             width=width,
             height=height,
-            level_name=f"Niveau {level}: {level_name}",
+            level_name="",  # Hide text in video to avoid duplicated titles (front can overlay)
             current_time=time,
             upcoming_notes=upcoming,
+            show_level_label=False,
         )
         
         frames.append(np.array(frame))
@@ -482,7 +535,7 @@ def render_level_video(
     frames = generate_video_frames(
         midi,
         level,
-        level_name,
+        "",  # hide level/title text in video (front can display it)
         max_duration=settings.FULL_VIDEO_MAX_DURATION_SEC,
     )
     
