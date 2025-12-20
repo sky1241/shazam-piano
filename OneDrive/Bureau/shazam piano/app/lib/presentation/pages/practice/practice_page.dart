@@ -1,6 +1,12 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:mic_stream/mic_stream.dart';
+import 'package:permission_handler/permission_handler.dart';
+
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/constants/app_constants.dart';
@@ -23,10 +29,16 @@ class _PracticePageState extends State<PracticePage> {
   bool _isListening = false;
   int? _detectedNote;
   int? _expectedNote;
-  final NoteAccuracy _accuracy = NoteAccuracy.miss;
+  NoteAccuracy _accuracy = NoteAccuracy.miss;
   int _score = 0;
   int _totalNotes = 0;
   int _correctNotes = 0;
+  int _wrongNotes = 0;
+  DateTime? _startTime;
+  StreamSubscription<dynamic>? _micSub;
+  final _pitchDetector = PitchDetector();
+  List<_ExpectedNote> _expectedNotes = [];
+  List<bool> _hitNotes = [];
 
   // Piano keyboard (2 octaves for practice - C4 to C6)
   static const int _firstKey = 60; // C4
@@ -252,18 +264,42 @@ class _PracticePageState extends State<PracticePage> {
   }
 
   Future<void> _startPractice() async {
-    // TODO: Start audio input stream
-    // For now, simulate practice mode
+    // Permissions
+    final micStatus = await Permission.microphone.request();
+    if (!micStatus.isGranted) {
+      setState(() {
+        _isListening = false;
+      });
+      return;
+    }
+
+    // Fetch expected notes from backend
+    await _loadExpectedNotes();
     _score = 0;
-    _totalNotes = 0;
     _correctNotes = 0;
-    
-    // Simulate expected notes (would come from MIDI file)
-    _expectedNote = 60 + (DateTime.now().second % 12); // Random for demo
+    _wrongNotes = 0;
+    _totalNotes = _expectedNotes.length;
+    _hitNotes = List<bool>.filled(_expectedNotes.length, false);
+    _startTime = DateTime.now();
+
+    // Start mic stream
+    try {
+      final stream = await MicStream.microphone(
+        sampleRate: PitchDetector.sampleRate,
+        audioFormat: AudioFormat.ENCODING_PCM_16BIT,
+      );
+      _micSub = stream?.listen(_processAudioChunk);
+    } catch (_) {
+      setState(() {
+        _isListening = false;
+      });
+    }
   }
 
   void _stopPractice() {
-    // TODO: Stop audio input stream
+    _micSub?.cancel();
+    _micSub = null;
+    _startTime = null;
     final finishedAt = DateTime.now().toIso8601String();
     final score = _score;
     final total = _totalNotes == 0 ? 1 : _totalNotes;
@@ -295,6 +331,7 @@ class _PracticePageState extends State<PracticePage> {
     try {
       final token = await FirebaseAuth.instance.currentUser?.getIdToken();
       if (token == null) return;
+      final jobId = _extractJobId(widget.level.midiUrl);
 
       final dio = Dio(BaseOptions(
         baseUrl: AppConstants.backendBaseUrl,
@@ -303,7 +340,7 @@ class _PracticePageState extends State<PracticePage> {
       dio.options.headers['Authorization'] = 'Bearer $token';
 
       await dio.post('/practice/session', data: {
-        'job_id': widget.level.jobId ?? widget.level.videoUrl,
+        'job_id': jobId ?? widget.level.videoUrl,
         'level': widget.level.level,
         'score': score,
         'accuracy': accuracy,
@@ -318,4 +355,114 @@ class _PracticePageState extends State<PracticePage> {
       // ignore errors for now in UI; backend will log if it receives request
     }
   }
+
+  Future<void> _processAudioChunk(dynamic chunk) async {
+    if (_startTime == null) return;
+    // chunk is likely List<int> PCM 16-bit
+    if (chunk is! List) return;
+    final int16 = Int16List.fromList(List<int>.from(chunk));
+    if (int16.isEmpty) return;
+
+    final floatSamples = Float32List(int16.length);
+    for (var i = 0; i < int16.length; i++) {
+      floatSamples[i] = int16[i] / 32768.0;
+    }
+
+    final freq = _pitchDetector.detectPitch(floatSamples);
+    if (freq == null) return;
+    final midi = _pitchDetector.frequencyToMidiNote(freq);
+
+    final now = DateTime.now();
+    final elapsed = now.difference(_startTime!).inMilliseconds / 1000.0;
+
+    // Find active expected notes
+    final activeIndices = <int>[];
+    for (var i = 0; i < _expectedNotes.length; i++) {
+      final n = _expectedNotes[i];
+      if (elapsed >= n.start && elapsed <= n.end + 0.2) {
+        activeIndices.add(i);
+      }
+      if (elapsed > n.end + 0.2 && !_hitNotes[i]) {
+        _wrongNotes += 1;
+        _hitNotes[i] = true; // mark as processed
+      }
+    }
+
+    bool matched = false;
+    for (final idx in activeIndices) {
+      if (_hitNotes[idx]) continue;
+      if ((midi - _expectedNotes[idx].pitch).abs() <= 1) {
+        matched = true;
+        _hitNotes[idx] = true;
+        _correctNotes += 1;
+        _score += 1;
+        _accuracy = NoteAccuracy.correct;
+        _expectedNote = _expectedNotes[idx].pitch;
+        break;
+      }
+    }
+
+    if (!matched && activeIndices.isNotEmpty) {
+      _accuracy = NoteAccuracy.wrong;
+      _wrongNotes += 1;
+    }
+
+    setState(() {
+      _detectedNote = midi;
+      if (!_isListening) {
+        _detectedNote = null;
+      }
+    });
+  }
+
+  Future<void> _loadExpectedNotes() async {
+    try {
+      final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+      if (token == null) return;
+      final dio = Dio(BaseOptions(
+        baseUrl: AppConstants.backendBaseUrl,
+        connectTimeout: const Duration(seconds: 15),
+      ));
+      dio.options.headers['Authorization'] = 'Bearer $token';
+
+      final jobId = _extractJobId(widget.level.midiUrl);
+      if (jobId == null) return;
+      final resp = await dio.get('/practice/notes/$jobId/${widget.level.level}');
+      final data = resp.data;
+      if (data == null || data['notes'] == null) return;
+      final List<dynamic> notesJson = data['notes'];
+      _expectedNotes = notesJson
+          .map((n) => _ExpectedNote(
+                pitch: n['pitch'] as int,
+                start: (n['start'] as num).toDouble(),
+                end: (n['end'] as num).toDouble(),
+              ))
+          .toList();
+      _expectedNotes.sort((a, b) => a.start.compareTo(b.start));
+      if (_expectedNotes.isNotEmpty) {
+        _expectedNote = _expectedNotes.first.pitch;
+      }
+    } catch (_) {
+      // fallback: empty expected notes
+      _expectedNotes = [];
+    }
+  }
+
+  String? _extractJobId(String midiUrl) {
+    try {
+      final uri = Uri.parse(midiUrl);
+      final file = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : midiUrl.split('/').last;
+      if (file.contains('_L')) {
+        return file.split('_L').first;
+      }
+    } catch (_) {}
+    return null;
+  }
+}
+
+class _ExpectedNote {
+  final int pitch;
+  final double start;
+  final double end;
+  _ExpectedNote({required this.pitch, required this.start, required this.end});
 }
