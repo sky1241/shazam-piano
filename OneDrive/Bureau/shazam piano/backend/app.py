@@ -27,6 +27,7 @@ from firebase_client import (
     save_job_for_user,
     save_practice_session,
 )
+import pretty_midi
 
 # ============================================
 # App Setup
@@ -455,6 +456,41 @@ async def save_practice(
         raise HTTPException(status_code=500, detail="Failed to save practice session")
 
     return {"status": "ok", "session_id": session_id}
+
+
+@app.get("/practice/notes/{job_id}/{level}")
+async def get_practice_notes(
+    job_id: str,
+    level: int,
+    user=Depends(get_current_user),
+):
+    """Return note list (pitch,start,end) for a rendered MIDI level."""
+    user_id = user.get("uid") if isinstance(user, dict) else None
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthenticated user")
+
+    midi_path = settings.OUTPUT_DIR / f"{job_id}_L{level}.mid"
+    if not midi_path.exists():
+        raise HTTPException(status_code=404, detail="MIDI not found for this level")
+
+    try:
+        pm = pretty_midi.PrettyMIDI(str(midi_path))
+        notes = []
+        for inst in pm.instruments:
+            for n in inst.notes:
+                notes.append(
+                    {
+                        "pitch": int(n.pitch),
+                        "start": float(n.start),
+                        "end": float(n.end),
+                    }
+                )
+        # Sort by start time
+        notes.sort(key=lambda x: x["start"])
+        return {"job_id": job_id, "level": level, "notes": notes}
+    except Exception as e:
+        logger.error(f"Failed to read MIDI for notes: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load notes")
 
 
 # ============================================
