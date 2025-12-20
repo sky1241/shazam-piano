@@ -67,3 +67,21 @@ def save_job_for_user(user_id: str, job_id: str, payload: Dict[str, Any]) -> Non
     payload["userId"] = user_id
     doc_ref.set(payload, merge=True)
     logger.success(f"Job {job_id} saved to Firestore for user {user_id}.")
+
+
+def save_practice_session(user_id: str, session_id: str, payload: Dict[str, Any]) -> None:
+    """Persist practice session metadata to Firestore under users/{uid}/practice_sessions/{session_id}."""
+    if firestore_client is None:
+        logger.warning("Firestore client not initialized; skipping practice session persistence.")
+        return
+
+    doc_ref = (
+        firestore_client.collection("users")
+        .document(user_id)
+        .collection("practice_sessions")
+        .document(session_id)
+    )
+    payload = dict(payload)
+    payload["userId"] = user_id
+    doc_ref.set(payload, merge=True)
+    logger.success(f"Practice session {session_id} saved to Firestore for user {user_id}.")

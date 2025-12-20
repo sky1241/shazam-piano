@@ -25,6 +25,7 @@ from firebase_client import (
     init_firebase,
     verify_firebase_token,
     save_job_for_user,
+    save_practice_session,
 )
 
 # ============================================
@@ -84,6 +85,24 @@ class HealthResponse(BaseModel):
     status: str
     timestamp: str
     version: str
+
+
+class PracticeSession(BaseModel):
+    """Payload to store a practice session result"""
+    job_id: str
+    level: int
+    score: float
+    accuracy: float | None = None
+    timing_ms: float | None = None
+    combo: int | None = None
+    notes_total: int | None = None
+    notes_correct: int | None = None
+    notes_missed: int | None = None
+    notes_wrong: int | None = None
+    started_at: str | None = None
+    ended_at: str | None = None
+    device: str | None = None
+    app_version: str | None = None
 
 
 # ============================================
@@ -409,6 +428,33 @@ async def startup_event():
 async def shutdown_event():
     """Cleanup on shutdown"""
     logger.info("👋 ShazaPiano Backend shutting down...")
+
+
+# ============================================
+# Practice endpoints
+# ============================================
+
+
+@app.post("/practice/session")
+async def save_practice(
+    payload: PracticeSession,
+    user=Depends(get_current_user),
+):
+    """Store a practice session result for the authenticated user."""
+    user_id = user.get("uid") if isinstance(user, dict) else None
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthenticated user")
+
+    session_id = payload.started_at or datetime.utcnow().isoformat()
+    data = payload.model_dump()
+    data["userId"] = user_id
+    try:
+        save_practice_session(user_id, session_id, data)
+    except Exception as e:
+        logger.warning(f"Failed to persist practice session: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save practice session")
+
+    return {"status": "ok", "session_id": session_id}
 
 
 # ============================================
