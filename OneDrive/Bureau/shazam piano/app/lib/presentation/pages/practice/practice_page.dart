@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:dio/dio.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/constants/app_constants.dart';
@@ -262,9 +264,58 @@ class _PracticePageState extends State<PracticePage> {
 
   void _stopPractice() {
     // TODO: Stop audio input stream
+    final finishedAt = DateTime.now().toIso8601String();
+    final score = _score;
+    final total = _totalNotes == 0 ? 1 : _totalNotes;
+    final accuracy = total > 0 ? (_correctNotes / total) * 100.0 : 0.0;
+
+    _sendPracticeSession(
+      score: score.toDouble(),
+      accuracy: accuracy,
+      notesTotal: total,
+      notesCorrect: _correctNotes,
+      startedAt: finishedAt, // reuse as id if no start time tracked
+      endedAt: finishedAt,
+    );
+
     setState(() {
       _detectedNote = null;
       _expectedNote = null;
     });
+  }
+
+  Future<void> _sendPracticeSession({
+    required double score,
+    required double accuracy,
+    required int notesTotal,
+    required int notesCorrect,
+    String? startedAt,
+    String? endedAt,
+  }) async {
+    try {
+      final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+      if (token == null) return;
+
+      final dio = Dio(BaseOptions(
+        baseUrl: AppConstants.backendBaseUrl,
+        connectTimeout: const Duration(seconds: 20),
+      ));
+      dio.options.headers['Authorization'] = 'Bearer $token';
+
+      await dio.post('/practice/session', data: {
+        'job_id': widget.level.jobId ?? widget.level.videoUrl,
+        'level': widget.level.level,
+        'score': score,
+        'accuracy': accuracy,
+        'notes_total': notesTotal,
+        'notes_correct': notesCorrect,
+        'notes_missed': notesTotal - notesCorrect,
+        'started_at': startedAt,
+        'ended_at': endedAt,
+        'app_version': 'mobile',
+      });
+    } catch (_) {
+      // ignore errors for now in UI; backend will log if it receives request
+    }
   }
 }
