@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     BASE_URL: str = "http://127.0.0.1:8000"  # used to build absolute media URLs for clients
     
+    # Firebase
+    FIREBASE_CREDENTIALS: str | None = None  # absolute path to service account JSON
+    FIREBASE_PROJECT_ID: str | None = None
+
     # ACRCloud (optional)
     ACR_HOST: str | None = None
     ACR_ACCESS_KEY: str | None = None

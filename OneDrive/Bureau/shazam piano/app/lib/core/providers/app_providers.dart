@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../config/app_config.dart';
 import '../../data/datasources/api_client.dart';
 
@@ -21,6 +22,24 @@ final dioProvider = Provider<Dio>((ref) {
     },
   ));
   
+  // Attach Firebase ID token to every request
+  dio.interceptors.add(
+    InterceptorsWrapper(
+      onRequest: (options, handler) async {
+        try {
+          final user = FirebaseAuth.instance.currentUser;
+          final token = await user?.getIdToken();
+          if (token != null) {
+            options.headers['Authorization'] = 'Bearer $token';
+          }
+        } catch (_) {
+          // ignore token errors to avoid blocking request; backend will reject if needed
+        }
+        return handler.next(options);
+      },
+    ),
+  );
+  
   // Add interceptors for logging in debug mode
   if (config.debugMode) {
     dio.interceptors.add(LogInterceptor(
@@ -39,5 +58,4 @@ final apiClientProvider = Provider<ApiClient>((ref) {
   
   return ApiClient(dio, baseUrl: config.backendBaseUrl);
 });
-
 

@@ -30,10 +30,14 @@ loguru==0.7.2
 # Pin setuptools to avoid pkg_resources deprecation warnings (pretty_midi dependency)
 setuptools==80.9.0
 
+# Firebase Admin / Firestore
+firebase-admin==6.3.0
+protobuf==4.25.8  # compatible with TensorFlow 2.15
+
 # Testing
 pytest==7.4.4
 pytest-asyncio==0.23.3
-httpx==0.26.0
+httpx==0.28.1
 
 # Optional: demucs (requires Python 3.10 and Torch)
 # demucs==4.0.1

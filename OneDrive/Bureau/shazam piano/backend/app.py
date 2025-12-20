@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import List, Optional
 from datetime import datetime
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Form, Header, Depends
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -21,6 +21,11 @@ from arranger import arrange_level
 from render import render_level_video
 from identify import identify_audio
 from separation import separate_melody
+from firebase_client import (
+    init_firebase,
+    verify_firebase_token,
+    save_job_for_user,
+)
 
 # ============================================
 # App Setup
@@ -82,6 +87,25 @@ class HealthResponse(BaseModel):
 
 
 # ============================================
+# Auth Helpers
+# ============================================
+
+def get_current_user(authorization: str = Header(None)):
+    """Validate Firebase ID token from Authorization header and return claims."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing Authorization Bearer token")
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        decoded = verify_firebase_token(token)
+        return decoded
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"Token verification failed: {e}")
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+# ============================================
 # Routes
 # ============================================
 
@@ -109,7 +133,8 @@ async def health():
 async def process_audio(
     audio: UploadFile = File(...),
     with_audio: bool = Query(False, description="Include synthesized audio in video"),
-    levels: Optional[str] = Form("1,2,3,4")
+    levels: Optional[str] = Form("1,2,3,4"),
+    user=Depends(get_current_user),
 ):
     """
     Process audio and generate piano videos for specified levels.
@@ -121,6 +146,10 @@ async def process_audio(
     Returns URLs for preview (16s) and full videos for each level.
     """
     
+    user_id = user.get("uid") if isinstance(user, dict) else None
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthenticated user")
+
     # Validate file size
     file_size = 0
     chunk_size = 1024 * 1024  # 1MB
@@ -299,7 +328,7 @@ async def process_audio(
                     )
                 )
         
-        return ProcessResponse(
+        response = ProcessResponse(
             job_id=job_id,
             timestamp=datetime.utcnow().isoformat(),
             levels=results,
@@ -307,6 +336,25 @@ async def process_audio(
             identified_artist=identified.get("artist") if identified else None,
             identified_album=identified.get("album") if identified else None,
         )
+
+        # Persist job metadata to Firestore
+        try:
+            levels_payload = [r.model_dump() for r in results]
+            payload = {
+                "jobId": job_id,
+                "createdAt": datetime.utcnow().isoformat(),
+                "identifiedTitle": identified.get("title") if identified else None,
+                "identifiedArtist": identified.get("artist") if identified else None,
+                "identifiedAlbum": identified.get("album") if identified else None,
+                "withAudio": with_audio,
+                "levels": levels_payload,
+                "inputFilename": input_path.name,
+            }
+            save_job_for_user(user_id, job_id, payload)
+        except Exception as save_error:
+            logger.warning(f"Failed to persist job to Firestore: {save_error}")
+
+        return response
         
     except HTTPException:
         raise
@@ -352,6 +400,7 @@ async def startup_event():
     """Initialize on startup"""
     logger.info("🚀 ShazaPiano Backend starting...")
     init_directories()
+    init_firebase(settings.FIREBASE_CREDENTIALS)
     logger.info(f"📁 Media directory: {settings.MEDIA_DIR}")
     logger.info(f"🎵 Ready to process on http://{settings.HOST}:{settings.PORT}")
 
