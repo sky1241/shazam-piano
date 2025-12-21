@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     # Firebase
     FIREBASE_CREDENTIALS: str | None = None  # absolute path to service account JSON
     FIREBASE_PROJECT_ID: str | None = None
+    DEBUG_AUTH_BYPASS: bool = False  # set True to bypass Firebase auth in dev
 
     # ACRCloud (optional)
     ACR_HOST: str | None = None
