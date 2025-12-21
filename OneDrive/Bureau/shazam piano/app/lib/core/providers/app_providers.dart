@@ -27,8 +27,11 @@ final dioProvider = Provider<Dio>((ref) {
     InterceptorsWrapper(
       onRequest: (options, handler) async {
         try {
-          final user = FirebaseAuth.instance.currentUser;
-          final token = await user?.getIdToken();
+          final auth = FirebaseAuth.instance;
+          if (auth.currentUser == null) {
+            await auth.signInAnonymously();
+          }
+          final token = await auth.currentUser?.getIdToken();
           if (token != null) {
             options.headers['Authorization'] = 'Bearer $token';
           }
@@ -58,4 +61,3 @@ final apiClientProvider = Provider<ApiClient>((ref) {
   
   return ApiClient(dio, baseUrl: config.backendBaseUrl);
 });
-
