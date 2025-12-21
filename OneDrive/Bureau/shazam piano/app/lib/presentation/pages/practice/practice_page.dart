@@ -8,6 +8,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:mic_stream/mic_stream.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
@@ -42,12 +43,20 @@ class _PracticePageState extends State<PracticePage> {
   List<_ExpectedNote> _expectedNotes = [];
   List<bool> _hitNotes = [];
   double _latencyMs = 0;
+  bool _latencyLoaded = false;
   final AudioPlayer _beepPlayer = AudioPlayer();
+  static const double _fallbackLatencyMs = 100.0; // Default offset if calibration fails
 
   // Piano keyboard (2 octaves for practice - C4 to C6)
   static const int _firstKey = 60; // C4
   static const int _lastKey = 84;  // C6
   static const List<int> _blackKeys = [1, 3, 6, 8, 10]; // C#, D#, F#, G#, A#
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedLatency();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -67,6 +76,26 @@ class _PracticePageState extends State<PracticePage> {
       ),
       body: Column(
         children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppConstants.spacing16,
+              vertical: AppConstants.spacing8,
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  _latencyMs > 0 ? 'Sync: ${_latencyMs.toStringAsFixed(0)} ms' : 'Sync auto',
+                  style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
+                ),
+                Text(
+                  _isListening ? 'En cours' : 'Prêt',
+                  style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
+                ),
+              ],
+            ),
+          ),
+
           // Score display
           Container(
             padding: const EdgeInsets.all(AppConstants.spacing16),
@@ -280,6 +309,9 @@ class _PracticePageState extends State<PracticePage> {
     // Auto calibrate silently (latency)
     if (_latencyMs == 0) {
       await _calibrateLatency();
+    }
+    if (_latencyMs == 0) {
+      _latencyMs = _fallbackLatencyMs; // fallback if calibration failed
     }
 
     // Fetch expected notes from backend
@@ -517,6 +549,34 @@ class _PracticePageState extends State<PracticePage> {
       // ignore
     } finally {
       await calibSub?.cancel();
+      if (_latencyMs <= 0) {
+        _latencyMs = _fallbackLatencyMs;
+      }
+      await _persistLatency();
+    }
+  }
+
+  Future<void> _loadSavedLatency() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getDouble('practice_latency_ms');
+      if (saved != null) {
+        _latencyMs = saved;
+      }
+      _latencyLoaded = true;
+      if (mounted) setState(() {});
+    } catch (_) {
+      _latencyLoaded = true;
+    }
+  }
+
+  Future<void> _persistLatency() async {
+    try {
+      if (_latencyMs <= 0) return;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble('practice_latency_ms', _latencyMs);
+    } catch (_) {
+      // ignore
     }
   }
 }
