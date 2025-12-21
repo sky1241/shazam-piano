@@ -52,9 +52,9 @@ class _PracticePageState extends State<PracticePage> {
   bool _useMidi = false;
   bool _midiAvailable = false;
 
-  // Piano keyboard (2 octaves for practice - C4 to C6)
-  static const int _firstKey = 60; // C4
-  static const int _lastKey = 84;  // C6
+  // Piano keyboard alignée avec la vidéo (C2 à C7 = 61 touches)
+  static const int _firstKey = 36; // C2
+  static const int _lastKey = 96;  // C7
   static const List<int> _blackKeys = [1, 3, 6, 8, 10]; // C#, D#, F#, G#, A#
 
   @override
@@ -200,39 +200,54 @@ class _PracticePageState extends State<PracticePage> {
   }
 
   Widget _buildPianoKeyboard() {
-    return Container(
-      height: 200,
+    // 61 touches affichées au complet avec scroll horizontal
+    const double whiteWidth = 18;
+    const double blackWidth = 12;
+    const double whiteHeight = 160;
+    const double blackHeight = 100;
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.symmetric(horizontal: AppConstants.spacing16),
-      child: Stack(
-        children: [
-          // White keys
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              for (int note = _firstKey; note <= _lastKey; note++)
-                if (!_isBlackKey(note))
-                  _buildPianoKey(note, isBlack: false),
-            ],
-          ),
-          // Black keys (positioned absolutely)
-          Positioned.fill(
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+      child: SizedBox(
+        height: whiteHeight + 20,
+        child: Stack(
+          children: [
+            Row(
               children: [
                 for (int note = _firstKey; note <= _lastKey; note++)
-                  if (_isBlackKey(note))
-                    _buildPianoKey(note, isBlack: true)
-                  else
-                    const SizedBox(width: 30), // Space for white keys
+                  if (!_isBlackKey(note))
+                    _buildPianoKey(
+                      note,
+                      isBlack: false,
+                      width: whiteWidth,
+                      height: whiteHeight,
+                    ),
               ],
             ),
-          ),
-        ],
+            Positioned.fill(
+              child: Row(
+                children: [
+                  for (int note = _firstKey; note <= _lastKey; note++)
+                    if (_isBlackKey(note))
+                      _buildPianoKey(
+                        note,
+                        isBlack: true,
+                        width: blackWidth,
+                        height: blackHeight,
+                      )
+                    else
+                      SizedBox(width: whiteWidth),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildPianoKey(int note, {required bool isBlack}) {
+  Widget _buildPianoKey(int note, {required bool isBlack, double width = 30, double height = 180}) {
     final isExpected = note == _expectedNote;
     final isDetected = note == _detectedNote;
     
