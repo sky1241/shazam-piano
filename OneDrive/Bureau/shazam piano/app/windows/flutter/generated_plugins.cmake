@@ -9,6 +9,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   firebase_core
   permission_handler_windows
   record_windows
+  universal_ble
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST

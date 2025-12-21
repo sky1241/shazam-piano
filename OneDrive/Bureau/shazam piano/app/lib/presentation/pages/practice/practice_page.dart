@@ -9,6 +9,7 @@ import 'package:mic_stream/mic_stream.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_midi_command/flutter_midi_command.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
@@ -39,6 +40,7 @@ class _PracticePageState extends State<PracticePage> {
   int _wrongNotes = 0;
   DateTime? _startTime;
   StreamSubscription<dynamic>? _micSub;
+  StreamSubscription<MidiPacket>? _midiSub;
   final _pitchDetector = PitchDetector();
   List<_ExpectedNote> _expectedNotes = [];
   List<bool> _hitNotes = [];
@@ -46,6 +48,8 @@ class _PracticePageState extends State<PracticePage> {
   bool _latencyLoaded = false;
   final AudioPlayer _beepPlayer = AudioPlayer();
   static const double _fallbackLatencyMs = 100.0; // Default offset if calibration fails
+  bool _useMidi = false;
+  bool _midiAvailable = false;
 
   // Piano keyboard (2 octaves for practice - C4 to C6)
   static const int _firstKey = 60; // C4
@@ -297,21 +301,26 @@ class _PracticePageState extends State<PracticePage> {
   }
 
   Future<void> _startPractice() async {
-    // Permissions
-    final micStatus = await Permission.microphone.request();
-    if (!micStatus.isGranted) {
-      setState(() {
-        _isListening = false;
-      });
-      return;
-    }
+    // Try MIDI first
+    _useMidi = await _tryStartMidi();
 
-    // Auto calibrate silently (latency)
-    if (_latencyMs == 0) {
-      await _calibrateLatency();
-    }
-    if (_latencyMs == 0) {
-      _latencyMs = _fallbackLatencyMs; // fallback if calibration failed
+    if (!_useMidi) {
+      // Permissions for mic
+      final micStatus = await Permission.microphone.request();
+      if (!micStatus.isGranted) {
+        setState(() {
+          _isListening = false;
+        });
+        return;
+      }
+
+      // Auto calibrate silently (latency)
+      if (_latencyMs == 0) {
+        await _calibrateLatency();
+      }
+      if (_latencyMs == 0) {
+        _latencyMs = _fallbackLatencyMs; // fallback if calibration failed
+      }
     }
 
     // Fetch expected notes from backend
@@ -323,23 +332,31 @@ class _PracticePageState extends State<PracticePage> {
     _hitNotes = List<bool>.filled(_expectedNotes.length, false);
     _startTime = DateTime.now();
 
-    // Start mic stream
-    try {
-      final stream = await MicStream.microphone(
-        sampleRate: PitchDetector.sampleRate,
-        audioFormat: AudioFormat.ENCODING_PCM_16BIT,
-      );
-      _micSub = stream?.listen(_processAudioChunk);
-    } catch (_) {
-      setState(() {
-        _isListening = false;
-      });
+    if (_useMidi) {
+      // Already listening via MIDI subscription
+    } else {
+      // Start mic stream
+      try {
+        final stream = await MicStream.microphone(
+          sampleRate: PitchDetector.sampleRate,
+          audioFormat: AudioFormat.ENCODING_PCM_16BIT,
+        );
+        _micSub = stream?.listen(_processAudioChunk);
+      } catch (_) {
+        setState(() {
+          _isListening = false;
+        });
+      }
     }
   }
 
   void _stopPractice() {
     _micSub?.cancel();
     _micSub = null;
+    _midiSub?.cancel();
+    _midiSub = null;
+    _useMidi = false;
+    _midiAvailable = false;
     _startTime = null;
     final finishedAt = DateTime.now().toIso8601String();
     final score = _score;
@@ -456,6 +473,7 @@ class _PracticePageState extends State<PracticePage> {
         _detectedNote = null;
       }
     });
+    _updateNextExpected();
   }
 
   Future<void> _loadExpectedNotes() async {
@@ -578,6 +596,90 @@ class _PracticePageState extends State<PracticePage> {
     } catch (_) {
       // ignore
     }
+  }
+
+  Future<bool> _tryStartMidi() async {
+    try {
+      final midi = MidiCommand();
+      final devices = await midi.devices;
+      if (devices.isEmpty) {
+        _midiAvailable = false;
+        return false;
+      }
+      final device = devices.first;
+      await midi.connectToDevice(device);
+      _midiAvailable = true;
+      _midiSub = midi.onMidiDataReceived?.listen(_processMidiPacket);
+      return true;
+    } catch (_) {
+      _midiAvailable = false;
+      return false;
+    }
+  }
+
+  void _processMidiPacket(MidiPacket packet) {
+    if (_startTime == null) return;
+    final data = packet.data;
+    if (data.isEmpty) return;
+    final status = data[0];
+    final command = status & 0xF0;
+    if (command == 0x90 && data.length >= 3) {
+      final note = data[1];
+      final velocity = data[2];
+      if (velocity == 0) return; // note off
+      final now = DateTime.now();
+      final elapsed = now.difference(_startTime!).inMilliseconds / 1000.0;
+
+      // Find active expected notes
+      final activeIndices = <int>[];
+      for (var i = 0; i < _expectedNotes.length; i++) {
+        final n = _expectedNotes[i];
+        if (elapsed >= n.start && elapsed <= n.end + 0.2) {
+          activeIndices.add(i);
+        }
+        if (elapsed > n.end + 0.2 && !_hitNotes[i]) {
+          _wrongNotes += 1;
+          _hitNotes[i] = true; // mark as processed
+        }
+      }
+
+      bool matched = false;
+      for (final idx in activeIndices) {
+        if (_hitNotes[idx]) continue;
+        if ((note - _expectedNotes[idx].pitch).abs() <= 1) {
+          matched = true;
+          _hitNotes[idx] = true;
+          _correctNotes += 1;
+          _score += 1;
+          _accuracy = NoteAccuracy.correct;
+          _expectedNote = _expectedNotes[idx].pitch;
+          break;
+        }
+      }
+
+      if (!matched && activeIndices.isNotEmpty) {
+        _accuracy = NoteAccuracy.wrong;
+        _wrongNotes += 1;
+      }
+
+      setState(() {
+        _detectedNote = note;
+        if (!_isListening) {
+          _detectedNote = null;
+        }
+      });
+      _updateNextExpected();
+    }
+  }
+
+  void _updateNextExpected() {
+    for (var i = 0; i < _expectedNotes.length; i++) {
+      if (!_hitNotes[i]) {
+        _expectedNote = _expectedNotes[i].pitch;
+        return;
+      }
+    }
+    _expectedNote = null;
   }
 }
 

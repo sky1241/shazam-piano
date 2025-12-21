@@ -76,6 +76,7 @@ dependencies:
   uuid: ^4.3.3
   mic_stream: ^0.7.2
   audioplayers: ^5.2.1
+  flutter_midi_command: ^0.5.3
 
 dev_dependencies:
   flutter_test:
