@@ -113,9 +113,9 @@ def render_keyboard_frame(
     # Calculate keyboard position (bottom of screen, scaled to fit width)
     total_white_keys = 35  # 5 octaves = 35 white keys
     
-    # Scale keys to fill 85% of screen width with dynamic sizing
-    available_width = int(width * 0.85)  # Use 85% of screen width
-    dynamic_white_key_width = max(10, available_width // total_white_keys)  # Scale keys but min 10px
+    # Scale keys to fill ~75% of screen width with dynamic sizing (gives more breathing room / less zoom)
+    available_width = int(width * 0.75)
+    dynamic_white_key_width = max(8, available_width // total_white_keys)  # Scale keys but min 8px
     keyboard_width = total_white_keys * dynamic_white_key_width
     keyboard_x = (width - keyboard_width) // 2
     
@@ -293,12 +293,14 @@ def generate_video_frames(
     
     # Calculate duration
     midi_duration = midi.get_end_time()
+    preroll = settings.VIDEO_PREROLL_SEC
     # Force target duration: limit to max_duration if specified (e.g., 16s)
     if max_duration:
         duration = min(max_duration, midi_duration)
     else:
         duration = midi_duration
-    num_frames = int(duration * fps)
+    effective_duration = duration + preroll
+    num_frames = int(effective_duration * fps)
     
     frames = []
     
@@ -313,7 +315,7 @@ def generate_video_frames(
 
     # Generate each frame
     for frame_idx in range(num_frames):
-        time = frame_idx * frame_dt + time_offset  # frame start time for precise alignment
+        time = frame_idx * frame_dt - preroll + time_offset  # start with preroll so bars fall from the sky
         
         # Find active notes at this time (with global offset)
         active_notes = set()
