@@ -74,9 +74,9 @@ dependencies:
   dartz: ^0.10.1
   intl: ^0.19.0
   uuid: ^4.3.3
-  mic_stream: ^0.7.2
   audioplayers: ^5.2.1
   flutter_midi_command: ^0.5.3
+  sound_stream: ^0.4.2
 
 dev_dependencies:
   flutter_test:

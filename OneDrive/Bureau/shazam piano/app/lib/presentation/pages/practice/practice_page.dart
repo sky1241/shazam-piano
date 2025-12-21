@@ -5,11 +5,11 @@ import 'dart:math';
 
 import 'package:dio/dio.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:mic_stream/mic_stream.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_midi_command/flutter_midi_command.dart';
+import 'package:sound_stream/sound_stream.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
@@ -39,7 +39,8 @@ class _PracticePageState extends State<PracticePage> {
   int _correctNotes = 0;
   int _wrongNotes = 0;
   DateTime? _startTime;
-  StreamSubscription<dynamic>? _micSub;
+  StreamSubscription<List<int>>? _micSub;
+  final RecorderStream _recorder = RecorderStream();
   StreamSubscription<MidiPacket>? _midiSub;
   final _pitchDetector = PitchDetector();
   List<_ExpectedNote> _expectedNotes = [];
@@ -337,11 +338,9 @@ class _PracticePageState extends State<PracticePage> {
     } else {
       // Start mic stream
       try {
-        final stream = await MicStream.microphone(
-          sampleRate: PitchDetector.sampleRate,
-          audioFormat: AudioFormat.ENCODING_PCM_16BIT,
-        );
-        _micSub = stream?.listen(_processAudioChunk);
+        await _recorder.initialize(sampleRate: PitchDetector.sampleRate);
+        await _recorder.start();
+        _micSub = _recorder.audioStream.listen(_processAudioChunk);
       } catch (_) {
         setState(() {
           _isListening = false;
@@ -353,6 +352,7 @@ class _PracticePageState extends State<PracticePage> {
   void _stopPractice() {
     _micSub?.cancel();
     _micSub = null;
+    _recorder.stop();
     _midiSub?.cancel();
     _midiSub = null;
     _useMidi = false;
@@ -414,11 +414,10 @@ class _PracticePageState extends State<PracticePage> {
     }
   }
 
-  Future<void> _processAudioChunk(dynamic chunk) async {
+  Future<void> _processAudioChunk(List<int> chunk) async {
     if (_startTime == null) return;
-    // chunk is likely List<int> PCM 16-bit
-    if (chunk is! List) return;
-    final int16 = Int16List.fromList(List<int>.from(chunk));
+    // chunk is PCM 16-bit mono
+    final int16 = Int16List.fromList(chunk);
     if (int16.isEmpty) return;
 
     final floatSamples = Float32List(int16.length);
