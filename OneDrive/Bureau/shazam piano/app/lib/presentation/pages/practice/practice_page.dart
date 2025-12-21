@@ -42,7 +42,6 @@ class _PracticePageState extends State<PracticePage> {
   List<_ExpectedNote> _expectedNotes = [];
   List<bool> _hitNotes = [];
   double _latencyMs = 0;
-  bool _isCalibrating = false;
   final AudioPlayer _beepPlayer = AudioPlayer();
 
   // Piano keyboard (2 octaves for practice - C4 to C6)
@@ -57,14 +56,6 @@ class _PracticePageState extends State<PracticePage> {
       appBar: AppBar(
         title: Text('Practice - ${widget.level.name}'),
         actions: [
-          TextButton.icon(
-            onPressed: _isCalibrating ? null : _calibrateLatency,
-            icon: const Icon(Icons.tune, color: Colors.white),
-            label: Text(
-              _latencyMs > 0 ? '${_latencyMs.toStringAsFixed(0)} ms' : 'Calibrer',
-              style: const TextStyle(color: Colors.white),
-            ),
-          ),
           IconButton(
             icon: Icon(
               _isListening ? Icons.stop : Icons.play_arrow,
@@ -286,6 +277,11 @@ class _PracticePageState extends State<PracticePage> {
       return;
     }
 
+    // Auto calibrate silently (latency)
+    if (_latencyMs == 0) {
+      await _calibrateLatency();
+    }
+
     // Fetch expected notes from backend
     await _loadExpectedNotes();
     _score = 0;
@@ -475,14 +471,12 @@ class _PracticePageState extends State<PracticePage> {
   }
 
   Future<void> _calibrateLatency() async {
-    if (_isCalibrating) return;
+    // Already calibrated
+    if (_latencyMs > 0) return;
     final micStatus = await Permission.microphone.request();
     if (!micStatus.isGranted) {
       return;
     }
-    setState(() {
-      _isCalibrating = true;
-    });
     final targetFreq = 880.0; // A5 beep
     final durationMs = 1200;
     DateTime? beepStart;
@@ -523,9 +517,6 @@ class _PracticePageState extends State<PracticePage> {
       // ignore
     } finally {
       await calibSub?.cancel();
-      setState(() {
-        _isCalibrating = false;
-      });
     }
   }
 }
