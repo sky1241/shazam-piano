@@ -2,16 +2,21 @@
 # ShazaPiano - Global .gitignore
 # ============================================
 
-# ===== Backend (Python) =====
+# --- Python / venv / caches ---
+backend/.venv*/
+backend/**/.venv*/
+.venv*/
+**/.venv*/
 __pycache__/
+**/__pycache__/
 *.py[cod]
+*.pyc
 *$py.class
 *.so
 .Python
 venv/
 env/
 ENV/
-.venv
 *.egg-info/
 dist/
 build/
@@ -22,8 +27,7 @@ backend/media/in/*
 backend/media/out/*
 !backend/media/.gitkeep
 
-# ===== Frontend (Flutter) =====
-# Dart/Flutter
+# --- Flutter / Dart ---
 app/.dart_tool/
 app/.flutter-plugins
 app/.flutter-plugins-dependencies
@@ -34,8 +38,6 @@ app/ios/Flutter/Flutter.framework
 app/ios/Flutter/Flutter.podspec
 app/ios/Pods/
 app/pubspec.lock
-
-# Coverage
 app/coverage/
 app/test/.test_coverage.dart
 
@@ -45,8 +47,6 @@ app/android/key.properties
 app/android/.gradle/
 app/android/local.properties
 *.iml
-
-# Gradle cache (IMPORTANT!)
 .gradle/
 gradle/
 
@@ -60,33 +60,27 @@ app/ios/.symlinks/
 app/ios/Pods/
 *.ipa
 
-# ===== Infrastructure =====
+# Infrastructure
 infra/ssl/
 infra/logs/
 
-# ===== IDE =====
+# --- OS / IDE ---
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 *.iml
-
-# ===== OS =====
-.DS_Store
-Thumbs.db
-ehthumbs.db
-Desktop.ini
-$RECYCLE.BIN/
-
-# Windows system files
 NTUSER.DAT*
 ntuser.*
 *.LOG*
 *.blf
 *.regtrans-ms
-
-# User directories (should never be in project)
 /**/AppData/
 /**/Local Settings/
 /**/Application Data/
@@ -126,8 +120,11 @@ ntuser.*
 /**/3D Objects/
 /**/Personal Vault.lnk
 /**/*Prise en main*.pdf
+OneDrive/
+Bureau/
+shazam piano/
 
-# ===== Secrets & Environment =====
+# --- Secrets & Environment ---
 .env
 .env.local
 .env.*.local
@@ -138,12 +135,15 @@ ntuser.*
 **/GoogleService-Info.plist
 !**/*GoogleService-Info.plist.example
 
-# ===== Logs =====
+# --- Logs ---
 *.log
 logs/
 
-# ===== Temp & Cache =====
+# --- Temp & Cache ---
 *.tmp
 *.cache
 .cache/
 
+# --- IDE cache fallback ---
+**/.idea/
+**/.vscode/
