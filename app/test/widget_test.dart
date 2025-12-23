@@ -14,11 +14,7 @@ import 'package:shazapiano/presentation/pages/home/home_page.dart';
 void main() {
   testWidgets('App launches successfully', (WidgetTester tester) async {
     // Build our app and trigger a frame.
-    await tester.pumpWidget(
-      const ProviderScope(
-        child: ShazaPianoApp(),
-      ),
-    );
+    await tester.pumpWidget(const ProviderScope(child: ShazaPianoApp()));
 
     // Verify that the home page renders
     expect(find.byType(HomePage), findsOneWidget);

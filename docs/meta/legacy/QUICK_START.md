@@ -23,7 +23,7 @@ winget install FFmpeg
 
 ```powershell
 # Clone repo (déjà fait ✅)
-cd "C:\Users\ludov\OneDrive\Bureau\shazam piano"
+cd <repo-root>
 
 # Run setup automatique
 .\scripts\setup.ps1
@@ -322,5 +322,4 @@ cd app && flutter run     # Run Flutter
 ---
 
 **Happy coding! 🎹✨**
-
 

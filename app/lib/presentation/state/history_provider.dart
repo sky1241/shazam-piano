@@ -6,12 +6,12 @@ import '../../domain/entities/process_response.dart';
 /// In-memory history of generation jobs with local persistence
 final historyProvider =
     StateNotifierProvider<HistoryNotifier, List<ProcessResponse>>((ref) {
-  return HistoryNotifier();
-});
+      return HistoryNotifier();
+    });
 
 class HistoryNotifier extends StateNotifier<List<ProcessResponse>> {
   static const _storageKey = 'shazapiano_history';
-  
+
   HistoryNotifier() : super(const []) {
     _loadFromStorage();
   }

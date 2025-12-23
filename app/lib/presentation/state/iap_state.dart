@@ -36,5 +36,3 @@ class IAPState {
   bool get isLoading => isPurchasing || isRestoring;
   bool get hasError => error != null;
 }
-
-

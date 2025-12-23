@@ -71,9 +71,7 @@ class _BigRecordButtonState extends State<BigRecordButton>
                   ),
                 ],
               ),
-              child: Center(
-                child: _buildIcon(),
-              ),
+              child: Center(child: _buildIcon()),
             ),
           );
         },
@@ -84,17 +82,9 @@ class _BigRecordButtonState extends State<BigRecordButton>
   Widget _buildIcon() {
     switch (widget.state) {
       case RecordButtonState.idle:
-        return const Icon(
-          Icons.mic,
-          size: 80,
-          color: Colors.white,
-        );
+        return const Icon(Icons.mic, size: 80, color: Colors.white);
       case RecordButtonState.recording:
-        return const Icon(
-          Icons.stop,
-          size: 80,
-          color: Colors.white,
-        );
+        return const Icon(Icons.stop, size: 80, color: Colors.white);
       case RecordButtonState.processing:
         return const CircularProgressIndicator(
           color: Colors.white,
@@ -104,9 +94,4 @@ class _BigRecordButtonState extends State<BigRecordButton>
   }
 }
 
-enum RecordButtonState {
-  idle,
-  recording,
-  processing,
-}
-
+enum RecordButtonState { idle, recording, processing }

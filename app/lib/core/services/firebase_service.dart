@@ -17,7 +17,7 @@ class FirebaseService {
     try {
       await Firebase.initializeApp();
       debugPrint('Firebase Core initialized');
-      
+
       // Setup Crashlytics (non-blocking)
       try {
         await _setupCrashlytics();
@@ -25,7 +25,7 @@ class FirebaseService {
       } catch (e) {
         debugPrint('Crashlytics setup failed (non-critical): $e');
       }
-      
+
       // Setup anonymous auth (non-blocking)
       try {
         await _setupAuth();
@@ -33,7 +33,7 @@ class FirebaseService {
       } catch (e) {
         debugPrint('Anonymous auth failed (non-critical): $e');
       }
-      
+
       debugPrint('Firebase initialized successfully');
     } catch (e, stackTrace) {
       debugPrint('Firebase initialization failed: $e');
@@ -93,11 +93,11 @@ class FirebaseService {
   }
 
   /// Log analytics event
-  static Future<void> logEvent(String name, {Map<String, dynamic>? parameters}) async {
-    await analytics.logEvent(
-      name: name,
-      parameters: parameters,
-    );
+  static Future<void> logEvent(
+    String name, {
+    Map<String, dynamic>? parameters,
+  }) async {
+    await analytics.logEvent(name: name, parameters: parameters);
   }
 
   /// Log screen view
@@ -105,4 +105,3 @@ class FirebaseService {
     await analytics.logScreenView(screenName: screenName);
   }
 }
-

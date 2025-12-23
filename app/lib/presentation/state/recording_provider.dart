@@ -8,13 +8,16 @@ import '../../core/constants/app_constants.dart';
 import 'recording_state.dart';
 
 // Logger helpers
-void _logInfo(String message) => developer.log(message, name: 'RecordingProvider');
-void _logWarning(String message) => developer.log(message, name: 'RecordingProvider', level: 900);
+void _logInfo(String message) =>
+    developer.log(message, name: 'RecordingProvider');
+void _logWarning(String message) =>
+    developer.log(message, name: 'RecordingProvider', level: 900);
 
 /// Recording state provider
-final recordingProvider = StateNotifierProvider<RecordingNotifier, RecordingState>((ref) {
-  return RecordingNotifier();
-});
+final recordingProvider =
+    StateNotifierProvider<RecordingNotifier, RecordingState>((ref) {
+      return RecordingNotifier();
+    });
 
 class RecordingNotifier extends StateNotifier<RecordingState> {
   RecordingNotifier() : super(const RecordingState());
@@ -34,7 +37,8 @@ class RecordingNotifier extends StateNotifier<RecordingState> {
 
       // Get temp directory
       final tempDir = await getTemporaryDirectory();
-      final filePath = '${tempDir.path}/recording_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      final filePath =
+          '${tempDir.path}/recording_${DateTime.now().millisecondsSinceEpoch}.m4a';
 
       // Start recording
       await _recorder.start(
@@ -54,16 +58,20 @@ class RecordingNotifier extends StateNotifier<RecordingState> {
       );
 
       // Update duration every 100ms
-      _durationTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+      _durationTimer = Timer.periodic(const Duration(milliseconds: 100), (
+        timer,
+      ) {
         if (_startTime != null) {
           final duration = DateTime.now().difference(_startTime!);
           state = state.copyWith(recordingDuration: duration);
 
           // Auto-stop at recommended duration (8s) or max (30s)
-          if (duration.inSeconds >= AppConstants.recommendedRecordingDurationSec) {
+          if (duration.inSeconds >=
+              AppConstants.recommendedRecordingDurationSec) {
             _logInfo('Auto-stopping recording after ${duration.inSeconds}s');
             stopRecording();
-          } else if (duration.inSeconds >= AppConstants.maxRecordingDurationSec) {
+          } else if (duration.inSeconds >=
+              AppConstants.maxRecordingDurationSec) {
             _logWarning('Max duration reached, stopping...');
             stopRecording();
           }
@@ -81,16 +89,13 @@ class RecordingNotifier extends StateNotifier<RecordingState> {
       _durationTimer = null;
 
       final path = await _recorder.stop();
-      
+
       if (path != null) {
         final file = File(path);
-        
+
         // Validate file exists and has content
         if (await file.exists() && await file.length() > 0) {
-          state = state.copyWith(
-            isRecording: false,
-            recordedFile: file,
-          );
+          state = state.copyWith(isRecording: false, recordedFile: file);
         } else {
           state = state.copyWith(
             isRecording: false,
@@ -141,5 +146,3 @@ class RecordingNotifier extends StateNotifier<RecordingState> {
     super.dispose();
   }
 }
-
-

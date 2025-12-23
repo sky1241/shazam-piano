@@ -37,11 +37,7 @@ class _PaywallModalState extends ConsumerState<PaywallModal> {
                 shape: BoxShape.circle,
                 gradient: AppColors.buttonGradient,
               ),
-              child: const Icon(
-                Icons.lock_open,
-                size: 40,
-                color: Colors.white,
-              ),
+              child: const Icon(Icons.lock_open, size: 40, color: Colors.white),
             ),
 
             const SizedBox(height: AppConstants.spacing24),
@@ -146,18 +142,9 @@ class _PaywallModalState extends ConsumerState<PaywallModal> {
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
-          const Icon(
-            Icons.check_circle,
-            color: AppColors.success,
-            size: 20,
-          ),
+          const Icon(Icons.check_circle, color: AppColors.success, size: 20),
           const SizedBox(width: AppConstants.spacing12),
-          Expanded(
-            child: Text(
-              text,
-              style: AppTextStyles.body,
-            ),
-          ),
+          Expanded(child: Text(text, style: AppTextStyles.body)),
         ],
       ),
     );
@@ -170,13 +157,13 @@ class _PaywallModalState extends ConsumerState<PaywallModal> {
 
     try {
       await ref.read(iapProvider.notifier).purchase();
-      
+
       final iapState = ref.read(iapProvider);
-      
+
       if (iapState.isUnlocked && mounted) {
         // Success - close modal
         Navigator.of(context).pop(true);
-        
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Achat réussi ! Tous les niveaux sont débloqués 🎉'),
@@ -205,12 +192,12 @@ class _PaywallModalState extends ConsumerState<PaywallModal> {
   Future<void> _handleRestore() async {
     try {
       await ref.read(iapProvider.notifier).restorePurchases();
-      
+
       final iapState = ref.read(iapProvider);
-      
+
       if (iapState.isUnlocked && mounted) {
         Navigator.of(context).pop(true);
-        
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Achat restauré avec succès !'),
@@ -237,4 +224,3 @@ class _PaywallModalState extends ConsumerState<PaywallModal> {
     }
   }
 }
-

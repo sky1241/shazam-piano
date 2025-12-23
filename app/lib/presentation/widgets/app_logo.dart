@@ -7,12 +7,7 @@ class AppLogo extends StatelessWidget {
   final double? height;
   final Color? color;
 
-  const AppLogo({
-    super.key,
-    this.width,
-    this.height,
-    this.color,
-  });
+  const AppLogo({super.key, this.width, this.height, this.color});
 
   @override
   Widget build(BuildContext context) {

@@ -28,7 +28,7 @@ flutter run -d FMMFSOOBXO8T5D75
 ### 1. Installer Python Dependencies (Une Seule Fois)
 
 ```bash
-cd "C:\Users\ludov\OneDrive\Bureau\shazam piano\backend"
+cd backend
 
 # Créer environnement virtuel
 python -m venv venv
@@ -80,7 +80,7 @@ factory AppConfig.dev() {
 ### 4. Lancer le Backend
 
 ```bash
-cd "C:\Users\ludov\OneDrive\Bureau\shazam piano\backend"
+cd backend
 python app.py
 ```
 
@@ -116,7 +116,7 @@ Devrait retourner:
 ### 6. Relancer l'App Flutter
 
 ```bash
-cd "C:\Users\ludov\OneDrive\Bureau\shazam piano\app"
+cd app
 flutter run -d FMMFSOOBXO8T5D75
 ```
 
@@ -217,4 +217,3 @@ SUCCESS: ✅ Level 1 completed!
 ---
 
 **Tout est prêt ! Il suffit de lancer le backend.** 🎹🚀
-

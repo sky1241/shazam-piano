@@ -40,5 +40,3 @@ class ProcessState {
   bool get hasError => error != null;
   bool get isSuccess => result != null && result!.allSuccess;
 }
-
-

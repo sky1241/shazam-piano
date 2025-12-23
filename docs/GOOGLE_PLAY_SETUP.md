@@ -290,7 +290,7 @@ EUR : 0.99
 
 ```bash
 # Aller dans dossier Android
-cd "C:\Users\ludov\OneDrive\Bureau\shazam piano\app\android"
+    cd app/android
 
 # Générer keystore
 keytool -genkey -v -keystore shazapiano-release.keystore ^
@@ -320,7 +320,7 @@ Mot de passe de la clé : [MÊME MOT DE PASSE ou ENTER pour identique]
 
 ```bash
 # Dans app/android/
-cd "C:\Users\ludov\OneDrive\Bureau\shazam piano\app\android"
+    cd app/android
 
 # Créer fichier key.properties (PowerShell)
 @"
@@ -339,7 +339,7 @@ storeFile=../shazapiano-release.keystore
 
 ```bash
 # Retour au dossier app
-cd "C:\Users\ludov\OneDrive\Bureau\shazam piano\app"
+    cd app
 
 # Installer dépendances
 flutter pub get
@@ -941,4 +941,3 @@ Upload production > Examen Google > LIVE ! 🎉
 **🎹 Tu es maintenant prêt pour le Play Store ! 🚀**
 
 **Questions ?** ludo@shazapiano.com
-

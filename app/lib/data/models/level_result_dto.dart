@@ -45,7 +45,10 @@ class LevelResultDto {
     String _abs(String url) {
       if (url.isEmpty) return url;
       if (url.startsWith('http')) return url;
-      final base = AppConstants.backendBaseUrl.trim().replaceAll(RegExp(r'/$'), '');
+      final base = AppConstants.backendBaseUrl.trim().replaceAll(
+        RegExp(r'/$'),
+        '',
+      );
       if (url.startsWith('/')) return '$base$url';
       return '$base/$url';
     }
@@ -64,4 +67,3 @@ class LevelResultDto {
     );
   }
 }
-

@@ -5,7 +5,9 @@ import '../../core/providers/app_providers.dart';
 import 'process_state.dart';
 
 /// Process state provider
-final processProvider = StateNotifierProvider<ProcessNotifier, ProcessState>((ref) {
+final processProvider = StateNotifierProvider<ProcessNotifier, ProcessState>((
+  ref,
+) {
   final apiClient = ref.watch(apiClientProvider);
   return ProcessNotifier(apiClient);
 });
@@ -27,7 +29,7 @@ class ProcessNotifier extends StateNotifier<ProcessState> {
 
       // Upload with progress
       final levelsString = levels.join(',');
-      
+
       // Note: Actual upload with progress tracking would need custom implementation
       // For now, simple upload
       state = state.copyWith(uploadProgress: 0.5);
@@ -46,7 +48,7 @@ class ProcessNotifier extends StateNotifier<ProcessState> {
       );
     } on DioException catch (e) {
       String errorMessage = 'Upload failed';
-      
+
       if (e.response != null) {
         errorMessage = e.response?.data['detail'] ?? errorMessage;
       } else if (e.type == DioExceptionType.connectionTimeout) {
@@ -74,5 +76,3 @@ class ProcessNotifier extends StateNotifier<ProcessState> {
     state = const ProcessState();
   }
 }
-
-

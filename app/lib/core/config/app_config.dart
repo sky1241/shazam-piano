@@ -23,7 +23,8 @@ class AppConfig {
   /// Production configuration
   factory AppConfig.prod() {
     return const AppConfig(
-      backendBaseUrl: 'https://api.shazapiano.com', // TODO: Update with real URL
+      backendBaseUrl:
+          'https://api.shazapiano.com', // TODO: Update with real URL
       debugMode: false,
       environment: 'prod',
     );
@@ -41,4 +42,3 @@ class AppConfig {
     }
   }
 }
-

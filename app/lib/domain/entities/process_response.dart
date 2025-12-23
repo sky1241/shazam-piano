@@ -23,4 +23,3 @@ class ProcessResponse {
   bool get hasErrors => errorCount > 0;
   bool get allSuccess => successCount == levels.length;
 }
-

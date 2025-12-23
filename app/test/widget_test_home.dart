@@ -10,25 +10,22 @@ void main() {
       // Build HomePage wrapped in necessary providers
       await tester.pumpWidget(
         ProviderScope(
-          child: MaterialApp(
-            theme: AppTheme.darkTheme,
-            home: const HomePage(),
-          ),
+          child: MaterialApp(theme: AppTheme.darkTheme, home: const HomePage()),
         ),
       );
 
       // Verify key elements are present
       expect(find.text('ShazaPiano'), findsOneWidget);
-      expect(find.text('Appuie pour créer\ntes 4 vidéos piano'), findsOneWidget);
+      expect(
+        find.text('Appuie pour créer\ntes 4 vidéos piano'),
+        findsOneWidget,
+      );
     });
 
     testWidgets('BigRecordButton is displayed', (WidgetTester tester) async {
       await tester.pumpWidget(
         ProviderScope(
-          child: MaterialApp(
-            theme: AppTheme.darkTheme,
-            home: const HomePage(),
-          ),
+          child: MaterialApp(theme: AppTheme.darkTheme, home: const HomePage()),
         ),
       );
 
@@ -39,10 +36,7 @@ void main() {
     testWidgets('Level chips are displayed', (WidgetTester tester) async {
       await tester.pumpWidget(
         ProviderScope(
-          child: MaterialApp(
-            theme: AppTheme.darkTheme,
-            home: const HomePage(),
-          ),
+          child: MaterialApp(theme: AppTheme.darkTheme, home: const HomePage()),
         ),
       );
 
@@ -50,13 +44,12 @@ void main() {
       expect(find.text('Progression des niveaux'), findsOneWidget);
     });
 
-    testWidgets('Tapping record button changes state', (WidgetTester tester) async {
+    testWidgets('Tapping record button changes state', (
+      WidgetTester tester,
+    ) async {
       await tester.pumpWidget(
         ProviderScope(
-          child: MaterialApp(
-            theme: AppTheme.darkTheme,
-            home: const HomePage(),
-          ),
+          child: MaterialApp(theme: AppTheme.darkTheme, home: const HomePage()),
         ),
       );
 
@@ -72,5 +65,3 @@ void main() {
     });
   });
 }
-
-

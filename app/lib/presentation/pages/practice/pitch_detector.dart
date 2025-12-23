@@ -17,7 +17,7 @@ class PitchDetector {
 
     // Use MPM algorithm
     final frequency = _mpmPitch(samples);
-    
+
     return frequency;
   }
 
@@ -25,10 +25,10 @@ class PitchDetector {
   double? _mpmPitch(Float32List samples) {
     // Step 1: Normalized Square Difference Function (NSDF)
     final nsdf = _normalizedSquareDifference(samples);
-    
+
     // Step 2: Peak picking
     final peaks = _pickPeaks(nsdf);
-    
+
     if (peaks.isEmpty) {
       return null;
     }
@@ -50,10 +50,10 @@ class PitchDetector {
 
     // Step 4: Parabolic interpolation for sub-sample accuracy
     final interpolated = _parabolicInterpolation(nsdf, bestPeak);
-    
+
     // Convert lag to frequency
     final frequency = sampleRate / interpolated;
-    
+
     // Filter unrealistic frequencies (piano range: 27.5 Hz - 4186 Hz)
     if (frequency < 20 || frequency > 5000) {
       return null;
@@ -66,20 +66,21 @@ class PitchDetector {
   List<double> _normalizedSquareDifference(Float32List samples) {
     final n = samples.length;
     final nsdf = List<double>.filled(n, 0);
-    
+
     // Autocorrelation
     for (int tau = 0; tau < n; tau++) {
       double acf = 0;
       double divisorM = 0;
-      
+
       for (int i = 0; i < n - tau; i++) {
         acf += samples[i] * samples[i + tau];
-        divisorM += samples[i] * samples[i] + samples[i + tau] * samples[i + tau];
+        divisorM +=
+            samples[i] * samples[i] + samples[i + tau] * samples[i + tau];
       }
-      
+
       nsdf[tau] = divisorM > 0 ? 2 * acf / divisorM : 0;
     }
-    
+
     return nsdf;
   }
 
@@ -101,7 +102,7 @@ class PitchDetector {
       // Positive crossing
       if (nsdf[pos] > 0) {
         curMaxPos = pos;
-        
+
         // Find local maximum
         while (pos < nsdf.length - 1 && nsdf[pos] <= nsdf[pos + 1]) {
           pos++;
@@ -129,7 +130,7 @@ class PitchDetector {
     final s2 = nsdf[peak + 1];
 
     final adjustment = (s2 - s0) / (2 * (2 * s1 - s2 - s0));
-    
+
     return peak + adjustment;
   }
 
@@ -151,7 +152,7 @@ class PitchDetector {
   /// Classify note accuracy
   NoteAccuracy classifyAccuracy(double centsError) {
     final absError = centsError.abs();
-    
+
     if (absError <= 25) {
       return NoteAccuracy.correct;
     } else if (absError <= 50) {
@@ -163,10 +164,8 @@ class PitchDetector {
 }
 
 enum NoteAccuracy {
-  correct,  // ±25 cents
-  close,    // ±25-50 cents
-  wrong,    // >50 cents
-  miss,     // No note detected
+  correct, // ±25 cents
+  close, // ±25-50 cents
+  wrong, // >50 cents
+  miss, // No note detected
 }
-
-

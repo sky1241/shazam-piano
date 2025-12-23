@@ -51,11 +51,11 @@ class _PlayerPageState extends State<PlayerPage> {
         if (url.startsWith('http')) return url;
         final baseRaw = AppConstants.backendBaseUrl.trim();
         final base = baseRaw.isEmpty ? 'http://127.0.0.1:8000' : baseRaw;
-        final baseWithSlash =
-            base.endsWith('/') ? base : '$base/'; // ensure trailing slash
+        final baseWithSlash = base.endsWith('/')
+            ? base
+            : '$base/'; // ensure trailing slash
         final cleaned = url.startsWith('/') ? url.substring(1) : url;
-        final resolved =
-            Uri.parse(baseWithSlash).resolve(cleaned).toString();
+        final resolved = Uri.parse(baseWithSlash).resolve(cleaned).toString();
         // Debug base + resolved
         // ignore: avoid_print
         print('[Player] base=$base resolved=$resolved');
@@ -125,8 +125,9 @@ class _PlayerPageState extends State<PlayerPage> {
 
   @override
   Widget build(BuildContext context) {
-    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
-    
+    final isLandscape =
+        MediaQuery.of(context).orientation == Orientation.landscape;
+
     if (isLandscape) {
       return Scaffold(
         backgroundColor: AppColors.bg,
@@ -135,11 +136,19 @@ class _PlayerPageState extends State<PlayerPage> {
             children: [
               // Top bar with title
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(widget.level.name, style: AppTextStyles.body.copyWith(fontWeight: FontWeight.w600)),
+                    Text(
+                      widget.level.name,
+                      style: AppTextStyles.body.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                     Row(
                       children: [
                         IconButton(
@@ -168,17 +177,14 @@ class _PlayerPageState extends State<PlayerPage> {
         ),
       );
     }
-    
+
     // Portrait mode (original layout)
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(
         title: Text(widget.level.name),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.share),
-            onPressed: _handleShare,
-          ),
+          IconButton(icon: const Icon(Icons.share), onPressed: _handleShare),
           if (widget.isUnlocked)
             IconButton(
               icon: const Icon(Icons.download),
@@ -193,104 +199,100 @@ class _PlayerPageState extends State<PlayerPage> {
               // Track title/artist hidden to avoid duplicate overlays with rendered video
 
               // Video Player
-              Container(
-                color: Colors.black,
-                child: _buildVideoPlayer(),
+              Container(color: Colors.black, child: _buildVideoPlayer()),
+
+              // Metadata Card
+              Padding(
+                padding: const EdgeInsets.all(AppConstants.spacing16),
+                child: Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(AppConstants.spacing16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(widget.level.name, style: AppTextStyles.title),
+                        const SizedBox(height: AppConstants.spacing8),
+                        _buildMetadataRow(
+                          'Tonalite',
+                          widget.level.keyGuess ?? 'N/A',
+                        ),
+                        _buildMetadataRow(
+                          'Tempo',
+                          '${widget.level.tempoGuess ?? 0} BPM',
+                        ),
+                        _buildMetadataRow(
+                          'Duree',
+                          widget.isUnlocked ? 'Complete' : '16s preview',
+                        ),
+                        if (!widget.isUnlocked) ...[
+                          const SizedBox(height: AppConstants.spacing16),
+                          Container(
+                            padding: const EdgeInsets.all(
+                              AppConstants.spacing12,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.warning.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.lock,
+                                  color: AppColors.warning,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: AppConstants.spacing8),
+                                Expanded(
+                                  child: Text(
+                                    'Debloquez pour la video complete',
+                                    style: AppTextStyles.caption.copyWith(
+                                      color: AppColors.warning,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
               ),
 
-          // Metadata Card
-          Padding(
-            padding: const EdgeInsets.all(AppConstants.spacing16),
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(AppConstants.spacing16),
+              const SizedBox(height: AppConstants.spacing16),
+
+              // Action Buttons
+              Padding(
+                padding: const EdgeInsets.all(AppConstants.spacing24),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      widget.level.name,
-                      style: AppTextStyles.title,
-                    ),
-                    const SizedBox(height: AppConstants.spacing8),
-                    _buildMetadataRow(
-                      'Tonalite',
-                      widget.level.keyGuess ?? 'N/A',
-                    ),
-                    _buildMetadataRow(
-                      'Tempo',
-                      '${widget.level.tempoGuess ?? 0} BPM',
-                    ),
-                    _buildMetadataRow(
-                      'Duree',
-                      widget.isUnlocked ? 'Complete' : '16s preview',
-                    ),
-                    if (!widget.isUnlocked) ...[
-                      const SizedBox(height: AppConstants.spacing16),
-                      Container(
-                        padding: const EdgeInsets.all(AppConstants.spacing12),
-                        decoration: BoxDecoration(
-                          color: AppColors.warning.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
+                    if (widget.isUnlocked)
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _handlePracticeMode,
+                          icon: const Icon(Icons.piano),
+                          label: const Text('Mode Pratique (beta)'),
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                          ),
                         ),
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.lock,
-                              color: AppColors.warning,
-                              size: 20,
-                            ),
-                            const SizedBox(width: AppConstants.spacing8),
-                            Expanded(
-                              child: Text(
-                                'Debloquez pour la video complete',
-                                style: AppTextStyles.caption.copyWith(
-                                  color: AppColors.warning,
-                                ),
-                              ),
-                            ),
-                          ],
+                      )
+                    else
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: _handleUnlock,
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                          ),
+                          child: const Text('Debloquer pour 1\$'),
                         ),
                       ),
-                    ],
                   ],
                 ),
               ),
-            ),
-          ),
-
-          const SizedBox(height: AppConstants.spacing16),
-
-          // Action Buttons
-          Padding(
-            padding: const EdgeInsets.all(AppConstants.spacing24),
-            child: Column(
-              children: [
-                if (widget.isUnlocked)
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _handlePracticeMode,
-                      icon: const Icon(Icons.piano),
-                      label: const Text('Mode Pratique (beta)'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                      ),
-                    ),
-                  )
-                else
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _handleUnlock,
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                      ),
-                      child: const Text('Debloquer pour 1\$'),
-                    ),
-                  ),
-              ],
-            ),
-          ),
             ],
           ),
         ),
@@ -298,12 +300,10 @@ class _PlayerPageState extends State<PlayerPage> {
     );
   }
 
-    Widget _buildVideoPlayer() {
+  Widget _buildVideoPlayer() {
     if (_isLoading) {
       return const Center(
-        child: CircularProgressIndicator(
-          color: AppColors.primary,
-        ),
+        child: CircularProgressIndicator(color: AppColors.primary),
       );
     }
 
@@ -314,17 +314,11 @@ class _PlayerPageState extends State<PlayerPage> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(
-                Icons.error_outline,
-                color: AppColors.error,
-                size: 48,
-              ),
+              const Icon(Icons.error_outline, color: AppColors.error, size: 48),
               const SizedBox(height: AppConstants.spacing16),
               Text(
                 _error!,
-                style: AppTextStyles.body.copyWith(
-                  color: AppColors.error,
-                ),
+                style: AppTextStyles.body.copyWith(color: AppColors.error),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: AppConstants.spacing16),
@@ -339,14 +333,12 @@ class _PlayerPageState extends State<PlayerPage> {
     }
 
     if (_chewieController == null) {
-      return const Center(
-        child: Text('Aucune video'),
-      );
+      return const Center(child: Text('Aucune video'));
     }
 
     final size = _videoPlayerController?.value.size;
     final aspectRatio = (size?.aspectRatio ?? 16 / 9);
-    
+
     return Stack(
       children: [
         Center(
@@ -371,26 +363,11 @@ class _PlayerPageState extends State<PlayerPage> {
                   _videoPlayerController?.setPlaybackSpeed(speed);
                 },
                 itemBuilder: (context) => [
-                  const PopupMenuItem(
-                    value: 0.5,
-                    child: Text('0.5x'),
-                  ),
-                  const PopupMenuItem(
-                    value: 0.75,
-                    child: Text('0.75x'),
-                  ),
-                  const PopupMenuItem(
-                    value: 1.0,
-                    child: Text('1.0x (Normal)'),
-                  ),
-                  const PopupMenuItem(
-                    value: 1.25,
-                    child: Text('1.25x'),
-                  ),
-                  const PopupMenuItem(
-                    value: 1.5,
-                    child: Text('1.5x'),
-                  ),
+                  const PopupMenuItem(value: 0.5, child: Text('0.5x')),
+                  const PopupMenuItem(value: 0.75, child: Text('0.75x')),
+                  const PopupMenuItem(value: 1.0, child: Text('1.0x (Normal)')),
+                  const PopupMenuItem(value: 1.25, child: Text('1.25x')),
+                  const PopupMenuItem(value: 1.5, child: Text('1.5x')),
                 ],
                 child: Padding(
                   padding: const EdgeInsets.all(8),
@@ -433,15 +410,11 @@ class _PlayerPageState extends State<PlayerPage> {
         children: [
           Text(
             label,
-            style: AppTextStyles.body.copyWith(
-              color: AppColors.textSecondary,
-            ),
+            style: AppTextStyles.body.copyWith(color: AppColors.textSecondary),
           ),
           Text(
             value,
-            style: AppTextStyles.body.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
+            style: AppTextStyles.body.copyWith(fontWeight: FontWeight.w600),
           ),
         ],
       ),
@@ -450,26 +423,20 @@ class _PlayerPageState extends State<PlayerPage> {
 
   void _handleShare() {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Partage en cours d implementation'),
-      ),
+      const SnackBar(content: Text('Partage en cours d implementation')),
     );
   }
 
   void _handleDownload() {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Telechargement en cours d implementation'),
-      ),
+      const SnackBar(content: Text('Telechargement en cours d implementation')),
     );
   }
 
   void _handlePracticeMode() {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => PracticePage(
-          level: widget.level,
-        ),
+        builder: (context) => PracticePage(level: widget.level),
       ),
     );
   }
@@ -484,4 +451,3 @@ class _PlayerPageState extends State<PlayerPage> {
     );
   }
 }
-

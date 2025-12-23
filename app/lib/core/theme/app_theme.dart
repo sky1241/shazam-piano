@@ -8,7 +8,7 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
-      
+
       // Colors
       scaffoldBackgroundColor: AppColors.bg,
       colorScheme: ColorScheme.dark(
@@ -44,9 +44,7 @@ class AppTheme {
       cardTheme: CardThemeData(
         color: AppColors.card,
         elevation: 0,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
 
       // Button
@@ -59,17 +57,12 @@ class AppTheme {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(24),
           ),
-          textStyle: AppTextStyles.body.copyWith(
-            fontWeight: FontWeight.w600,
-          ),
+          textStyle: AppTextStyles.body.copyWith(fontWeight: FontWeight.w600),
         ),
       ),
 
       // Divider
-      dividerTheme: DividerThemeData(
-        color: AppColors.divider,
-        thickness: 1,
-      ),
+      dividerTheme: DividerThemeData(color: AppColors.divider, thickness: 1),
 
       // Input
       inputDecorationTheme: InputDecorationTheme(
@@ -87,5 +80,3 @@ class AppTheme {
   // Private constructor
   AppTheme._();
 }
-
-

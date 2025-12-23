@@ -34,116 +34,107 @@ class _HomePageState extends ConsumerState<HomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
-        decoration: BoxDecoration(
-          gradient: AppColors.backgroundGradient,
-        ),
+        decoration: BoxDecoration(gradient: AppColors.backgroundGradient),
         child: SafeArea(
           child: LayoutBuilder(
             builder: (context, constraints) {
               return SingleChildScrollView(
                 child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    minHeight: constraints.maxHeight,
-                  ),
+                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
                   child: IntrinsicHeight(
                     child: Column(
                       children: [
-              // App bar
-              Padding(
-                padding: const EdgeInsets.all(AppConstants.spacing16),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    IconButton(
-                      icon: Icon(
-                        Icons.menu,
-                        color: AppColors.textPrimary,
-                      ),
-                      onPressed: _openSettings,
-                    ),
-                    const AppLogo(
-                      width: 120,
-                      height: 40,
-                    ),
-                    IconButton(
-                      icon: Icon(
-                        Icons.history,
-                        color: AppColors.textPrimary,
-                      ),
-                      onPressed: _openHistory,
-                    ),
-                  ],
-                ),
-              ),
-
-              Flexible(
-                flex: 1,
-                child: Container(),
-              ),
-
-              // Main content: Big record button
-              Flexible(
-                flex: 2,
-                child: Column(
-                children: [
-                  BigRecordButton(
-                    state: _buttonState,
-                    onTap: _handleRecordButtonTap,
-                  ),
-                  const SizedBox(height: AppConstants.spacing32),
-                  Text(
-                    _getButtonText(),
-                    style: AppTextStyles.display.copyWith(fontSize: 20),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: AppConstants.spacing8),
-                  Text(
-                    _getSubtitleText(),
-                    style: AppTextStyles.body.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-                ),
-              ),
-
-              Flexible(
-                flex: 1,
-                child: Container(),
-              ),
-
-              // Level status chips
-              Padding(
-                padding: const EdgeInsets.all(AppConstants.spacing24),
-                child: Column(
-                  children: [
-                    Text(
-                      'Progression des niveaux',
-                      style: AppTextStyles.caption,
-                    ),
-                    const SizedBox(height: AppConstants.spacing12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        for (int i = 1; i <= 4; i++) ...[
-                          ModeChip(
-                            level: i,
-                            status: _levelStatuses[i]!,
+                        // App bar
+                        Padding(
+                          padding: const EdgeInsets.all(AppConstants.spacing16),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              IconButton(
+                                icon: Icon(
+                                  Icons.menu,
+                                  color: AppColors.textPrimary,
+                                ),
+                                onPressed: _openSettings,
+                              ),
+                              const AppLogo(width: 120, height: 40),
+                              IconButton(
+                                icon: Icon(
+                                  Icons.history,
+                                  color: AppColors.textPrimary,
+                                ),
+                                onPressed: _openHistory,
+                              ),
+                            ],
                           ),
-                          if (i < 4)
-                            const SizedBox(width: AppConstants.spacing8),
-                        ],
+                        ),
+
+                        Flexible(flex: 1, child: Container()),
+
+                        // Main content: Big record button
+                        Flexible(
+                          flex: 2,
+                          child: Column(
+                            children: [
+                              BigRecordButton(
+                                state: _buttonState,
+                                onTap: _handleRecordButtonTap,
+                              ),
+                              const SizedBox(height: AppConstants.spacing32),
+                              Text(
+                                _getButtonText(),
+                                style: AppTextStyles.display.copyWith(
+                                  fontSize: 20,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                              const SizedBox(height: AppConstants.spacing8),
+                              Text(
+                                _getSubtitleText(),
+                                style: AppTextStyles.body.copyWith(
+                                  color: AppColors.textSecondary,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        Flexible(flex: 1, child: Container()),
+
+                        // Level status chips
+                        Padding(
+                          padding: const EdgeInsets.all(AppConstants.spacing24),
+                          child: Column(
+                            children: [
+                              Text(
+                                'Progression des niveaux',
+                                style: AppTextStyles.caption,
+                              ),
+                              const SizedBox(height: AppConstants.spacing12),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  for (int i = 1; i <= 4; i++) ...[
+                                    ModeChip(
+                                      level: i,
+                                      status: _levelStatuses[i]!,
+                                    ),
+                                    if (i < 4)
+                                      const SizedBox(
+                                        width: AppConstants.spacing8,
+                                      ),
+                                  ],
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
-                  ],
-                ),
-              ),
-                    ],
                   ),
                 ),
-              ),
-            );
+              );
             },
           ),
         ),
@@ -185,15 +176,15 @@ class _HomePageState extends ConsumerState<HomePage> {
 
       // Start actual audio recording
       await recordingNotifier.startRecording();
-      
+
       // Recording started, wait for user to stop
       // (button will be tapped again to stop)
     } else if (_buttonState == RecordButtonState.recording) {
       // Stop recording
       await recordingNotifier.stopRecording();
-      
+
       final recordingState = ref.read(recordingProvider);
-      
+
       if (recordingState.hasError) {
         // Show error
         if (mounted) {
@@ -239,9 +230,9 @@ class _HomePageState extends ConsumerState<HomePage> {
         withAudio: false,
         levels: [1, 2, 3, 4],
       );
-      
+
       final processState = ref.read(processProvider);
-      
+
       if (processState.hasError) {
         // Show error
         if (mounted) {
@@ -307,7 +298,7 @@ class _HomePageState extends ConsumerState<HomePage> {
             ),
           ),
         );
-        
+
         // Reset state
         setState(() {
           _buttonState = RecordButtonState.idle;
@@ -332,27 +323,19 @@ class _HomePageState extends ConsumerState<HomePage> {
         });
       }
     }
-    
+
     await Future.delayed(const Duration(seconds: 1));
   }
 
   void _openSettings() {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => const SettingsPage(),
-      ),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (context) => const SettingsPage()));
   }
 
   void _openHistory() {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => const HistoryPage(),
-      ),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (context) => const HistoryPage()));
   }
 }
-
-
-
-

@@ -172,7 +172,7 @@ chmod +x scripts/*.sh
 
 ```bash
 # Run from project root
-cd "C:\Users\ludov\OneDrive\Bureau\shazam piano"
+cd <repo-root>
 ./scripts/setup.sh
 ```
 
@@ -195,5 +195,4 @@ backend\.venv\Scripts\Activate.ps1  # Windows
 ---
 
 **Happy scripting! 🚀**
-
 

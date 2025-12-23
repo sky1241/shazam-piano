@@ -8,33 +8,36 @@ import 'presentation/pages/home/home_page.dart';
 
 void main() {
   // Keep all initialization and runApp in the same zone to avoid zone mismatch.
-  runZonedGuarded(() async {
-    WidgetsFlutterBinding.ensureInitialized();
-    AppConfig.fromEnvironment();
+  runZonedGuarded(
+    () async {
+      WidgetsFlutterBinding.ensureInitialized();
+      AppConfig.fromEnvironment();
 
-    try {
-      await FirebaseService.initialize();
-      debugPrint('App initialization successful');
-    } catch (e, stackTrace) {
-      debugPrint('App initialization failed: $e');
+      try {
+        await FirebaseService.initialize();
+        debugPrint('App initialization successful');
+      } catch (e, stackTrace) {
+        debugPrint('App initialization failed: $e');
+        debugPrint('Stack trace: $stackTrace');
+      }
+
+      runApp(
+        ProviderScope(
+          overrides: [
+            // Add config provider override here
+          ],
+          child: const ShazaPianoApp(),
+        ),
+      );
+    },
+    (error, stackTrace) {
+      debugPrint('Uncaught error: $error');
       debugPrint('Stack trace: $stackTrace');
-    }
-
-    runApp(
-      ProviderScope(
-        overrides: [
-          // Add config provider override here
-        ],
-        child: const ShazaPianoApp(),
-      ),
-    );
-  }, (error, stackTrace) {
-    debugPrint('Uncaught error: $error');
-    debugPrint('Stack trace: $stackTrace');
-    try {
-      FirebaseService.crashlytics.recordError(error, stackTrace);
-    } catch (_) {}
-  });
+      try {
+        FirebaseService.crashlytics.recordError(error, stackTrace);
+      } catch (_) {}
+    },
+  );
 }
 
 class ShazaPianoApp extends StatelessWidget {

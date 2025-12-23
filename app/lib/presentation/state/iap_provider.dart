@@ -25,7 +25,7 @@ class IAPNotifier extends StateNotifier<IAPState> {
     try {
       // Check if IAP is available
       final available = await _iap.isAvailable();
-      
+
       if (!available) {
         state = state.copyWith(
           isInitialized: true,
@@ -47,10 +47,7 @@ class IAPNotifier extends StateNotifier<IAPState> {
         },
       );
 
-      state = state.copyWith(
-        isInitialized: true,
-        isUnlocked: isUnlocked,
-      );
+      state = state.copyWith(isInitialized: true, isUnlocked: isUnlocked);
 
       // Auto-restore on startup
       if (!isUnlocked) {
@@ -97,15 +94,12 @@ class IAPNotifier extends StateNotifier<IAPState> {
       state = state.copyWith(isPurchasing: true, error: null);
 
       // Query product
-      final response = await _iap.queryProductDetails(
-        {AppConstants.iapProductId},
-      );
+      final response = await _iap.queryProductDetails({
+        AppConstants.iapProductId,
+      });
 
       if (response.notFoundIDs.isNotEmpty) {
-        state = state.copyWith(
-          isPurchasing: false,
-          error: 'Product not found',
-        );
+        state = state.copyWith(isPurchasing: false, error: 'Product not found');
         return;
       }
 
@@ -125,10 +119,7 @@ class IAPNotifier extends StateNotifier<IAPState> {
 
       // State will be updated by purchase stream
     } catch (e) {
-      state = state.copyWith(
-        isPurchasing: false,
-        error: 'Purchase failed: $e',
-      );
+      state = state.copyWith(isPurchasing: false, error: 'Purchase failed: $e');
     }
   }
 
@@ -151,10 +142,7 @@ class IAPNotifier extends StateNotifier<IAPState> {
         state = state.copyWith(isRestoring: false);
       }
     } catch (e) {
-      state = state.copyWith(
-        isRestoring: false,
-        error: 'Restore failed: $e',
-      );
+      state = state.copyWith(isRestoring: false, error: 'Restore failed: $e');
     }
   }
 
@@ -183,5 +171,3 @@ class IAPNotifier extends StateNotifier<IAPState> {
     super.dispose();
   }
 }
-
-

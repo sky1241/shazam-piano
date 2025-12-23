@@ -38,5 +38,3 @@ class RecordingState {
   bool get hasRecording => recordedFile != null;
   bool get hasError => error != null;
 }
-
-

@@ -32,7 +32,7 @@ class PreviewsPage extends ConsumerStatefulWidget {
 class _PreviewsPageState extends ConsumerState<PreviewsPage> {
   @override
   Widget build(BuildContext context) {
-        return Scaffold(
+    return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(
         title: Column(
@@ -40,10 +40,7 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
           children: [
             const Text('Tes videos piano'),
             if (widget.trackTitle != null)
-              Text(
-                widget.trackTitle!,
-                style: AppTextStyles.caption,
-              ),
+              Text(widget.trackTitle!, style: AppTextStyles.caption),
             if (widget.trackArtist != null)
               Text(
                 widget.trackArtist!,
@@ -54,105 +51,103 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
           ],
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.share),
-            onPressed: _handleShare,
-          ),
+          IconButton(icon: const Icon(Icons.share), onPressed: _handleShare),
         ],
       ),
       body: SafeArea(
         child: Column(
           children: [
-          // Video grid
-          Expanded(
-            child: SingleChildScrollView(
-              child: Padding(
-                padding: const EdgeInsets.all(AppConstants.spacing16),
-                child: GridView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  crossAxisSpacing: AppConstants.spacing16,
-                  mainAxisSpacing: AppConstants.spacing16,
-                  childAspectRatio: 0.75,
-                ),
-                itemCount: widget.levels.length,
-                itemBuilder: (context, index) {
-                  final level = widget.levels[index];
-                  
-                  return VideoTile(
-                    level: level.level,
-                    levelName: level.name,
-                    previewUrl: level.previewUrl,
-                    isUnlocked: widget.isUnlocked,
-                    isLoading: level.isPending,
-                    videoKey: level.keyGuess,
-                    tempo: level.tempoGuess,
-                    onTap: () => _handleVideoTileTap(level),
-                  );
-                },
-                ),
-              ),
-            ),
-          ),
+            // Video grid
+            Expanded(
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.all(AppConstants.spacing16),
+                  child: GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          crossAxisSpacing: AppConstants.spacing16,
+                          mainAxisSpacing: AppConstants.spacing16,
+                          childAspectRatio: 0.75,
+                        ),
+                    itemCount: widget.levels.length,
+                    itemBuilder: (context, index) {
+                      final level = widget.levels[index];
 
-          // Unlock button
-          if (!widget.isUnlocked)
-            Container(
-              padding: const EdgeInsets.all(AppConstants.spacing16),
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                border: Border(
-                  top: BorderSide(color: AppColors.divider, width: 1),
-                ),
-              ),
-              child: SafeArea(
-                top: false,
-                child: Column(
-                  children: [
-                    Text(
-                      'Débloquer les 4 niveaux',
-                      style: AppTextStyles.title,
-                    ),
-                    const SizedBox(height: AppConstants.spacing8),
-                    Text(
-                      'Accès complet à toutes les vidéos',
-                      style: AppTextStyles.caption,
-                    ),
-                    const SizedBox(height: AppConstants.spacing16),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _handleUnlock,
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                            vertical: AppConstants.spacing16,
-                          ),
-                        ),
-                        child: Text(
-                          'Acheter pour ${AppConstants.iapPrice}',
-                          style: AppTextStyles.body.copyWith(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: _handleRestore,
-                      child: Text(
-                        'Restaurer l\'achat',
-                        style: AppTextStyles.caption.copyWith(
-                          color: AppColors.primary,
-                        ),
-                      ),
-                    ),
-                  ],
+                      return VideoTile(
+                        level: level.level,
+                        levelName: level.name,
+                        previewUrl: level.previewUrl,
+                        isUnlocked: widget.isUnlocked,
+                        isLoading: level.isPending,
+                        videoKey: level.keyGuess,
+                        tempo: level.tempoGuess,
+                        onTap: () => _handleVideoTileTap(level),
+                      );
+                    },
+                  ),
                 ),
               ),
             ),
-        ],
+
+            // Unlock button
+            if (!widget.isUnlocked)
+              Container(
+                padding: const EdgeInsets.all(AppConstants.spacing16),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  border: Border(
+                    top: BorderSide(color: AppColors.divider, width: 1),
+                  ),
+                ),
+                child: SafeArea(
+                  top: false,
+                  child: Column(
+                    children: [
+                      Text(
+                        'Débloquer les 4 niveaux',
+                        style: AppTextStyles.title,
+                      ),
+                      const SizedBox(height: AppConstants.spacing8),
+                      Text(
+                        'Accès complet à toutes les vidéos',
+                        style: AppTextStyles.caption,
+                      ),
+                      const SizedBox(height: AppConstants.spacing16),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: _handleUnlock,
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                              vertical: AppConstants.spacing16,
+                            ),
+                          ),
+                          child: Text(
+                            'Acheter pour ${AppConstants.iapPrice}',
+                            style: AppTextStyles.body.copyWith(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: _handleRestore,
+                        child: Text(
+                          'Restaurer l\'achat',
+                          style: AppTextStyles.caption.copyWith(
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -187,7 +182,7 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
       context: context,
       builder: (context) => const PaywallModal(),
     );
-    
+
     // Check if unlocked after modal closes
     final iapState = ref.read(iapProvider);
     if (iapState.isUnlocked && mounted) {
@@ -200,9 +195,9 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
   void _handleRestore() async {
     try {
       await ref.read(iapProvider.notifier).restorePurchases();
-      
+
       final iapState = ref.read(iapProvider);
-      
+
       if (iapState.isUnlocked && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -235,11 +230,9 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
 
   void _handleShare() {
     // TODO: Share functionality
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Partage à venir...'),
-      ),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Partage à venir...')));
   }
 
   Future<bool?> _showPaywallModal() {
@@ -264,11 +257,7 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                Icons.lock_open,
-                size: 48,
-                color: AppColors.primary,
-              ),
+              Icon(Icons.lock_open, size: 48, color: AppColors.primary),
               const SizedBox(height: AppConstants.spacing16),
               Text(
                 'Tout débloquer pour ${AppConstants.iapPrice}',
@@ -336,16 +325,3 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
     );
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

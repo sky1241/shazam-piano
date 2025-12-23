@@ -42,5 +42,3 @@ class AppTextStyles {
   // Private constructor
   AppTextStyles._();
 }
-
-

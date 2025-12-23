@@ -11,7 +11,8 @@ class ResultBottomSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasId = result.identifiedTitle != null || result.identifiedArtist != null;
+    final hasId =
+        result.identifiedTitle != null || result.identifiedArtist != null;
     return Container(
       decoration: BoxDecoration(
         color: AppColors.card,
@@ -28,10 +29,7 @@ class ResultBottomSheet extends StatelessWidget {
             children: [
               Icon(Icons.music_note, color: AppColors.primary),
               const SizedBox(width: AppConstants.spacing8),
-              Text(
-                'Analyse terminée',
-                style: AppTextStyles.title,
-              ),
+              Text('Analyse terminée', style: AppTextStyles.title),
             ],
           ),
           const SizedBox(height: AppConstants.spacing12),
@@ -43,19 +41,20 @@ class ResultBottomSheet extends StatelessWidget {
             const SizedBox(height: AppConstants.spacing4),
             Text(
               result.identifiedArtist ?? 'Artiste inconnu',
-              style: AppTextStyles.body.copyWith(color: AppColors.textSecondary),
+              style: AppTextStyles.body.copyWith(
+                color: AppColors.textSecondary,
+              ),
             ),
             if (result.identifiedAlbum != null) ...[
               const SizedBox(height: AppConstants.spacing4),
-              Text(
-                result.identifiedAlbum!,
-                style: AppTextStyles.caption,
-              ),
+              Text(result.identifiedAlbum!, style: AppTextStyles.caption),
             ],
           ] else ...[
             Text(
               'Aucune identification trouvée',
-              style: AppTextStyles.body.copyWith(color: AppColors.textSecondary),
+              style: AppTextStyles.body.copyWith(
+                color: AppColors.textSecondary,
+              ),
             ),
           ],
           const SizedBox(height: AppConstants.spacing16),
@@ -76,4 +75,3 @@ class ResultBottomSheet extends StatelessWidget {
     );
   }
 }
-

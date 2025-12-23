@@ -20,9 +20,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
     return Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: AppBar(
-        title: const Text('Paramètres'),
-      ),
+      appBar: AppBar(title: const Text('Paramètres')),
       body: ListView(
         children: [
           // Account Section
@@ -35,7 +33,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 subtitle: Text(
                   iapState.isUnlocked ? 'Compte premium' : 'Compte gratuit',
                   style: AppTextStyles.caption.copyWith(
-                    color: iapState.isUnlocked ? AppColors.success : AppColors.textSecondary,
+                    color: iapState.isUnlocked
+                        ? AppColors.success
+                        : AppColors.textSecondary,
                   ),
                 ),
                 trailing: iapState.isUnlocked
@@ -44,14 +44,20 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               ),
               if (!iapState.isUnlocked)
                 ListTile(
-                  leading: const Icon(Icons.shopping_cart, color: AppColors.warning),
+                  leading: const Icon(
+                    Icons.shopping_cart,
+                    color: AppColors.warning,
+                  ),
                   title: const Text('Débloquer tous les niveaux'),
                   subtitle: const Text('1,00 \$ - Achat unique'),
                   trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                   onTap: _handleUnlock,
                 ),
               ListTile(
-                leading: const Icon(Icons.restore, color: AppColors.textSecondary),
+                leading: const Icon(
+                  Icons.restore,
+                  color: AppColors.textSecondary,
+                ),
                 title: const Text('Restaurer les achats'),
                 onTap: _handleRestore,
               ),
@@ -68,7 +74,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 subtitle: Text('1.0.0+1'),
               ),
               ListTile(
-                leading: const Icon(Icons.privacy_tip, color: AppColors.textSecondary),
+                leading: const Icon(
+                  Icons.privacy_tip,
+                  color: AppColors.textSecondary,
+                ),
                 title: const Text('Politique de confidentialité'),
                 trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                 onTap: () {
@@ -76,7 +85,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.gavel, color: AppColors.textSecondary),
+                leading: const Icon(
+                  Icons.gavel,
+                  color: AppColors.textSecondary,
+                ),
                 title: const Text('Conditions d\'utilisation'),
                 trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                 onTap: () {
@@ -151,7 +163,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ),
         ),
         Container(
-          margin: const EdgeInsets.symmetric(horizontal: AppConstants.spacing16),
+          margin: const EdgeInsets.symmetric(
+            horizontal: AppConstants.spacing16,
+          ),
           decoration: BoxDecoration(
             color: AppColors.card,
             borderRadius: BorderRadius.circular(AppConstants.radiusCard),
@@ -164,17 +178,15 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   void _handleUnlock() {
     // TODO: Show paywall
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Ouverture du paywall...'),
-      ),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Ouverture du paywall...')));
   }
 
   void _handleRestore() async {
     try {
       await ref.read(iapProvider.notifier).restorePurchases();
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -230,4 +242,3 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     );
   }
 }
-

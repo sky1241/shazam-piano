@@ -310,7 +310,7 @@ Le backend n'est pas lancé !
 ### Solution
 **Option 1: Backend Local**
 ```bash
-cd "C:\Users\ludov\OneDrive\Bureau\shazam piano\backend"
+cd backend
 python app.py
 ```
 
@@ -347,4 +347,3 @@ Déployez le backend sur Fly.io/Railway et utilisez l'URL publique.
 ---
 
 Le code est **100% conforme aux PDFs** ! Il manque juste de lancer le backend pour voir les vidéos générées. 🚀
-

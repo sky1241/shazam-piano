@@ -87,10 +87,7 @@ class VideoTile extends StatelessWidget {
                                 color: AppColors.textSecondary,
                               ),
                               const SizedBox(width: 4),
-                              Text(
-                                videoKey!,
-                                style: AppTextStyles.caption,
-                              ),
+                              Text(videoKey!, style: AppTextStyles.caption),
                               const SizedBox(width: AppConstants.spacing12),
                             ],
                             if (tempo != null) ...[
@@ -100,10 +97,7 @@ class VideoTile extends StatelessWidget {
                                 color: AppColors.textSecondary,
                               ),
                               const SizedBox(width: 4),
-                              Text(
-                                '$tempo BPM',
-                                style: AppTextStyles.caption,
-                              ),
+                              Text('$tempo BPM', style: AppTextStyles.caption),
                             ],
                           ],
                         ),
@@ -126,7 +120,9 @@ class VideoTile extends StatelessWidget {
                   ),
                   decoration: BoxDecoration(
                     color: AppColors.primary,
-                    borderRadius: BorderRadius.circular(AppConstants.radiusCard),
+                    borderRadius: BorderRadius.circular(
+                      AppConstants.radiusCard,
+                    ),
                   ),
                   child: Text(
                     '16s preview',
@@ -144,12 +140,12 @@ class VideoTile extends StatelessWidget {
                 child: Container(
                   decoration: BoxDecoration(
                     color: AppColors.bg.withOpacity(0.8),
-                    borderRadius: BorderRadius.circular(AppConstants.radiusCard),
+                    borderRadius: BorderRadius.circular(
+                      AppConstants.radiusCard,
+                    ),
                   ),
                   child: Center(
-                    child: CircularProgressIndicator(
-                      color: AppColors.primary,
-                    ),
+                    child: CircularProgressIndicator(color: AppColors.primary),
                   ),
                 ),
               ),
@@ -161,11 +157,7 @@ class VideoTile extends StatelessWidget {
 
   Widget _buildPreviewArea() {
     if (isLoading) {
-      return Center(
-        child: CircularProgressIndicator(
-          color: AppColors.primary,
-        ),
-      );
+      return Center(child: CircularProgressIndicator(color: AppColors.primary));
     }
 
     if (thumbnailUrl != null) {
@@ -179,14 +171,6 @@ class VideoTile extends StatelessWidget {
       );
     }
 
-    return Center(
-      child: Icon(
-        Icons.piano,
-        size: 48,
-        color: AppColors.divider,
-      ),
-    );
+    return Center(child: Icon(Icons.piano, size: 48, color: AppColors.divider));
   }
 }
-
-

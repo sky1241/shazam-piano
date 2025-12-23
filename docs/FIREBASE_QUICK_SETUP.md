@@ -94,13 +94,13 @@ ShazaPiano
 **Windows** :
 ```powershell
 # Copier le fichier téléchargé dans :
-C:\Users\ludov\OneDrive\Bureau\shazam piano\app\android\app\google-services.json
+<repo-root>\app\android\app\google-services.json
 ```
 
 **Vérifier** :
 ```powershell
 # Le fichier doit être EXACTEMENT là :
-dir "C:\Users\ludov\OneDrive\Bureau\shazam piano\app\android\app\google-services.json"
+dir "<repo-root>\\app\\android\\app\\google-services.json"
 
 # Tu devrais voir : google-services.json
 ```
@@ -206,7 +206,7 @@ service cloud.firestore {
 
 ```powershell
 # Vérifier que google-services.json est au bon endroit
-dir "C:\Users\ludov\OneDrive\Bureau\shazam piano\app\android\app\google-services.json"
+dir "<repo-root>\\app\\android\\app\\google-services.json"
 
 # Tu devrais voir le fichier
 ```
@@ -214,7 +214,7 @@ dir "C:\Users\ludov\OneDrive\Bureau\shazam piano\app\android\app\google-services
 ### Test 2 : Lancer l'App
 
 ```bash
-cd "C:\Users\ludov\OneDrive\Bureau\shazam piano\app"
+cd app
 flutter run
 ```
 
@@ -380,7 +380,6 @@ vs
 **Guide rapide** : Ce document (juste l'essentiel)
 
 **Questions ?** ludo@shazapiano.com 🚀
-
 
 
 

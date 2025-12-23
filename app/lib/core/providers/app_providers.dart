@@ -12,16 +12,18 @@ final appConfigProvider = Provider<AppConfig>((ref) {
 /// Dio instance provider
 final dioProvider = Provider<Dio>((ref) {
   final config = ref.watch(appConfigProvider);
-  
-  final dio = Dio(BaseOptions(
-    baseUrl: config.backendBaseUrl,
-    connectTimeout: const Duration(seconds: 30),
-    receiveTimeout: const Duration(minutes: 15), // BasicPitch + video rendering can be very slow
-    headers: {
-      'Accept': 'application/json',
-    },
-  ));
-  
+
+  final dio = Dio(
+    BaseOptions(
+      baseUrl: config.backendBaseUrl,
+      connectTimeout: const Duration(seconds: 30),
+      receiveTimeout: const Duration(
+        minutes: 15,
+      ), // BasicPitch + video rendering can be very slow
+      headers: {'Accept': 'application/json'},
+    ),
+  );
+
   // Attach Firebase ID token to every request
   dio.interceptors.add(
     InterceptorsWrapper(
@@ -42,15 +44,12 @@ final dioProvider = Provider<Dio>((ref) {
       },
     ),
   );
-  
+
   // Add interceptors for logging in debug mode
   if (config.debugMode) {
-    dio.interceptors.add(LogInterceptor(
-      requestBody: true,
-      responseBody: true,
-    ));
+    dio.interceptors.add(LogInterceptor(requestBody: true, responseBody: true));
   }
-  
+
   return dio;
 });
 
@@ -58,6 +57,6 @@ final dioProvider = Provider<Dio>((ref) {
 final apiClientProvider = Provider<ApiClient>((ref) {
   final dio = ref.watch(dioProvider);
   final config = ref.watch(appConfigProvider);
-  
+
   return ApiClient(dio, baseUrl: config.backendBaseUrl);
 });

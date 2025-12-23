@@ -132,8 +132,8 @@ docs: ## Open documentation
 	@echo "  - docs/UI_SPEC.md"
 	@echo "  - docs/ROADMAP.md"
 	@echo "  - docs/SETUP_FIREBASE.md"
-	@echo "  - STATUS.md"
-	@echo "  - FINAL_SUMMARY.md"
+	@echo "  - docs/meta/legacy/STATUS.md"
+	@echo "  - docs/meta/legacy/FINAL_SUMMARY.md"
 
 # Project info
 info: ## Show project information

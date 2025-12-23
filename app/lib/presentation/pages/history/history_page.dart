@@ -21,19 +21,13 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
 
     return Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: AppBar(
-        title: const Text('Historique'),
-      ),
+      appBar: AppBar(title: const Text('Historique')),
       body: history.isEmpty
           ? Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(
-                    Icons.history,
-                    size: 64,
-                    color: AppColors.textSecondary,
-                  ),
+                  Icon(Icons.history, size: 64, color: AppColors.textSecondary),
                   const SizedBox(height: AppConstants.spacing16),
                   Text(
                     'Aucune generation recente',
@@ -80,4 +74,3 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
     );
   }
 }
-

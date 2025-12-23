@@ -57,6 +57,17 @@ shazapiano/
     └── ROADMAP.md
 ```
 
+### Repo layout updates
+- Root now contains directly: `app/`, `backend/`, `packages/`, `scripts/`, `infra/`, `docs/`, `.github/`, `Makefile`.
+- Archives et anciens docs: `docs/meta/legacy/` (index: `docs/meta/README.md`).
+- Pièces jointes PDF: `docs/attachments/`.
+- Fiches IA: `AGENTS.md`, `PROJECT_MAP.md`, `TASK_TEMPLATE.md` à la racine.
+
+### Commandes utiles (Makefile)
+- Flutter: `make install-flutter`, `make flutter-format`, `make flutter-analyze`, `make flutter-test`.
+- Backend: `make install-backend`, `make backend-run`, `make backend-test`, `make backend-lint`.
+- Nettoyage: `make clean`; CI combiné: `make ci-all`.
+
 ---
 
 ## 🚀 Quick Start
