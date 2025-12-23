@@ -311,3 +311,6 @@ Propriétaire - ShazaPiano © 2025
 ---
 
 **🎹 Transforme ton piano en vidéos pédagogiques en quelques secondes !**
+
+## Codex usage
+- Start every new Codex session by reading CODEX_SYSTEM.md
