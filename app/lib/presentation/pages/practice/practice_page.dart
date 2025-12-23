@@ -65,7 +65,6 @@ class _PracticePageState extends State<PracticePage>
   int _score = 0;
   int _totalNotes = 0;
   int _correctNotes = 0;
-  int _wrongNotes = 0;
   DateTime? _startTime;
   StreamSubscription<List<int>>? _micSub;
   final RecorderStream _recorder = RecorderStream();
@@ -74,7 +73,6 @@ class _PracticePageState extends State<PracticePage>
   List<_ExpectedNote> _expectedNotes = [];
   List<bool> _hitNotes = [];
   double _latencyMs = 0;
-  bool _latencyLoaded = false;
   final AudioPlayer _beepPlayer = AudioPlayer();
   static const double _fallbackLatencyMs =
       100.0; // Default offset if calibration fails
@@ -214,7 +212,7 @@ class _PracticePageState extends State<PracticePage>
                     vertical: AppConstants.spacing12,
                   ),
                   decoration: BoxDecoration(
-                    color: _getAccuracyColor().withOpacity(0.2),
+                    color: _getAccuracyColor().withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(
                       AppConstants.radiusCard,
                     ),
@@ -276,8 +274,9 @@ class _PracticePageState extends State<PracticePage>
         ..._sessions.map((s) {
           final subtitleParts = <String>[];
           if (s.date != null) subtitleParts.add(s.date!);
-          if (s.score != null)
+          if (s.score != null) {
             subtitleParts.add('Score ${s.score!.toStringAsFixed(1)}');
+          }
           if (s.level != null) subtitleParts.add('L${s.level}');
           return Padding(
             padding: const EdgeInsets.symmetric(
@@ -309,7 +308,7 @@ class _PracticePageState extends State<PracticePage>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
+        color: color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: color, width: 1),
       ),
@@ -482,7 +481,7 @@ class _PracticePageState extends State<PracticePage>
     if (isDetected && isExpected) {
       keyColor = _getAccuracyColor();
     } else if (isExpected) {
-      keyColor = AppColors.primary.withOpacity(0.5);
+      keyColor = AppColors.primary.withValues(alpha: 0.5);
     } else if (isBlack) {
       keyColor = AppColors.blackKey;
     } else {
@@ -625,7 +624,6 @@ class _PracticePageState extends State<PracticePage>
     await _loadExpectedNotes();
     _score = 0;
     _correctNotes = 0;
-    _wrongNotes = 0;
     _totalNotes = _expectedNotes.length;
     _hitNotes = List<bool>.filled(_expectedNotes.length, false);
     _startTime = DateTime.now();
@@ -767,7 +765,6 @@ class _PracticePageState extends State<PracticePage>
         activeIndices.add(i);
       }
       if (elapsed > n.end + 0.2 && !_hitNotes[i]) {
-        _wrongNotes += 1;
         _hitNotes[i] = true; // mark as processed
       }
     }
@@ -788,7 +785,6 @@ class _PracticePageState extends State<PracticePage>
 
     if (!matched && activeIndices.isNotEmpty) {
       _accuracy = NoteAccuracy.wrong;
-      _wrongNotes += 1;
     }
 
     setState(() {
@@ -878,7 +874,7 @@ class _PracticePageState extends State<PracticePage>
         final freq = _pitchDetector.detectPitch(floatSamples);
         if (freq == null) return;
         if ((freq - targetFreq).abs() < 80) {
-          final delta = DateTime.now().difference(beepStart!).inMilliseconds;
+          final delta = DateTime.now().difference(beepStart).inMilliseconds;
           _latencyMs = delta.toDouble();
         }
       });
@@ -941,11 +937,8 @@ class _PracticePageState extends State<PracticePage>
       if (saved != null) {
         _latencyMs = saved;
       }
-      _latencyLoaded = true;
       if (mounted) setState(() {});
-    } catch (_) {
-      _latencyLoaded = true;
-    }
+    } catch (_) {}
   }
 
   Future<void> _persistLatency() async {
@@ -998,7 +991,6 @@ class _PracticePageState extends State<PracticePage>
           activeIndices.add(i);
         }
         if (elapsed > n.end + 0.2 && !_hitNotes[i]) {
-          _wrongNotes += 1;
           _hitNotes[i] = true; // mark as processed
         }
       }
@@ -1019,7 +1011,6 @@ class _PracticePageState extends State<PracticePage>
 
       if (!matched && activeIndices.isNotEmpty) {
         _accuracy = NoteAccuracy.wrong;
-        _wrongNotes += 1;
       }
 
       setState(() {
@@ -1049,7 +1040,7 @@ class _PracticePageState extends State<PracticePage>
         _videoError = null;
       });
 
-      String _resolveUrl(String url) {
+      String resolveUrl(String url) {
         if (url.isEmpty) return url;
         if (url.startsWith('http')) return url;
         final baseRaw = AppConstants.backendBaseUrl.trim();
@@ -1059,7 +1050,7 @@ class _PracticePageState extends State<PracticePage>
         return Uri.parse(baseWithSlash).resolve(cleaned).toString();
       }
 
-      final url = _resolveUrl(
+      final url = resolveUrl(
         widget.level.previewUrl.isNotEmpty
             ? widget.level.previewUrl
             : widget.level.videoUrl,
@@ -1281,7 +1272,7 @@ class _FallingNotesPainter extends CustomPainter {
       final isBlack = _PracticePageState._blackKeys.contains(n.pitch % 12);
       final width = isBlack ? blackWidth : whiteWidth;
 
-      paint.color = const Color(0xFF4F9DFD).withOpacity(0.8);
+      paint.color = const Color(0xFF4F9DFD).withValues(alpha: 0.8);
       final rect = RRect.fromRectAndRadius(
         Rect.fromLTWH(x, y - barHeight, width, barHeight),
         const Radius.circular(3),

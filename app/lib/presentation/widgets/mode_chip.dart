@@ -64,11 +64,11 @@ class ModeChip extends StatelessWidget {
       case ModeChipStatus.queued:
         return AppColors.surface;
       case ModeChipStatus.processing:
-        return AppColors.warning.withOpacity(0.1);
+        return AppColors.warning.withValues(alpha: 0.1);
       case ModeChipStatus.completed:
-        return AppColors.success.withOpacity(0.1);
+        return AppColors.success.withValues(alpha: 0.1);
       case ModeChipStatus.error:
-        return AppColors.error.withOpacity(0.1);
+        return AppColors.error.withValues(alpha: 0.1);
     }
   }
 

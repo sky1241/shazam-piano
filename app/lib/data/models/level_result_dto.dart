@@ -42,7 +42,7 @@ class LevelResultDto {
   Map<String, dynamic> toJson() => _$LevelResultDtoToJson(this);
 
   LevelResult toDomain() {
-    String _abs(String url) {
+    String absValue(String url) {
       if (url.isEmpty) return url;
       if (url.startsWith('http')) return url;
       final base = AppConstants.backendBaseUrl.trim().replaceAll(
@@ -56,9 +56,9 @@ class LevelResultDto {
     return LevelResult(
       level: level,
       name: name,
-      previewUrl: _abs(previewUrl),
-      videoUrl: _abs(videoUrl),
-      midiUrl: _abs(midiUrl),
+      previewUrl: absValue(previewUrl),
+      videoUrl: absValue(videoUrl),
+      midiUrl: absValue(midiUrl),
       keyGuess: keyGuess,
       tempoGuess: tempoGuess,
       durationSec: durationSec,

@@ -30,7 +30,11 @@ class _PlayerPageState extends State<PlayerPage> {
   ChewieController? _chewieController;
   bool _isLoading = true;
   String? _error;
-  bool _isFullScreen = false;
+  // Fullscreen state kept for future UI toggles (kept but unused).
+  // ignore: unused_field
+  // Fullscreen state kept for future UI toggles (kept but unused).
+  // ignore: unused_field
+  final bool _isFullScreen = false;
   double _videoSpeed = 1.0;
 
   @override
@@ -46,7 +50,7 @@ class _PlayerPageState extends State<PlayerPage> {
         _error = null;
       });
 
-      String _resolveUrl(String url) {
+      String resolveUrl(String url) {
         if (url.isEmpty) return url;
         if (url.startsWith('http')) return url;
         final baseRaw = AppConstants.backendBaseUrl.trim();
@@ -63,7 +67,7 @@ class _PlayerPageState extends State<PlayerPage> {
       }
 
       // Use preview or full video based on unlock status
-      final videoUrl = _resolveUrl(
+      final videoUrl = resolveUrl(
         widget.isUnlocked ? widget.level.videoUrl : widget.level.previewUrl,
       );
 
@@ -231,7 +235,7 @@ class _PlayerPageState extends State<PlayerPage> {
                               AppConstants.spacing12,
                             ),
                             decoration: BoxDecoration(
-                              color: AppColors.warning.withOpacity(0.1),
+                              color: AppColors.warning.withValues(alpha: 0.1),
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Row(
