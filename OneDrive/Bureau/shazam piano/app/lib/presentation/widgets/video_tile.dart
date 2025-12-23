@@ -143,7 +143,7 @@ class VideoTile extends StatelessWidget {
               Positioned.fill(
                 child: Container(
                   decoration: BoxDecoration(
-                    color: AppColors.bg.withValues(alpha: 0.8),
+                    color: AppColors.bg.withOpacity(0.8),
                     borderRadius: BorderRadius.circular(AppConstants.radiusCard),
                   ),
                   child: Center(

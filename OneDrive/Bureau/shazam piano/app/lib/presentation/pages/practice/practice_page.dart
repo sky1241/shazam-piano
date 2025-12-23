@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
-import 'dart:typed_data';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -10,6 +10,10 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_midi_command/flutter_midi_command.dart';
 import 'package:sound_stream/sound_stream.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:video_player/video_player.dart';
+import 'package:chewie/chewie.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
@@ -20,16 +24,14 @@ import 'pitch_detector.dart';
 class PracticePage extends StatefulWidget {
   final LevelResult level;
 
-  const PracticePage({
-    super.key,
-    required this.level,
-  });
+  const PracticePage({super.key, required this.level});
 
   @override
   State<PracticePage> createState() => _PracticePageState();
 }
 
-class _PracticePageState extends State<PracticePage> {
+class _PracticePageState extends State<PracticePage>
+    with SingleTickerProviderStateMixin {
   bool _isListening = false;
   int? _detectedNote;
   int? _expectedNote;
@@ -48,19 +50,37 @@ class _PracticePageState extends State<PracticePage> {
   double _latencyMs = 0;
   bool _latencyLoaded = false;
   final AudioPlayer _beepPlayer = AudioPlayer();
-  static const double _fallbackLatencyMs = 100.0; // Default offset if calibration fails
+  static const double _fallbackLatencyMs =
+      100.0; // Default offset if calibration fails
   bool _useMidi = false;
   bool _midiAvailable = false;
+  List<_PracticeSession> _sessions = [];
+  late final Ticker _ticker;
+  static const double _fallAreaHeight = 320;
+  static const double _fallLeadSec = 2.0;
+  static const double _fallTailSec = 0.6;
+  VideoPlayerController? _videoController;
+  ChewieController? _chewieController;
+  bool _videoLoading = true;
+  String? _videoError;
 
-  // Piano keyboard alignée avec la vidéo (C2 à C7 = 61 touches)
+  // Piano keyboard alignee avec la video (C2 a C7 = 61 touches)
   static const int _firstKey = 36; // C2
-  static const int _lastKey = 96;  // C7
+  static const int _lastKey = 96; // C7
   static const List<int> _blackKeys = [1, 3, 6, 8, 10]; // C#, D#, F#, G#, A#
 
   @override
   void initState() {
     super.initState();
+    _ticker = createTicker((_) {
+      if (mounted && _isListening) {
+        setState(() {});
+      }
+    })..start();
+    _initVideo();
+    _loadExpectedNotes();
     _loadSavedLatency();
+    _loadSessions();
   }
 
   @override
@@ -75,107 +95,198 @@ class _PracticePageState extends State<PracticePage> {
               _isListening ? Icons.stop : Icons.play_arrow,
               color: AppColors.primary,
             ),
-            onPressed: _togglePractice,
+            onPressed: () => _togglePractice(),
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Padding(
+      body: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppConstants.spacing16,
+                vertical: AppConstants.spacing8,
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      _buildChip(
+                        label: _latencyMs > 0
+                            ? 'Sync ${_latencyMs.toStringAsFixed(0)}ms'
+                            : 'Sync auto',
+                        color: AppColors.primary,
+                      ),
+                      const SizedBox(width: AppConstants.spacing8),
+                      _buildChip(
+                        label: _midiAvailable ? 'MIDI connecte' : 'MIDI off',
+                        color: _midiAvailable
+                            ? AppColors.primary
+                            : AppColors.divider,
+                      ),
+                    ],
+                  ),
+                  TextButton(
+                    onPressed: () => _calibrateLatency(force: true),
+                    child: const Text(
+                      'Recalibrer',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Score display
+            Container(
+              padding: const EdgeInsets.all(AppConstants.spacing16),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                border: Border(
+                  bottom: BorderSide(color: AppColors.divider, width: 1),
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _buildScoreStat('Score', _score.toString()),
+                  _buildScoreStat(
+                    'Precision',
+                    _totalNotes > 0
+                        ? '${(_correctNotes / _totalNotes * 100).toStringAsFixed(1)}%'
+                        : '0%',
+                  ),
+                  _buildScoreStat('Notes', '$_correctNotes/$_totalNotes'),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: AppConstants.spacing24),
+
+            // Current note display
+            Center(
+              child: Text(
+                _isListening ? 'Ecoute...' : 'Appuie sur Play',
+                style: AppTextStyles.title,
+              ),
+            ),
+
+            const SizedBox(height: AppConstants.spacing16),
+
+            // Accuracy indicator
+            if (_detectedNote != null)
+              Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppConstants.spacing24,
+                    vertical: AppConstants.spacing12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _getAccuracyColor().withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(
+                      AppConstants.radiusCard,
+                    ),
+                    border: Border.all(color: _getAccuracyColor(), width: 2),
+                  ),
+                  child: Text(
+                    _getAccuracyText(),
+                    style: AppTextStyles.title.copyWith(
+                      color: _getAccuracyColor(),
+                    ),
+                  ),
+                ),
+              ),
+
+            const SizedBox(height: AppConstants.spacing24),
+
+            // Vidéo de preview (guide visuel)
+            _buildVideoPlayer(),
+
+            const SizedBox(height: AppConstants.spacing16),
+
+            // Instructions
+            Padding(
+              padding: const EdgeInsets.all(AppConstants.spacing16),
+              child: Text(
+                'Joue les notes sur ton piano.\nLes touches s\'allumeront selon ta precision.',
+                style: AppTextStyles.caption,
+                textAlign: TextAlign.center,
+              ),
+            ),
+
+            const SizedBox(height: AppConstants.spacing16),
+
+            // Historique (scores précédents)
+            _buildHistory(),
+            const SizedBox(height: AppConstants.spacing24),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHistory() {
+    if (_sessions.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.all(AppConstants.spacing16),
+        child: Text('Pas encore de sessions', style: AppTextStyles.caption),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppConstants.spacing16,
+          ),
+          child: Text('Historique Practice', style: AppTextStyles.title),
+        ),
+        const SizedBox(height: AppConstants.spacing8),
+        ..._sessions.map((s) {
+          final subtitleParts = <String>[];
+          if (s.date != null) subtitleParts.add(s.date!);
+          if (s.score != null)
+            subtitleParts.add('Score ${s.score!.toStringAsFixed(1)}');
+          if (s.level != null) subtitleParts.add('L${s.level}');
+          return Padding(
             padding: const EdgeInsets.symmetric(
               horizontal: AppConstants.spacing16,
               vertical: AppConstants.spacing8,
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  _latencyMs > 0 ? 'Sync: ${_latencyMs.toStringAsFixed(0)} ms' : 'Sync auto',
-                  style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
-                ),
-                Text(
-                  _isListening ? 'En cours' : 'Prêt',
-                  style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
-                ),
-              ],
-            ),
-          ),
-
-          // Score display
-          Container(
-            padding: const EdgeInsets.all(AppConstants.spacing16),
-            decoration: BoxDecoration(
+            child: Card(
               color: AppColors.surface,
-              border: Border(
-                bottom: BorderSide(color: AppColors.divider, width: 1),
-              ),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _buildScoreStat('Score', _score.toString()),
-                _buildScoreStat(
-                  'Précision',
-                  _totalNotes > 0
-                      ? '${(_correctNotes / _totalNotes * 100).toStringAsFixed(1)}%'
-                      : '0%',
+              child: ListTile(
+                title: Text(
+                  s.title ?? 'Session ${s.jobId}',
+                  style: AppTextStyles.body,
                 ),
-                _buildScoreStat('Notes', '$_correctNotes/$_totalNotes'),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: AppConstants.spacing24),
-
-          // Current note display
-          Text(
-            _isListening ? 'Écoute...' : 'Appuie sur Play',
-            style: AppTextStyles.title,
-          ),
-          
-          const SizedBox(height: AppConstants.spacing16),
-
-          // Accuracy indicator
-          if (_detectedNote != null)
-            Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppConstants.spacing24,
-                vertical: AppConstants.spacing12,
-              ),
-              decoration: BoxDecoration(
-                color: _getAccuracyColor().withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(AppConstants.radiusCard),
-                border: Border.all(
-                  color: _getAccuracyColor(),
-                  width: 2,
-                ),
-              ),
-              child: Text(
-                _getAccuracyText(),
-                style: AppTextStyles.title.copyWith(
-                  color: _getAccuracyColor(),
+                subtitle: Text(
+                  subtitleParts.join(' | '),
+                  style: AppTextStyles.caption.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
                 ),
               ),
             ),
+          );
+        }),
+      ],
+    );
+  }
 
-          const Spacer(),
-
-          // Virtual Piano Keyboard
-          _buildPianoKeyboard(),
-
-          const SizedBox(height: AppConstants.spacing32),
-
-          // Instructions
-          Padding(
-            padding: const EdgeInsets.all(AppConstants.spacing16),
-            child: Text(
-              'Joue les notes sur ton piano.\n'
-              'Les touches s\'allumeront selon ta précision.',
-              style: AppTextStyles.caption,
-              textAlign: TextAlign.center,
-            ),
-          ),
-        ],
+  Widget _buildChip({required String label, required Color color}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color, width: 1),
+      ),
+      child: Text(
+        label,
+        style: AppTextStyles.caption.copyWith(color: Colors.white),
       ),
     );
   }
@@ -191,80 +302,170 @@ class _PracticePageState extends State<PracticePage> {
           ),
         ),
         const SizedBox(height: 4),
-        Text(
-          label,
-          style: AppTextStyles.caption,
-        ),
+        Text(label, style: AppTextStyles.caption),
       ],
     );
   }
 
-  Widget _buildPianoKeyboard() {
-    // 61 touches affichées au complet avec scroll horizontal
-    const double whiteWidth = 18;
-    const double blackWidth = 12;
-    const double whiteHeight = 160;
-    const double blackHeight = 100;
-
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
+  Widget _buildPracticeStage() {
+    return Padding(
       padding: const EdgeInsets.symmetric(horizontal: AppConstants.spacing16),
-      child: SizedBox(
-        height: whiteHeight + 20,
-        child: Stack(
-          children: [
-            Row(
-              children: [
-                for (int note = _firstKey; note <= _lastKey; note++)
-                  if (!_isBlackKey(note))
-                    _buildPianoKey(
-                      note,
-                      isBlack: false,
-                      width: whiteWidth,
-                      height: whiteHeight,
-                    ),
-              ],
-            ),
-            Positioned.fill(
-              child: Row(
-                children: [
-                  for (int note = _firstKey; note <= _lastKey; note++)
-                    if (_isBlackKey(note))
-                      _buildPianoKey(
-                        note,
-                        isBlack: true,
-                        width: blackWidth,
-                        height: blackHeight,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final screenWidth = MediaQuery.of(context).size.width;
+          // If constraints are unbounded (e.g. inside a scroll view), fall back to screen width
+          final availableWidth =
+              constraints.hasBoundedWidth &&
+                  constraints.maxWidth.isFinite &&
+                  constraints.maxWidth > 0
+              ? constraints.maxWidth
+              : screenWidth - (AppConstants.spacing16 * 2);
+
+          final whiteCount = _countWhiteKeys();
+          final whiteWidth = availableWidth / whiteCount;
+          final blackWidth = whiteWidth * 0.65;
+          const double whiteHeight = 120;
+          const double blackHeight = 80;
+          final totalWidth = availableWidth;
+
+          final now = DateTime.now();
+          final elapsedSec = _startTime == null
+              ? 0.0
+              : max(
+                  0.0,
+                  (now.difference(_startTime!).inMilliseconds - _latencyMs) /
+                      1000.0,
+                );
+
+          return Column(
+            children: [
+              Container(
+                height: _fallAreaHeight,
+                width: totalWidth,
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.divider),
+                ),
+                child: _expectedNotes.isEmpty
+                    ? Center(
+                        child: Text(
+                          'Chargement des notes...',
+                          style: AppTextStyles.caption,
+                        ),
                       )
-                    else
-                      SizedBox(width: whiteWidth),
-                ],
+                    : CustomPaint(
+                        painter: _FallingNotesPainter(
+                          expectedNotes: _expectedNotes,
+                          elapsedSec: elapsedSec,
+                          whiteWidth: whiteWidth,
+                          blackWidth: blackWidth,
+                          fallAreaHeight: _fallAreaHeight,
+                          fallLead: _fallLeadSec,
+                          fallTail: _fallTailSec,
+                          noteToX: (n) => _noteToX(n, whiteWidth, blackWidth),
+                        ),
+                      ),
               ),
-            ),
-          ],
-        ),
+              const SizedBox(height: 8),
+              Container(
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.divider),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppConstants.spacing8,
+                  vertical: AppConstants.spacing8,
+                ),
+                child: _buildKeyboardWithSizes(
+                  totalWidth: totalWidth,
+                  whiteWidth: whiteWidth,
+                  blackWidth: blackWidth,
+                  whiteHeight: whiteHeight,
+                  blackHeight: blackHeight,
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
 
-  Widget _buildPianoKey(int note, {required bool isBlack, double width = 30, double height = 180}) {
+  Widget _buildKeyboardWithSizes({
+    required double totalWidth,
+    required double whiteWidth,
+    required double blackWidth,
+    required double whiteHeight,
+    required double blackHeight,
+  }) {
+    return SizedBox(
+      height: whiteHeight + 16,
+      width: totalWidth,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Row(
+            children: [
+              for (int note = _firstKey; note <= _lastKey; note++)
+                if (!_isBlackKey(note))
+                  _buildPianoKey(
+                    note,
+                    isBlack: false,
+                    width: whiteWidth,
+                    height: whiteHeight,
+                  ),
+            ],
+          ),
+          Positioned.fill(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (int note = _firstKey; note <= _lastKey; note++)
+                  if (_isBlackKey(note))
+                    _buildPianoKey(
+                      note,
+                      isBlack: true,
+                      width: blackWidth,
+                      height: blackHeight,
+                    )
+                  else
+                    SizedBox(width: whiteWidth),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPianoKey(
+    int note, {
+    required bool isBlack,
+    double width = 30,
+    double height = 180,
+  }) {
     final isExpected = note == _expectedNote;
     final isDetected = note == _detectedNote;
-    
+
     Color keyColor;
     if (isDetected && isExpected) {
       keyColor = _getAccuracyColor();
     } else if (isExpected) {
-      keyColor = AppColors.primary.withValues(alpha: 0.5);
+      keyColor = AppColors.primary.withOpacity(0.5);
     } else if (isBlack) {
       keyColor = AppColors.blackKey;
     } else {
       keyColor = AppColors.whiteKey;
     }
 
+    final keyWidth = width;
+    final keyHeight = height;
+
     return Container(
-      width: isBlack ? 20 : 30,
-      height: isBlack ? 120 : 180,
+      width: keyWidth,
+      height: keyHeight,
       margin: const EdgeInsets.symmetric(horizontal: 1),
       decoration: BoxDecoration(
         color: keyColor,
@@ -276,6 +477,28 @@ class _PracticePageState extends State<PracticePage> {
 
   bool _isBlackKey(int note) {
     return _blackKeys.contains(note % 12);
+  }
+
+  int _countWhiteKeys() {
+    int count = 0;
+    for (int n = _firstKey; n <= _lastKey; n++) {
+      if (!_isBlackKey(n)) count++;
+    }
+    return count;
+  }
+
+  double _noteToX(int note, double whiteWidth, double blackWidth) {
+    int whiteIndex = 0;
+    for (int n = _firstKey; n < note; n++) {
+      if (!_isBlackKey(n)) {
+        whiteIndex += 1;
+      }
+    }
+    double x = whiteIndex * whiteWidth;
+    if (_isBlackKey(note)) {
+      x -= (blackWidth / 2);
+    }
+    return x;
   }
 
   Color _getAccuracyColor() {
@@ -294,26 +517,31 @@ class _PracticePageState extends State<PracticePage> {
   String _getAccuracyText() {
     switch (_accuracy) {
       case NoteAccuracy.correct:
-        return '✓ Parfait !';
+        return 'Parfait !';
       case NoteAccuracy.close:
         return '~ Proche';
       case NoteAccuracy.wrong:
-        return '✗ Faux';
+        return 'Faux';
       case NoteAccuracy.miss:
         return 'Aucune note';
     }
   }
 
-  void _togglePractice() {
+  Future<void> _togglePractice() async {
+    final next = !_isListening;
     setState(() {
-      _isListening = !_isListening;
-      
-      if (_isListening) {
-        _startPractice();
-      } else {
-        _stopPractice();
-      }
+      _isListening = next;
     });
+
+    if (next) {
+      if (_videoController != null) {
+        await _videoController!.seekTo(Duration.zero);
+        await _videoController!.play();
+      }
+      await _startPractice();
+    } else {
+      await _stopPractice(showSummary: true);
+    }
   }
 
   Future<void> _startPractice() async {
@@ -364,33 +592,43 @@ class _PracticePageState extends State<PracticePage> {
     }
   }
 
-  void _stopPractice() {
+  Future<void> _stopPractice({bool showSummary = false}) async {
+    setState(() {
+      _isListening = false;
+    });
     _micSub?.cancel();
     _micSub = null;
     _recorder.stop();
     _midiSub?.cancel();
     _midiSub = null;
+    await _videoController?.pause();
     _useMidi = false;
     _midiAvailable = false;
+    final startedAtIso = _startTime?.toIso8601String();
     _startTime = null;
     final finishedAt = DateTime.now().toIso8601String();
     final score = _score;
     final total = _totalNotes == 0 ? 1 : _totalNotes;
     final accuracy = total > 0 ? (_correctNotes / total) * 100.0 : 0.0;
 
-    _sendPracticeSession(
+    await _sendPracticeSession(
       score: score.toDouble(),
       accuracy: accuracy,
       notesTotal: total,
       notesCorrect: _correctNotes,
-      startedAt: finishedAt, // reuse as id if no start time tracked
+      startedAt: startedAtIso ?? finishedAt,
       endedAt: finishedAt,
     );
+    await _loadSessions();
 
     setState(() {
       _detectedNote = null;
       _expectedNote = null;
     });
+
+    if (showSummary && mounted) {
+      _showScoreDialog(score: score, accuracy: accuracy);
+    }
   }
 
   Future<void> _sendPracticeSession({
@@ -406,27 +644,42 @@ class _PracticePageState extends State<PracticePage> {
       if (token == null) return;
       final jobId = _extractJobId(widget.level.midiUrl);
 
-      final dio = Dio(BaseOptions(
-        baseUrl: AppConstants.backendBaseUrl,
-        connectTimeout: const Duration(seconds: 20),
-      ));
+      final dio = Dio(
+        BaseOptions(
+          baseUrl: AppConstants.backendBaseUrl,
+          connectTimeout: const Duration(seconds: 20),
+        ),
+      );
       dio.options.headers['Authorization'] = 'Bearer $token';
 
-      await dio.post('/practice/session', data: {
-        'job_id': jobId ?? widget.level.videoUrl,
-        'level': widget.level.level,
-        'score': score,
-        'accuracy': accuracy,
-        'notes_total': notesTotal,
-        'notes_correct': notesCorrect,
-        'notes_missed': notesTotal - notesCorrect,
-        'started_at': startedAt,
-        'ended_at': endedAt,
-        'app_version': 'mobile',
-      });
+      await dio.post(
+        '/practice/session',
+        data: {
+          'job_id': jobId ?? widget.level.videoUrl,
+          'level': widget.level.level,
+          'score': score,
+          'accuracy': accuracy,
+          'notes_total': notesTotal,
+          'notes_correct': notesCorrect,
+          'notes_missed': notesTotal - notesCorrect,
+          'started_at': startedAt,
+          'ended_at': endedAt,
+          'app_version': 'mobile',
+        },
+      );
     } catch (_) {
       // ignore errors for now in UI; backend will log if it receives request
     }
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    _micSub?.cancel();
+    _midiSub?.cancel();
+    _videoController?.dispose();
+    _chewieController?.dispose();
+    super.dispose();
   }
 
   Future<void> _processAudioChunk(List<int> chunk) async {
@@ -445,8 +698,11 @@ class _PracticePageState extends State<PracticePage> {
     final midi = _pitchDetector.frequencyToMidiNote(freq);
 
     final now = DateTime.now();
-    final elapsed = (now.difference(_startTime!).inMilliseconds - _latencyMs)
-            .clamp(0, 1e9) /
+    final elapsed =
+        (now.difference(_startTime!).inMilliseconds - _latencyMs).clamp(
+          0,
+          1e9,
+        ) /
         1000.0;
 
     // Find active expected notes
@@ -494,24 +750,30 @@ class _PracticePageState extends State<PracticePage> {
     try {
       final token = await FirebaseAuth.instance.currentUser?.getIdToken();
       if (token == null) return;
-      final dio = Dio(BaseOptions(
-        baseUrl: AppConstants.backendBaseUrl,
-        connectTimeout: const Duration(seconds: 15),
-      ));
+      final dio = Dio(
+        BaseOptions(
+          baseUrl: AppConstants.backendBaseUrl,
+          connectTimeout: const Duration(seconds: 15),
+        ),
+      );
       dio.options.headers['Authorization'] = 'Bearer $token';
 
       final jobId = _extractJobId(widget.level.midiUrl);
       if (jobId == null) return;
-      final resp = await dio.get('/practice/notes/$jobId/${widget.level.level}');
+      final resp = await dio.get(
+        '/practice/notes/$jobId/${widget.level.level}',
+      );
       final data = resp.data;
       if (data == null || data['notes'] == null) return;
       final List<dynamic> notesJson = data['notes'];
       _expectedNotes = notesJson
-          .map((n) => _ExpectedNote(
-                pitch: n['pitch'] as int,
-                start: (n['start'] as num).toDouble(),
-                end: (n['end'] as num).toDouble(),
-              ))
+          .map(
+            (n) => _ExpectedNote(
+              pitch: n['pitch'] as int,
+              start: (n['start'] as num).toDouble(),
+              end: (n['end'] as num).toDouble(),
+            ),
+          )
           .toList();
       _expectedNotes.sort((a, b) => a.start.compareTo(b.start));
       if (_expectedNotes.isNotEmpty) {
@@ -526,7 +788,9 @@ class _PracticePageState extends State<PracticePage> {
   String? _extractJobId(String midiUrl) {
     try {
       final uri = Uri.parse(midiUrl);
-      final file = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : midiUrl.split('/').last;
+      final file = uri.pathSegments.isNotEmpty
+          ? uri.pathSegments.last
+          : midiUrl.split('/').last;
       if (file.contains('_L')) {
         return file.split('_L').first;
       }
@@ -534,9 +798,9 @@ class _PracticePageState extends State<PracticePage> {
     return null;
   }
 
-  Future<void> _calibrateLatency() async {
+  Future<void> _calibrateLatency({bool force = false}) async {
     // Already calibrated
-    if (_latencyMs > 0) return;
+    if (_latencyMs > 0 && !force) return;
     final micStatus = await Permission.microphone.request();
     if (!micStatus.isGranted) {
       return;
@@ -544,17 +808,14 @@ class _PracticePageState extends State<PracticePage> {
     final targetFreq = 880.0; // A5 beep
     final durationMs = 1200;
     DateTime? beepStart;
-    StreamSubscription<dynamic>? calibSub;
+    StreamSubscription<List<int>>? calibSub;
+    final recorder = RecorderStream();
     try {
-      // Start mic stream
-      final stream = await MicStream.microphone(
-        sampleRate: PitchDetector.sampleRate,
-        audioFormat: AudioFormat.ENCODING_PCM_16BIT,
-      );
-      calibSub = stream?.listen((chunk) {
+      await recorder.initialize(sampleRate: PitchDetector.sampleRate);
+      await recorder.start();
+      calibSub = recorder.audioStream.listen((chunk) {
         if (beepStart == null) return;
-        if (chunk is! List) return;
-        final int16 = Int16List.fromList(List<int>.from(chunk));
+        final int16 = Int16List.fromList(chunk);
         if (int16.isEmpty) return;
         final floatSamples = Float32List(int16.length);
         for (var i = 0; i < int16.length; i++) {
@@ -581,10 +842,41 @@ class _PracticePageState extends State<PracticePage> {
       // ignore
     } finally {
       await calibSub?.cancel();
+      try {
+        await recorder.stop();
+      } catch (_) {}
       if (_latencyMs <= 0) {
         _latencyMs = _fallbackLatencyMs;
       }
       await _persistLatency();
+    }
+  }
+
+  Future<void> _loadSessions() async {
+    try {
+      final auth = FirebaseAuth.instance;
+      final user = auth.currentUser ?? (await auth.signInAnonymously()).user;
+      final uid = user?.uid;
+      if (uid == null) return;
+
+      final snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .collection('practice_sessions')
+          .orderBy('ended_at', descending: true)
+          .limit(20)
+          .get();
+
+      final sessions = snapshot.docs
+          .map((doc) => _PracticeSession.fromDoc(doc))
+          .toList();
+      if (mounted) {
+        setState(() {
+          _sessions = sessions;
+        });
+      }
+    } catch (_) {
+      // ignore history errors in UI
     }
   }
 
@@ -616,7 +908,7 @@ class _PracticePageState extends State<PracticePage> {
     try {
       final midi = MidiCommand();
       final devices = await midi.devices;
-      if (devices.isEmpty) {
+      if (devices == null || devices.isEmpty) {
         _midiAvailable = false;
         return false;
       }
@@ -695,6 +987,169 @@ class _PracticePageState extends State<PracticePage> {
     }
     _expectedNote = null;
   }
+
+  Future<void> _initVideo() async {
+    try {
+      setState(() {
+        _videoLoading = true;
+        _videoError = null;
+      });
+
+      String _resolveUrl(String url) {
+        if (url.isEmpty) return url;
+        if (url.startsWith('http')) return url;
+        final baseRaw = AppConstants.backendBaseUrl.trim();
+        final base = baseRaw.isEmpty ? 'http://127.0.0.1:8000' : baseRaw;
+        final baseWithSlash = base.endsWith('/') ? base : '$base/';
+        final cleaned = url.startsWith('/') ? url.substring(1) : url;
+        return Uri.parse(baseWithSlash).resolve(cleaned).toString();
+      }
+
+      final url = _resolveUrl(
+        widget.level.previewUrl.isNotEmpty
+            ? widget.level.previewUrl
+            : widget.level.videoUrl,
+      );
+      if (url.isEmpty) {
+        setState(() {
+          _videoError = 'Aucune video';
+          _videoLoading = false;
+        });
+        return;
+      }
+
+      _videoController = VideoPlayerController.networkUrl(Uri.parse(url));
+      await _videoController!.initialize();
+      _videoController!.setLooping(false);
+      _videoController!.addListener(() {
+        if (_videoController == null) return;
+        final value = _videoController!.value;
+        if (value.position >= value.duration && _isListening) {
+          _stopPractice(showSummary: true);
+        }
+      });
+      _chewieController = ChewieController(
+        videoPlayerController: _videoController!,
+        autoPlay: true,
+        looping: false,
+        showControls: true,
+        aspectRatio: _videoController!.value.aspectRatio == 0
+            ? 16 / 9
+            : _videoController!.value.aspectRatio,
+      );
+
+      setState(() {
+        _videoLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _videoError = 'Erreur video: $e';
+        _videoLoading = false;
+      });
+    }
+  }
+
+  Widget _buildVideoPlayer() {
+    if (_videoError != null) {
+      return Container(
+        color: Colors.black,
+        height: 200,
+        alignment: Alignment.center,
+        child: Text(
+          _videoError!,
+          style: AppTextStyles.caption.copyWith(color: Colors.white),
+        ),
+      );
+    }
+    if (_videoLoading || _chewieController == null) {
+      return Container(
+        color: Colors.black,
+        height: 200,
+        alignment: Alignment.center,
+        child: const CircularProgressIndicator(),
+      );
+    }
+    return AspectRatio(
+      aspectRatio: _chewieController!.aspectRatio ?? 16 / 9,
+      child: Chewie(controller: _chewieController!),
+    );
+  }
+
+  Future<void> _showScoreDialog({required double score, required double accuracy}) async {
+    if (!mounted) return;
+    final total = _totalNotes;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Session terminée'),
+        content: Text(
+          'Score: ${score.toStringAsFixed(0)}\n'
+          'Précision: ${accuracy.toStringAsFixed(1)}%\n'
+          'Notes jouées: $total',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PracticeSession {
+  final String id;
+  final String? jobId;
+  final String? title;
+  final double? score;
+  final double? accuracy;
+  final int? level;
+  final String? date;
+
+  _PracticeSession({
+    required this.id,
+    this.jobId,
+    this.title,
+    this.score,
+    this.accuracy,
+    this.level,
+    this.date,
+  });
+
+  factory _PracticeSession.fromDoc(
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
+    final data = doc.data();
+
+    DateTime? asDate(dynamic value) {
+      try {
+        if (value is Timestamp) return value.toDate();
+        if (value is String) return DateTime.parse(value);
+      } catch (_) {}
+      return null;
+    }
+
+    String? formatDate(dynamic value) {
+      final dt = asDate(value);
+      if (dt == null) return null;
+      String two(int v) => v.toString().padLeft(2, '0');
+      return '${two(dt.day)}/${two(dt.month)} ${two(dt.hour)}:${two(dt.minute)}';
+    }
+
+    final rawTitle =
+        data['title'] ?? data['identified_title'] ?? data['identifiedTitle'];
+
+    return _PracticeSession(
+      id: doc.id,
+      jobId: data['job_id'] as String?,
+      title: rawTitle is String ? rawTitle : null,
+      score: (data['score'] as num?)?.toDouble(),
+      accuracy: (data['accuracy'] as num?)?.toDouble(),
+      level: (data['level'] as num?)?.toInt(),
+      date: formatDate(data['ended_at'] ?? data['started_at']),
+    );
+  }
 }
 
 class _ExpectedNote {
@@ -702,6 +1157,62 @@ class _ExpectedNote {
   final double start;
   final double end;
   _ExpectedNote({required this.pitch, required this.start, required this.end});
+}
+
+class _FallingNotesPainter extends CustomPainter {
+  final List<_ExpectedNote> expectedNotes;
+  final double elapsedSec;
+  final double whiteWidth;
+  final double blackWidth;
+  final double fallAreaHeight;
+  final double fallLead;
+  final double fallTail;
+  final double Function(int) noteToX;
+
+  _FallingNotesPainter({
+    required this.expectedNotes,
+    required this.elapsedSec,
+    required this.whiteWidth,
+    required this.blackWidth,
+    required this.fallAreaHeight,
+    required this.fallLead,
+    required this.fallTail,
+    required this.noteToX,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..style = PaintingStyle.fill;
+    for (final n in expectedNotes) {
+      final appear = n.start - fallLead;
+      final disappear = n.end + fallTail;
+      if (elapsedSec < appear || elapsedSec > disappear) continue;
+
+      final progress = ((elapsedSec - appear) / (fallLead + fallTail)).clamp(
+        0.0,
+        1.0,
+      );
+      final y = progress * fallAreaHeight;
+      final barHeight = max(10.0, (n.end - n.start) * 60);
+
+      final x = noteToX(n.pitch);
+      final isBlack = _PracticePageState._blackKeys.contains(n.pitch % 12);
+      final width = isBlack ? blackWidth : whiteWidth;
+
+      paint.color = const Color(0xFF4F9DFD).withOpacity(0.8);
+      final rect = RRect.fromRectAndRadius(
+        Rect.fromLTWH(x, y - barHeight, width, barHeight),
+        const Radius.circular(3),
+      );
+      canvas.drawRRect(rect, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _FallingNotesPainter oldDelegate) {
+    return oldDelegate.elapsedSec != elapsedSec ||
+        oldDelegate.expectedNotes != expectedNotes;
+  }
 }
 
 /// Generate a simple 16-bit PCM WAV beep as bytes.
@@ -754,8 +1265,9 @@ Uint8List _generateBeepBytes({
 
   for (var i = 0; i < samplesCount; i++) {
     final t = i / sampleRate;
-    final sample =
-        (volume * 32767 * sin(2 * pi * freq * t)).clamp(-32767, 32767).toInt();
+    final sample = (volume * 32767 * sin(2 * pi * freq * t))
+        .clamp(-32767, 32767)
+        .toInt();
     writeInt16(sample);
   }
 

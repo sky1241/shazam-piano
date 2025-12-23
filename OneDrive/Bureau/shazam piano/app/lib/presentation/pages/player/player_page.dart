@@ -229,7 +229,7 @@ class _PlayerPageState extends State<PlayerPage> {
                       Container(
                         padding: const EdgeInsets.all(AppConstants.spacing12),
                         decoration: BoxDecoration(
-                          color: AppColors.warning.withValues(alpha: 0.1),
+                          color: AppColors.warning.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Row(

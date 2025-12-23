@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import List, Optional
 from datetime import datetime
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Form, Header, Depends
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header, Depends
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -154,7 +154,7 @@ async def health():
 @app.post("/process", response_model=ProcessResponse)
 async def process_audio(
     audio: UploadFile = File(...),
-    with_audio: bool = Query(False, description="Include synthesized audio in video"),
+    with_audio: bool = Form(False, description="Include synthesized audio in video"),
     levels: Optional[str] = Form("1,2,3,4"),
     user=Depends(get_current_user),
 ):
