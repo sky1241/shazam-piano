@@ -32,6 +32,32 @@ class PracticePage extends StatefulWidget {
 
 class _PracticePageState extends State<PracticePage>
     with SingleTickerProviderStateMixin {
+  // MIDI helpers
+  String noteName(int midi) {
+    const names = [
+      'C',
+      'C#',
+      'D',
+      'D#',
+      'E',
+      'F',
+      'F#',
+      'G',
+      'G#',
+      'A',
+      'A#',
+      'B',
+    ];
+    return names[midi % 12];
+  }
+
+  int noteOctave(int midi) => (midi ~/ 12) - 1; // 60 -> C4
+
+  String noteLabel(int midi, {bool withOctave = false}) {
+    final base = noteName(midi);
+    return withOctave ? '$base${noteOctave(midi)}' : base;
+  }
+
   bool _isListening = false;
   int? _detectedNote;
   int? _expectedNote;
@@ -108,10 +134,15 @@ class _PracticePageState extends State<PracticePage>
                 horizontal: AppConstants.spacing16,
                 vertical: AppConstants.spacing8,
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              child: Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: AppConstants.spacing8,
+                runSpacing: AppConstants.spacing8,
                 children: [
-                  Row(
+                  Wrap(
+                    spacing: AppConstants.spacing8,
+                    runSpacing: AppConstants.spacing8,
                     children: [
                       _buildChip(
                         label: _latencyMs > 0
@@ -119,7 +150,6 @@ class _PracticePageState extends State<PracticePage>
                             : 'Sync auto',
                         color: AppColors.primary,
                       ),
-                      const SizedBox(width: AppConstants.spacing8),
                       _buildChip(
                         label: _midiAvailable ? 'MIDI connecte' : 'MIDI off',
                         color: _midiAvailable
@@ -200,9 +230,8 @@ class _PracticePageState extends State<PracticePage>
               ),
 
             const SizedBox(height: AppConstants.spacing24),
-
-            // Vidéo de preview (guide visuel)
-            _buildVideoPlayer(),
+            // Piano roll + clavier uniquement
+            _buildPracticeStage(),
 
             const SizedBox(height: AppConstants.spacing16),
 
@@ -463,15 +492,36 @@ class _PracticePageState extends State<PracticePage>
     final keyWidth = width;
     final keyHeight = height;
 
-    return Container(
-      width: keyWidth,
-      height: keyHeight,
-      margin: const EdgeInsets.symmetric(horizontal: 1),
-      decoration: BoxDecoration(
-        color: keyColor,
-        border: Border.all(color: AppColors.divider, width: 1),
-        borderRadius: BorderRadius.circular(4),
-      ),
+    final isC = note % 12 == 0;
+    final label = isBlack
+        ? ''
+        : (isC ? noteLabel(note, withOctave: true) : noteLabel(note));
+
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        Container(
+          width: keyWidth,
+          height: keyHeight,
+          margin: EdgeInsets.zero,
+          decoration: BoxDecoration(
+            color: keyColor,
+            border: Border.all(color: AppColors.divider, width: 1),
+            borderRadius: BorderRadius.circular(4),
+          ),
+        ),
+        if (label.isNotEmpty)
+          Positioned(
+            bottom: 4,
+            child: Text(
+              label,
+              style: AppTextStyles.caption.copyWith(
+                fontSize: 10,
+                color: isBlack ? AppColors.whiteKey : AppColors.textSecondary,
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -535,8 +585,7 @@ class _PracticePageState extends State<PracticePage>
 
     if (next) {
       if (_videoController != null) {
-        await _videoController!.seekTo(Duration.zero);
-        await _videoController!.play();
+        await _videoController!.pause();
       }
       await _startPractice();
     } else {
@@ -555,6 +604,11 @@ class _PracticePageState extends State<PracticePage>
         setState(() {
           _isListening = false;
         });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Microphone permission denied')),
+          );
+        }
         return;
       }
 
@@ -607,7 +661,7 @@ class _PracticePageState extends State<PracticePage>
     final startedAtIso = _startTime?.toIso8601String();
     _startTime = null;
     final finishedAt = DateTime.now().toIso8601String();
-    final score = _score;
+    final score = _score.toDouble();
     final total = _totalNotes == 0 ? 1 : _totalNotes;
     final accuracy = total > 0 ? (_correctNotes / total) * 100.0 : 0.0;
 
@@ -1021,6 +1075,7 @@ class _PracticePageState extends State<PracticePage>
       _videoController = VideoPlayerController.networkUrl(Uri.parse(url));
       await _videoController!.initialize();
       _videoController!.setLooping(false);
+      await _videoController!.pause();
       _videoController!.addListener(() {
         if (_videoController == null) return;
         final value = _videoController!.value;
@@ -1030,7 +1085,7 @@ class _PracticePageState extends State<PracticePage>
       });
       _chewieController = ChewieController(
         videoPlayerController: _videoController!,
-        autoPlay: true,
+        autoPlay: false,
         looping: false,
         showControls: true,
         aspectRatio: _videoController!.value.aspectRatio == 0
@@ -1049,6 +1104,7 @@ class _PracticePageState extends State<PracticePage>
     }
   }
 
+  // ignore: unused_element
   Widget _buildVideoPlayer() {
     if (_videoError != null) {
       return Container(
@@ -1075,7 +1131,10 @@ class _PracticePageState extends State<PracticePage>
     );
   }
 
-  Future<void> _showScoreDialog({required double score, required double accuracy}) async {
+  Future<void> _showScoreDialog({
+    required double score,
+    required double accuracy,
+  }) async {
     if (!mounted) return;
     final total = _totalNotes;
     await showDialog<void>(
@@ -1169,6 +1228,29 @@ class _FallingNotesPainter extends CustomPainter {
   final double fallTail;
   final double Function(int) noteToX;
 
+  String _noteLabel(int midi) {
+    const names = [
+      'C',
+      'C#',
+      'D',
+      'D#',
+      'E',
+      'F',
+      'F#',
+      'G',
+      'G#',
+      'A',
+      'A#',
+      'B',
+    ];
+    final base = names[midi % 12];
+    if (midi % 12 == 0) {
+      final octave = (midi ~/ 12) - 1;
+      return '$base$octave';
+    }
+    return base;
+  }
+
   _FallingNotesPainter({
     required this.expectedNotes,
     required this.elapsedSec,
@@ -1205,6 +1287,25 @@ class _FallingNotesPainter extends CustomPainter {
         const Radius.circular(3),
       );
       canvas.drawRRect(rect, paint);
+
+      // Note label
+      final label = _noteLabel(n.pitch);
+      final textPainter = TextPainter(
+        text: TextSpan(
+          text: label,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout(minWidth: 0, maxWidth: width);
+      final textOffset = Offset(
+        x + (width - textPainter.width) / 2,
+        (y - barHeight) + (barHeight - textPainter.height) / 2,
+      );
+      textPainter.paint(canvas, textOffset);
     }
   }
 
