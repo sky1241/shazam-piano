@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Manual fallback in case google-services plugin misses resources -->
+    <string name="google_app_id">1:806918862094:android:3b7c61f7d01c3727ce935f</string>
+    <string name="gcm_defaultSenderId">806918862094</string>
+    <string name="project_id">shazapiano</string>
+    <string name="storage_bucket">shazapiano.firebasestorage.app</string>
+</resources>

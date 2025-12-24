@@ -13,8 +13,13 @@ class AppConfig {
 
   /// Development configuration
   factory AppConfig.dev() {
+    const backendFromEnv = String.fromEnvironment(
+      'BACKEND_BASE',
+      // Local backend by default; override with --dart-define=BACKEND_BASE=...
+      defaultValue: 'http://127.0.0.1:8000',
+    );
     return const AppConfig(
-      backendBaseUrl: 'http://127.0.0.1:8000', // Device + adb reverse
+      backendBaseUrl: backendFromEnv, // Device + adb reverse if provided
       debugMode: true,
       environment: 'dev',
     );
@@ -22,9 +27,12 @@ class AppConfig {
 
   /// Production configuration
   factory AppConfig.prod() {
+    const backendFromEnv = String.fromEnvironment(
+      'BACKEND_BASE',
+      defaultValue: 'https://api.shazapiano.com',
+    );
     return const AppConfig(
-      backendBaseUrl:
-          'https://api.shazapiano.com', // TODO: Update with real URL
+      backendBaseUrl: backendFromEnv,
       debugMode: false,
       environment: 'prod',
     );

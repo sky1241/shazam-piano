@@ -28,17 +28,20 @@ final dioProvider = Provider<Dio>((ref) {
   dio.interceptors.add(
     InterceptorsWrapper(
       onRequest: (options, handler) async {
-        try {
-          final auth = FirebaseAuth.instance;
-          if (auth.currentUser == null) {
-            await auth.signInAnonymously();
+        // In debug mode, we skip auth to avoid token validation issues against local backend.
+        if (!config.debugMode) {
+          try {
+            final auth = FirebaseAuth.instance;
+            if (auth.currentUser == null) {
+              await auth.signInAnonymously();
+            }
+            final token = await auth.currentUser?.getIdToken();
+            if (token != null) {
+              options.headers['Authorization'] = 'Bearer $token';
+            }
+          } catch (_) {
+            // ignore token errors to avoid blocking request; backend will reject if needed
           }
-          final token = await auth.currentUser?.getIdToken();
-          if (token != null) {
-            options.headers['Authorization'] = 'Bearer $token';
-          }
-        } catch (_) {
-          // ignore token errors to avoid blocking request; backend will reject if needed
         }
         return handler.next(options);
       },
