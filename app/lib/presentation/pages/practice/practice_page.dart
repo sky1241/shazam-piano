@@ -176,8 +176,10 @@ class _PracticePageState extends State<PracticePage>
                   bottom: BorderSide(color: AppColors.divider, width: 1),
                 ),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
+              child: Wrap(
+                alignment: WrapAlignment.spaceEvenly,
+                runSpacing: AppConstants.spacing8,
+                spacing: AppConstants.spacing16,
                 children: [
                   _buildScoreStat('Score', _score.toString()),
                   _buildScoreStat(
@@ -350,11 +352,17 @@ class _PracticePageState extends State<PracticePage>
               : screenWidth - (AppConstants.spacing16 * 2);
 
           final whiteCount = _countWhiteKeys();
-          final whiteWidth = availableWidth / whiteCount;
-          final blackWidth = whiteWidth * 0.65;
+          const double minWhiteKeyWidth = 22;
+          const double maxWhiteKeyWidth = 42;
           const double whiteHeight = 120;
           const double blackHeight = 80;
-          final totalWidth = availableWidth;
+
+          final whiteWidth =
+              (availableWidth / whiteCount).clamp(minWhiteKeyWidth, maxWhiteKeyWidth);
+          final blackWidth = whiteWidth * 0.65;
+          final contentWidth = whiteWidth * whiteCount;
+          final shouldScroll = contentWidth > availableWidth;
+          final displayWidth = shouldScroll ? contentWidth : availableWidth;
 
           final now = DateTime.now();
           final elapsedSec = _startTime == null
@@ -365,11 +373,11 @@ class _PracticePageState extends State<PracticePage>
                       1000.0,
                 );
 
-          return Column(
+          final content = Column(
             children: [
               Container(
                 height: _fallAreaHeight,
-                width: totalWidth,
+                width: displayWidth,
                 decoration: BoxDecoration(
                   color: AppColors.surface,
                   borderRadius: BorderRadius.circular(8),
@@ -406,16 +414,28 @@ class _PracticePageState extends State<PracticePage>
                   horizontal: AppConstants.spacing8,
                   vertical: AppConstants.spacing8,
                 ),
-                child: _buildKeyboardWithSizes(
-                  totalWidth: totalWidth,
-                  whiteWidth: whiteWidth,
-                  blackWidth: blackWidth,
-                  whiteHeight: whiteHeight,
-                  blackHeight: blackHeight,
+                child: Align(
+                  alignment: Alignment.center,
+                  child: _buildKeyboardWithSizes(
+                    totalWidth: displayWidth,
+                    whiteWidth: whiteWidth,
+                    blackWidth: blackWidth,
+                    whiteHeight: whiteHeight,
+                    blackHeight: blackHeight,
+                  ),
                 ),
               ),
             ],
           );
+
+          if (shouldScroll) {
+            return SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(),
+              child: content,
+            );
+          }
+          return content;
         },
       ),
     );
@@ -428,41 +448,40 @@ class _PracticePageState extends State<PracticePage>
     required double whiteHeight,
     required double blackHeight,
   }) {
+    final whiteNotes = <int>[];
+    for (int note = _firstKey; note <= _lastKey; note++) {
+      if (!_isBlackKey(note)) whiteNotes.add(note);
+    }
+
     return SizedBox(
-      height: whiteHeight + 16,
       width: totalWidth,
+      height: whiteHeight + 16,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          Row(
-            children: [
-              for (int note = _firstKey; note <= _lastKey; note++)
-                if (!_isBlackKey(note))
-                  _buildPianoKey(
-                    note,
-                    isBlack: false,
-                    width: whiteWidth,
-                    height: whiteHeight,
-                  ),
-            ],
-          ),
-          Positioned.fill(
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (int note = _firstKey; note <= _lastKey; note++)
-                  if (_isBlackKey(note))
-                    _buildPianoKey(
-                      note,
-                      isBlack: true,
-                      width: blackWidth,
-                      height: blackHeight,
-                    )
-                  else
-                    SizedBox(width: whiteWidth),
-              ],
+          // Touche blanches positionnées au pixel près
+          for (int i = 0; i < whiteNotes.length; i++)
+            Positioned(
+              left: i * whiteWidth,
+              child: _buildPianoKey(
+                whiteNotes[i],
+                isBlack: false,
+                width: whiteWidth,
+                height: whiteHeight,
+              ),
             ),
-          ),
+          // Touche noires superposées
+          for (int note = _firstKey; note <= _lastKey; note++)
+            if (_isBlackKey(note))
+              Positioned(
+                left: _noteToX(note, whiteWidth, blackWidth),
+                child: _buildPianoKey(
+                  note,
+                  isBlack: true,
+                  width: blackWidth,
+                  height: blackHeight,
+                ),
+              ),
         ],
       ),
     );

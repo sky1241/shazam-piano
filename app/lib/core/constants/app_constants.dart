@@ -1,10 +1,14 @@
 /// ShazaPiano Application Constants
 class AppConstants {
+  // Environment helpers
+  static const String _env = String.fromEnvironment('ENV', defaultValue: 'dev');
+  static const bool _isProdEnv = _env == 'prod';
+
   // API
   static const String backendBaseUrl = String.fromEnvironment(
     'BACKEND_BASE',
     defaultValue:
-        'http://127.0.0.1:8000', // Device + adb reverse tcp:8000 tcp:8000
+        _isProdEnv ? 'https://api.shazapiano.com' : 'http://127.0.0.1:8000',
   );
 
   // Recording
