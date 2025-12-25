@@ -161,12 +161,44 @@ class VideoTile extends StatelessWidget {
     }
 
     if (thumbnailUrl != null) {
-      // TODO: Display actual thumbnail
-      return Center(
-        child: Icon(
-          Icons.play_circle_filled,
-          size: 48,
-          color: AppColors.primary,
+      return ClipRRect(
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(AppConstants.radiusCard),
+          topRight: Radius.circular(AppConstants.radiusCard),
+        ),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.network(
+              thumbnailUrl!,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => Icon(
+                Icons.play_circle_filled,
+                size: 48,
+                color: AppColors.primary,
+              ),
+              loadingBuilder: (context, child, progress) {
+                if (progress == null) return child;
+                return Center(
+                  child: CircularProgressIndicator(
+                    color: AppColors.primary,
+                    value: progress.expectedTotalBytes != null
+                        ? progress.cumulativeBytesLoaded /
+                            (progress.expectedTotalBytes ?? 1)
+                        : null,
+                  ),
+                );
+              },
+            ),
+            const Align(
+              alignment: Alignment.center,
+              child: Icon(
+                Icons.play_circle_filled,
+                size: 48,
+                color: Colors.white,
+              ),
+            ),
+          ],
         ),
       );
     }

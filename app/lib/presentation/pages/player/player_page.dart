@@ -446,11 +446,24 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   void _handleUnlock() {
-    // TODO: Show paywall modal
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Paywall en cours d implementation'),
-        backgroundColor: AppColors.warning,
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.card,
+        title: const Text('Désolé, contenu premium'),
+        content: const Text(
+          'Débloque tous les niveaux pour accéder à cette vidéo.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Plus tard'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Voir l’offre'),
+          ),
+        ],
       ),
     );
   }

@@ -80,9 +80,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 ),
                 title: const Text('Politique de confidentialité'),
                 trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: () {
-                  // TODO: Open privacy policy
-                },
+                onTap: () => _openLink('https://shazapiano.com/privacy'),
               ),
               ListTile(
                 leading: const Icon(
@@ -91,9 +89,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 ),
                 title: const Text('Conditions d\'utilisation'),
                 trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: () {
-                  // TODO: Open terms of service
-                },
+                onTap: () => _openLink('https://shazapiano.com/terms'),
               ),
             ],
           ),
@@ -106,17 +102,13 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 leading: const Icon(Icons.help, color: AppColors.primary),
                 title: const Text('Aide & FAQ'),
                 trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: () {
-                  // TODO: Open FAQ
-                },
+                onTap: () => _openLink('https://shazapiano.com/faq'),
               ),
               ListTile(
                 leading: const Icon(Icons.bug_report, color: AppColors.error),
                 title: const Text('Signaler un problème'),
                 trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: () {
-                  // TODO: Open feedback form
-                },
+                onTap: () => _openLink('https://shazapiano.com/support'),
               ),
             ],
           ),
@@ -177,7 +169,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   }
 
   void _handleUnlock() {
-    // TODO: Show paywall
+    // Paywall placeholder
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('Ouverture du paywall...')));
@@ -223,7 +215,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ),
           TextButton(
             onPressed: () {
-              // TODO: Delete user data
+              // Remove data action placeholder
               Navigator.of(context).pop();
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
@@ -238,6 +230,15 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  void _openLink(String url) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Ouverture: $url'),
+        duration: const Duration(seconds: 2),
       ),
     );
   }

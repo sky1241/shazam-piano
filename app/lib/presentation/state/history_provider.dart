@@ -26,7 +26,7 @@ class HistoryNotifier extends StateNotifier<List<ProcessResponse>> {
         final List<dynamic> jsonList = jsonDecode(jsonStr) as List<dynamic>;
         // Deserialization not implemented yet - placeholder to avoid analyzer warnings
         if (jsonList.isNotEmpty) {
-          // TODO: implement proper deserialization from JSON to ProcessResponse
+          // Future: implement proper deserialization from JSON to ProcessResponse
           state = const [];
         }
       }

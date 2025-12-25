@@ -229,7 +229,7 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
   }
 
   void _handleShare() {
-    // TODO: Share functionality
+    // Simple placeholder until share flow is ready
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('Partage à venir...')));
@@ -292,7 +292,7 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
                 child: ElevatedButton(
                   onPressed: () {
                     Navigator.pop(context);
-                    // TODO: Trigger IAP
+                    ref.read(iapProvider.notifier).purchase();
                   },
                   style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(

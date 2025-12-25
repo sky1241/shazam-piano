@@ -26,6 +26,7 @@ from firebase_client import (
     verify_firebase_token,
     save_job_for_user,
     save_practice_session,
+    firebase_app,
 )
 import pretty_midi
 
@@ -112,6 +113,10 @@ class PracticeSession(BaseModel):
 
 def get_current_user(authorization: str = Header(None)):
     """Validate Firebase ID token from Authorization header and return claims."""
+    # In dev without Firebase configured, allow a debug user to pass through.
+    if firebase_app is None and settings.DEBUG:
+        logger.warning("Firebase not initialized; bypassing auth for dev.")
+        return {"uid": "debug-user"}
     if settings.DEBUG_AUTH_BYPASS:
         return {"uid": "debug-user"}
     if not authorization or not authorization.lower().startswith("bearer "):

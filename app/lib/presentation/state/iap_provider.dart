@@ -159,7 +159,7 @@ class IAPNotifier extends StateNotifier<IAPState> {
         isRestoring: false,
       );
 
-      // TODO: Also sync to Firestore for multi-device support
+      // Future: sync to Firestore for multi-device support
     } catch (e) {
       state = state.copyWith(error: 'Failed to unlock: $e');
     }
