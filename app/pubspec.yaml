@@ -19,7 +19,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 version: 1.0.0+1
 
 environment:
-  sdk: ^3.2.0
+  sdk: ^3.9.2
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -83,7 +83,7 @@ dev_dependencies:
     sdk: flutter
 
   # Linting
-  flutter_lints: ^3.0.2
+  flutter_lints: ^5.0.0
   
   # Code Generation
   build_runner: ^2.4.8
@@ -95,7 +95,7 @@ dev_dependencies:
   mockito: ^5.4.4
   
   # Launcher Icons
-  flutter_launcher_icons: ^0.13.1
+  flutter_launcher_icons: ^0.14.4
 
 # Dependency overrides to fix platform-specific issues
 dependency_overrides:

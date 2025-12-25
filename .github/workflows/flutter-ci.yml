@@ -21,7 +21,7 @@ jobs:
     - name: Set up Flutter
       uses: subosito/flutter-action@v2
       with:
-        flutter-version: '3.16.0'
+        flutter-version: '3.38.5'
         channel: 'stable'
     
     - name: Install dependencies
@@ -47,7 +47,7 @@ jobs:
     - name: Set up Flutter
       uses: subosito/flutter-action@v2
       with:
-        flutter-version: '3.16.0'
+        flutter-version: '3.38.5'
         channel: 'stable'
     
     - name: Install dependencies
@@ -75,7 +75,7 @@ jobs:
     - name: Set up Flutter
       uses: subosito/flutter-action@v2
       with:
-        flutter-version: '3.16.0'
+        flutter-version: '3.38.5'
         channel: 'stable'
     
     - name: Install dependencies
@@ -91,5 +91,4 @@ jobs:
       with:
         name: debug-apk
         path: app/build/app/outputs/flutter-apk/app-debug.apk
-
 
