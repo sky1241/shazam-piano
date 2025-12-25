@@ -2,7 +2,19 @@ plugins {
     id "com.android.application"
     id "kotlin-android"
     id "dev.flutter.flutter-gradle-plugin"
-    id "com.google.gms.google-services"  // Firebase
+    id "com.google.gms.google-services" apply false  // Firebase
+}
+
+def googleServicesFiles = [
+    file("google-services.json"),
+    file("src/debug/google-services.json"),
+    file("src/Debug/google-services.json")
+]
+
+if (googleServicesFiles.any { it.exists() }) {
+    apply plugin: "com.google.gms.google-services"
+} else {
+    logger.lifecycle("google-services.json not found. Skipping Google Services plugin.")
 }
 
 def localProperties = new Properties()
