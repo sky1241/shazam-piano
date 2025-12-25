@@ -49,6 +49,10 @@ app/android/local.properties
 *.iml
 .gradle/
 gradle/
+!app/android/gradle/
+!app/android/gradle/wrapper/
+!app/android/gradle/wrapper/gradle-wrapper.properties
+!app/android/gradle/wrapper/gradle-wrapper.jar
 
 # iOS
 app/ios/.generated/

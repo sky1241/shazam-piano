@@ -1,4 +1,4 @@
-gradle-wrapper.jar
+/gradle-wrapper.jar
 /.gradle
 /captures/
 /gradlew
@@ -12,3 +12,9 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+
+# Track Gradle wrapper scripts/jar for CI builds
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+!gradlew
+!gradlew.bat
