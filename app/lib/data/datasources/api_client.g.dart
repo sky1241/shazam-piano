@@ -39,7 +39,7 @@ class _ApiClient implements ApiClient {
       // Response is already a map; no JSON factory available for dynamic
       _value = _result.data ?? <String, dynamic>{};
     } on Object catch (e, s) {
-      errorLogger?.logError(e, s, _options, _result);
+      errorLogger?.logError(e, s, _options);
       rethrow;
     }
     return _value;
@@ -86,7 +86,7 @@ class _ApiClient implements ApiClient {
     try {
       _value = ProcessResponseDto.fromJson(_result.data!);
     } on Object catch (e, s) {
-      errorLogger?.logError(e, s, _options, _result);
+      errorLogger?.logError(e, s, _options);
       rethrow;
     }
     return _value;
@@ -113,7 +113,7 @@ class _ApiClient implements ApiClient {
     try {
       _value = _result.data ?? <String, dynamic>{};
     } on Object catch (e, s) {
-      errorLogger?.logError(e, s, _options, _result);
+      errorLogger?.logError(e, s, _options);
       rethrow;
     }
     return _value;
