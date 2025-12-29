@@ -17,6 +17,23 @@ class _ApiClient implements ApiClient {
 
   final ParseErrorLogger? errorLogger;
 
+  void _safeLogError(
+    Object error,
+    StackTrace stackTrace,
+    RequestOptions options,
+    Response<dynamic> response,
+  ) {
+    final logger = errorLogger;
+    if (logger == null) {
+      return;
+    }
+    try {
+      (logger as dynamic).logError(error, stackTrace, options, response);
+    } on NoSuchMethodError {
+      (logger as dynamic).logError(error, stackTrace, options);
+    }
+  }
+
   @override
   Future<Map<String, dynamic>> getHealth() async {
     final _extra = <String, dynamic>{};
@@ -38,7 +55,7 @@ class _ApiClient implements ApiClient {
     try {
       _value = Map<String, dynamic>.from(_result.data!);
     } on Object catch (e, s) {
-      errorLogger?.logError(e, s, _options, _result);
+      _safeLogError(e, s, _options, _result);
       rethrow;
     }
     return _value;
@@ -85,7 +102,7 @@ class _ApiClient implements ApiClient {
     try {
       _value = ProcessResponseDto.fromJson(_result.data!);
     } on Object catch (e, s) {
-      errorLogger?.logError(e, s, _options, _result);
+      _safeLogError(e, s, _options, _result);
       rethrow;
     }
     return _value;
@@ -112,7 +129,7 @@ class _ApiClient implements ApiClient {
     try {
       _value = Map<String, dynamic>.from(_result.data!);
     } on Object catch (e, s) {
-      errorLogger?.logError(e, s, _options, _result);
+      _safeLogError(e, s, _options, _result);
       rethrow;
     }
     return _value;
