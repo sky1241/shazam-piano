@@ -1,3 +1,9 @@
+[CmdletBinding()]
+param(
+  [switch]$Fast,
+  [switch]$NoBuild
+)
+
 $ErrorActionPreference = "Stop"
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -50,12 +56,27 @@ Write-Host "DART_VM_OPTIONS=$env:DART_VM_OPTIONS"
 Write-Host "DART_TOOL_VM_OPTIONS=$env:DART_TOOL_VM_OPTIONS"
 
 Set-Location (Join-Path $repoRoot "app")
-flutter clean
-flutter pub get
+if (-not $Fast) {
+  flutter clean
+  flutter pub get
+} else {
+  Write-Host "FAST_MODE=1 (skipping flutter clean/pub get)"
+}
 
 try {
   adb reverse tcp:8000 tcp:8000 | Out-Null
 } catch {
 }
 
-flutter run --dart-define=ENV=dev --dart-define=BUILD_STAMP=$stamp
+$flutterArgs = @("--dart-define=ENV=dev", "--dart-define=BUILD_STAMP=$stamp")
+if ($NoBuild) {
+  $apkPath = Join-Path (Get-Location) "build\app\outputs\flutter-apk\app-debug.apk"
+  if (Test-Path $apkPath) {
+    $flutterArgs += "--no-build"
+    Write-Host "NO_BUILD=1 (using existing APK)"
+  } else {
+    Write-Host "NO_BUILD requested but no APK found; running full build."
+  }
+}
+
+flutter run @flutterArgs

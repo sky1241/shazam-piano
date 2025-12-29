@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
-  [switch]$Logcat
+  [switch]$Logcat,
+  [switch]$Fast,
+  [switch]$NoBuild
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,6 +13,20 @@ function Show-Help {
   Write-Host ""
   Write-Host "Options:"
   Write-Host "  -Logcat   Open an additional Logcat window (adb must be available)."
+  Write-Host "  -Fast     Skip flutter clean/pub get for a quieter, faster launch."
+  Write-Host "  -NoBuild  Skip Gradle build if APK already exists."
+}
+
+function Stop-WindowByTitle {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Title
+  )
+
+  $targets = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq $Title }
+  if ($targets) {
+    $targets | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+  }
 }
 
 $logcatFilterArgs = "/c:flutter /c:ShazaPiano"
@@ -22,6 +38,10 @@ try {
   $shell = "powershell"
   if (Get-Command pwsh -ErrorAction SilentlyContinue) {
     $shell = "pwsh"
+  }
+
+  foreach ($title in @("Backend", "Flutter", "Logcat")) {
+    Stop-WindowByTitle -Title $title
   }
 
   $backendDir = Join-Path $repoRoot "backend"
@@ -65,12 +85,20 @@ try {
   $backendScript = $backendScriptLines -join "; "
   Start-Process -FilePath $shell -ArgumentList "-NoExit", "-Command", $backendScript | Out-Null
 
+  $runAppArgs = ""
+  if ($Fast) {
+    $runAppArgs = " -Fast"
+  }
+  if ($NoBuild) {
+    $runAppArgs = "$runAppArgs -NoBuild"
+  }
+
   $flutterScript = @(
     "`$host.UI.RawUI.WindowTitle = 'Flutter'",
     "Write-Host 'Flutter window'",
     "Set-Location '$repoRoot'",
     "Write-Host 'Launching Flutter (BUILD_STAMP overlay is visible in debug)'",
-    "& '$runAppPath'"
+    "& '$runAppPath'$runAppArgs"
   ) -join "; "
   Start-Process -FilePath $shell -ArgumentList "-NoExit", "-Command", $flutterScript | Out-Null
 

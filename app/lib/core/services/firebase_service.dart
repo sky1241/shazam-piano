@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -7,6 +9,10 @@ import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 
 /// Firebase service for app initialization and common operations
 class FirebaseService {
+  static const Duration _initTimeout = Duration(seconds: 12);
+  static const Duration _authTimeout = Duration(seconds: 8);
+  static const Duration _crashlyticsTimeout = Duration(seconds: 8);
+
   static FirebaseAuth get auth => FirebaseAuth.instance;
   static FirebaseFirestore get firestore => FirebaseFirestore.instance;
   static FirebaseAnalytics get analytics => FirebaseAnalytics.instance;
@@ -15,32 +21,38 @@ class FirebaseService {
   /// Initialize Firebase
   static Future<void> initialize() async {
     try {
-      await Firebase.initializeApp();
+      await Firebase.initializeApp().timeout(_initTimeout);
       debugPrint('Firebase Core initialized');
-
-      // Setup Crashlytics (non-blocking)
-      try {
-        await _setupCrashlytics();
-        debugPrint('Crashlytics initialized');
-      } catch (e) {
-        debugPrint('Crashlytics setup failed (non-critical): $e');
-      }
-
-      // Setup anonymous auth (non-blocking)
-      try {
-        await _setupAuth();
-        debugPrint('Anonymous auth initialized');
-      } catch (e) {
-        debugPrint('Anonymous auth failed (non-critical): $e');
-      }
-
-      debugPrint('Firebase initialized successfully');
+    } on TimeoutException catch (e) {
+      debugPrint('Firebase initialization timed out: $e');
+      return;
     } catch (e, stackTrace) {
       debugPrint('Firebase initialization failed: $e');
       debugPrint('Stack trace: $stackTrace');
-      // Don't rethrow - allow app to continue without Firebase
-      // This is important for development/testing
+      return;
     }
+
+    // Setup Crashlytics (non-blocking)
+    try {
+      await _setupCrashlytics().timeout(_crashlyticsTimeout);
+      debugPrint('Crashlytics initialized');
+    } on TimeoutException catch (e) {
+      debugPrint('Crashlytics setup timed out (non-critical): $e');
+    } catch (e) {
+      debugPrint('Crashlytics setup failed (non-critical): $e');
+    }
+
+    // Setup anonymous auth (non-blocking)
+    try {
+      await _setupAuth().timeout(_authTimeout);
+      debugPrint('Anonymous auth initialized');
+    } on TimeoutException catch (e) {
+      debugPrint('Anonymous auth timed out (non-critical): $e');
+    } catch (e) {
+      debugPrint('Anonymous auth failed (non-critical): $e');
+    }
+
+    debugPrint('Firebase initialized successfully');
   }
 
   /// Setup Crashlytics
