@@ -184,7 +184,7 @@ class VideoTile extends StatelessWidget {
                     color: AppColors.primary,
                     value: progress.expectedTotalBytes != null
                         ? progress.cumulativeBytesLoaded /
-                            (progress.expectedTotalBytes ?? 1)
+                              (progress.expectedTotalBytes ?? 1)
                         : null,
                   ),
                 );

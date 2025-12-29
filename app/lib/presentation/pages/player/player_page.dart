@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import 'package:chewie/chewie.dart';
@@ -12,6 +13,8 @@ class PlayerPage extends StatefulWidget {
   final bool isUnlocked;
   final String? trackTitle;
   final String? trackArtist;
+  final String? localVideoPath;
+  final String? localPreviewPath;
 
   const PlayerPage({
     super.key,
@@ -19,6 +22,8 @@ class PlayerPage extends StatefulWidget {
     required this.isUnlocked,
     this.trackTitle,
     this.trackArtist,
+    this.localVideoPath,
+    this.localPreviewPath,
   });
 
   @override
@@ -66,26 +71,58 @@ class _PlayerPageState extends State<PlayerPage> {
         return resolved;
       }
 
-      // Use preview or full video based on unlock status
-      final videoUrl = resolveUrl(
-        widget.isUnlocked ? widget.level.videoUrl : widget.level.previewUrl,
-      );
+      final useFull = widget.isUnlocked;
+      final localPath = useFull
+          ? widget.localVideoPath
+          : widget.localPreviewPath;
 
-      // Debug: log final URL used by the player
-      // ignore: avoid_print
-      print('[Player] loading video: $videoUrl');
+      VideoPlayerController controller;
+      if (localPath != null && localPath.isNotEmpty) {
+        final file = File(localPath);
+        if (file.existsSync() && file.lengthSync() > 0) {
+          controller = VideoPlayerController.file(file);
+        } else {
+          // Use preview or full video based on unlock status
+          final videoUrl = resolveUrl(
+            useFull ? widget.level.videoUrl : widget.level.previewUrl,
+          );
 
-      if (videoUrl.isEmpty) {
-        setState(() {
-          _error = 'Aucune video disponible';
-          _isLoading = false;
-        });
-        return;
+          // Debug: log final URL used by the player
+          // ignore: avoid_print
+          print('[Player] loading video: $videoUrl');
+
+          if (videoUrl.isEmpty) {
+            setState(() {
+              _error = 'Aucune video disponible';
+              _isLoading = false;
+            });
+            return;
+          }
+
+          controller = VideoPlayerController.networkUrl(Uri.parse(videoUrl));
+        }
+      } else {
+        // Use preview or full video based on unlock status
+        final videoUrl = resolveUrl(
+          useFull ? widget.level.videoUrl : widget.level.previewUrl,
+        );
+
+        // Debug: log final URL used by the player
+        // ignore: avoid_print
+        print('[Player] loading video: $videoUrl');
+
+        if (videoUrl.isEmpty) {
+          setState(() {
+            _error = 'Aucune video disponible';
+            _isLoading = false;
+          });
+          return;
+        }
+
+        controller = VideoPlayerController.networkUrl(Uri.parse(videoUrl));
       }
 
-      _videoPlayerController = VideoPlayerController.networkUrl(
-        Uri.parse(videoUrl),
-      );
+      _videoPlayerController = controller;
 
       await _videoPlayerController!.initialize();
 

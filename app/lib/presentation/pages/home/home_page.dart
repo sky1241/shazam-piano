@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_colors.dart';
@@ -7,6 +8,7 @@ import '../../widgets/big_record_button.dart';
 import '../../widgets/mode_chip.dart';
 import '../../widgets/app_logo.dart';
 import '../../state/recording_provider.dart';
+import '../../state/recording_state.dart';
 import '../../state/process_provider.dart';
 import '../../state/history_provider.dart';
 import '../previews/previews_page.dart';
@@ -23,6 +25,8 @@ class HomePage extends ConsumerStatefulWidget {
 
 class _HomePageState extends ConsumerState<HomePage> {
   RecordButtonState _buttonState = RecordButtonState.idle;
+  bool _isProcessing = false;
+  late final ProviderSubscription<RecordingState> _recordingSubscription;
   final Map<int, ModeChipStatus> _levelStatuses = {
     1: ModeChipStatus.queued,
     2: ModeChipStatus.queued,
@@ -31,7 +35,65 @@ class _HomePageState extends ConsumerState<HomePage> {
   };
 
   @override
+  void initState() {
+    super.initState();
+    _recordingSubscription = ref.listenManual(recordingProvider, (prev, next) {
+      final wasRecording = prev?.isRecording ?? false;
+      if (!wasRecording || next.isRecording) {
+        return;
+      }
+
+      if (next.hasError) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(next.error ?? 'Erreur d enregistrement'),
+              backgroundColor: AppColors.error,
+            ),
+          );
+          setState(() {
+            _buttonState = RecordButtonState.idle;
+            _resetLevelStatuses();
+          });
+        }
+        return;
+      }
+
+      if (next.recordedFile == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Aucun enregistrement trouvé'),
+              backgroundColor: AppColors.error,
+            ),
+          );
+          setState(() {
+            _buttonState = RecordButtonState.idle;
+            _resetLevelStatuses();
+          });
+        }
+        return;
+      }
+
+      if (_buttonState == RecordButtonState.processing || _isProcessing) {
+        return;
+      }
+
+      _startProcessing(next.recordedFile!);
+    });
+  }
+
+  @override
+  void dispose() {
+    _recordingSubscription.close();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final processState = ref.watch(processProvider);
+    final showProcessingAd =
+        _buttonState == RecordButtonState.processing && processState.isActive;
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(gradient: AppColors.backgroundGradient),
@@ -127,6 +189,10 @@ class _HomePageState extends ConsumerState<HomePage> {
                                   ],
                                 ],
                               ),
+                              if (showProcessingAd) ...[
+                                const SizedBox(height: AppConstants.spacing16),
+                                const _AdPlaceholderWidget(),
+                              ],
                             ],
                           ),
                         ),
@@ -166,7 +232,6 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   void _handleRecordButtonTap() async {
     final recordingNotifier = ref.read(recordingProvider.notifier);
-    final processNotifier = ref.read(processProvider.notifier);
 
     if (_buttonState == RecordButtonState.idle) {
       // Start recording
@@ -179,52 +244,47 @@ class _HomePageState extends ConsumerState<HomePage> {
 
       // Recording started, wait for user to stop
       // (button will be tapped again to stop)
-    } else if (_buttonState == RecordButtonState.recording) {
-      // Stop recording
-      await recordingNotifier.stopRecording();
-
-      final recordingState = ref.read(recordingProvider);
-
-      if (recordingState.hasError) {
-        // Show error
+      final rec = ref.read(recordingProvider);
+      if (!rec.isRecording) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(recordingState.error ?? 'Erreur d enregistrement'),
+              content: Text(
+                rec.error ?? 'Impossible de démarrer l\'enregistrement',
+              ),
               backgroundColor: AppColors.error,
             ),
           );
           setState(() {
             _buttonState = RecordButtonState.idle;
+            _resetLevelStatuses();
           });
         }
         return;
       }
+      return;
+    }
 
-      if (!recordingState.hasRecording) {
-        // No recording file
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Aucun enregistrement trouvé'),
-              backgroundColor: AppColors.error,
-            ),
-          );
-          setState(() {
-            _buttonState = RecordButtonState.idle;
-          });
-        }
-        return;
-      }
+    if (_buttonState == RecordButtonState.recording) {
+      // Stop recording
+      await recordingNotifier.stopRecording();
+    }
+  }
 
-      // Start processing
-      setState(() {
-        _buttonState = RecordButtonState.processing;
-        _levelStatuses[1] = ModeChipStatus.processing;
-      });
+  Future<void> _startProcessing(File recordedFile) async {
+    if (_isProcessing || _buttonState == RecordButtonState.processing) {
+      return;
+    }
+    _isProcessing = true;
 
-      // Upload and process the recording
-      final recordedFile = recordingState.recordedFile!;
+    setState(() {
+      _buttonState = RecordButtonState.processing;
+      _resetLevelStatuses();
+      _levelStatuses[1] = ModeChipStatus.processing;
+    });
+
+    try {
+      final processNotifier = ref.read(processProvider.notifier);
       await processNotifier.processAudio(
         audioFile: recordedFile,
         withAudio: false,
@@ -234,7 +294,6 @@ class _HomePageState extends ConsumerState<HomePage> {
       final processState = ref.read(processProvider);
 
       if (processState.hasError) {
-        // Show error
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -244,9 +303,7 @@ class _HomePageState extends ConsumerState<HomePage> {
           );
           setState(() {
             _buttonState = RecordButtonState.idle;
-            for (int i = 1; i <= 4; i++) {
-              _levelStatuses[i] = ModeChipStatus.queued;
-            }
+            _resetLevelStatuses();
           });
         }
         return;
@@ -302,11 +359,17 @@ class _HomePageState extends ConsumerState<HomePage> {
         // Reset state
         setState(() {
           _buttonState = RecordButtonState.idle;
-          for (int i = 1; i <= 4; i++) {
-            _levelStatuses[i] = ModeChipStatus.queued;
-          }
+          _resetLevelStatuses();
         });
       }
+    } finally {
+      _isProcessing = false;
+    }
+  }
+
+  void _resetLevelStatuses() {
+    for (int i = 1; i <= 4; i++) {
+      _levelStatuses[i] = ModeChipStatus.queued;
     }
   }
 
@@ -337,5 +400,42 @@ class _HomePageState extends ConsumerState<HomePage> {
     Navigator.of(
       context,
     ).push(MaterialPageRoute(builder: (context) => const HistoryPage()));
+  }
+}
+
+class _AdPlaceholderWidget extends StatelessWidget {
+  const _AdPlaceholderWidget();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 120,
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppConstants.spacing16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppConstants.radiusCard),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            'Publicite',
+            style: AppTextStyles.caption.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: AppConstants.spacing8),
+          Text(
+            'Chargement...',
+            style: AppTextStyles.body.copyWith(
+              color: AppColors.textPrimary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

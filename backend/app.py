@@ -323,7 +323,10 @@ async def process_audio(
                     logger.success(f"✅ Level {level} completed!")
                     
                 except Exception as level_error:
+                    import traceback
                     logger.error(f"Level {level} failed: {level_error}")
+                    logger.error(f"Traceback:\n{traceback.format_exc()}")
+                    error_message = f"{type(level_error).__name__}: {level_error}"
                     results.append(
                         LevelResult(
                             level=level,
@@ -332,7 +335,7 @@ async def process_audio(
                             video_url="",
                             midi_url="",
                             status="error",
-                            error=str(level_error)
+                            error=error_message
                         )
                     )
             
@@ -428,6 +431,12 @@ async def startup_event():
     logger.info("🚀 ShazaPiano Backend starting...")
     init_directories()
     init_firebase(settings.FIREBASE_CREDENTIALS)
+    logger.info(
+        "Preview config: duration=%ss size=%sx%s",
+        settings.PREVIEW_DURATION_SEC,
+        settings.VIDEO_WIDTH,
+        settings.VIDEO_HEIGHT,
+    )
     logger.info(f"📁 Media directory: {settings.MEDIA_DIR}")
     logger.info(f"🎵 Ready to process on http://{settings.HOST}:{settings.PORT}")
 

@@ -176,11 +176,12 @@ railway up
 ## 🧪 Tests
 
 ```bash
-# Installer dépendances de dev
+# Installer dependances de dev (dans un venv)
 pip install pytest pytest-asyncio httpx
+pip install pytest pytest-cov
 
 # Lancer tests
-pytest
+python -m pytest -q test_api.py
 
 # Avec coverage
 pytest --cov=. --cov-report=html

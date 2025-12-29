@@ -83,6 +83,8 @@ class _PracticePageState extends State<PracticePage>
   static const double _fallAreaHeight = 320;
   static const double _fallLeadSec = 2.0;
   static const double _fallTailSec = 0.6;
+  static const int _micMaxBufferSamples = PitchDetector.bufferSize * 4;
+  final List<double> _micBuffer = <double>[];
   VideoPlayerController? _videoController;
   ChewieController? _chewieController;
   bool _videoLoading = true;
@@ -351,18 +353,29 @@ class _PracticePageState extends State<PracticePage>
               ? constraints.maxWidth
               : screenWidth - (AppConstants.spacing16 * 2);
 
-          final whiteCount = _countWhiteKeys();
-          const double minWhiteKeyWidth = 22;
-          const double maxWhiteKeyWidth = 42;
-          const double whiteHeight = 120;
-          const double blackHeight = 80;
+          final isPortrait =
+              MediaQuery.of(context).orientation == Orientation.portrait;
+          const double stagePadding = AppConstants.spacing12;
+          final innerAvailableWidth = max(
+            0.0,
+            availableWidth - (stagePadding * 2),
+          );
 
-          final whiteWidth =
-              (availableWidth / whiteCount).clamp(minWhiteKeyWidth, maxWhiteKeyWidth);
+          final whiteCount = _countWhiteKeys();
+          const double minWhiteKeyWidth = 8;
+          final rawWhiteWidth = innerAvailableWidth / whiteCount;
+          final whiteWidth = max(minWhiteKeyWidth, rawWhiteWidth);
           final blackWidth = whiteWidth * 0.65;
           final contentWidth = whiteWidth * whiteCount;
-          final shouldScroll = contentWidth > availableWidth;
-          final displayWidth = shouldScroll ? contentWidth : availableWidth;
+          final shouldScroll = contentWidth > innerAvailableWidth;
+          final displayWidth = shouldScroll
+              ? contentWidth
+              : innerAvailableWidth;
+          final outerWidth = displayWidth + (stagePadding * 2);
+
+          final whiteHeight = isPortrait ? 90.0 : 120.0;
+          final blackHeight = isPortrait ? 60.0 : 80.0;
+          final fallAreaHeight = isPortrait ? 260.0 : _fallAreaHeight;
 
           final now = DateTime.now();
           final elapsedSec = _startTime == null
@@ -371,61 +384,52 @@ class _PracticePageState extends State<PracticePage>
                   0.0,
                   (now.difference(_startTime!).inMilliseconds - _latencyMs) /
                       1000.0,
-                );
+                ).toDouble();
 
-          final content = Column(
-            children: [
-              Container(
-                height: _fallAreaHeight,
-                width: displayWidth,
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppColors.divider),
-                ),
-                child: _expectedNotes.isEmpty
-                    ? Center(
-                        child: Text(
-                          'Chargement des notes...',
-                          style: AppTextStyles.caption,
+          final content = Container(
+            width: outerWidth,
+            padding: const EdgeInsets.all(stagePadding),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(AppConstants.radiusCard),
+              border: Border.all(color: AppColors.divider),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  height: fallAreaHeight,
+                  width: displayWidth,
+                  child: _expectedNotes.isEmpty
+                      ? Center(
+                          child: Text(
+                            'Chargement des notes...',
+                            style: AppTextStyles.caption,
+                          ),
+                        )
+                      : CustomPaint(
+                          painter: _FallingNotesPainter(
+                            expectedNotes: _expectedNotes,
+                            elapsedSec: elapsedSec,
+                            whiteWidth: whiteWidth,
+                            blackWidth: blackWidth,
+                            fallAreaHeight: fallAreaHeight,
+                            fallLead: _fallLeadSec,
+                            fallTail: _fallTailSec,
+                            noteToX: (n) => _noteToX(n, whiteWidth, blackWidth),
+                          ),
                         ),
-                      )
-                    : CustomPaint(
-                        painter: _FallingNotesPainter(
-                          expectedNotes: _expectedNotes,
-                          elapsedSec: elapsedSec,
-                          whiteWidth: whiteWidth,
-                          blackWidth: blackWidth,
-                          fallAreaHeight: _fallAreaHeight,
-                          fallLead: _fallLeadSec,
-                          fallTail: _fallTailSec,
-                          noteToX: (n) => _noteToX(n, whiteWidth, blackWidth),
-                        ),
-                      ),
-              ),
-              const SizedBox(height: 8),
-              Container(
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppColors.divider),
                 ),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppConstants.spacing8,
-                  vertical: AppConstants.spacing8,
+                const SizedBox(height: AppConstants.spacing8),
+                _buildKeyboardWithSizes(
+                  totalWidth: displayWidth,
+                  whiteWidth: whiteWidth,
+                  blackWidth: blackWidth,
+                  whiteHeight: whiteHeight,
+                  blackHeight: blackHeight,
                 ),
-                child: Align(
-                  alignment: Alignment.center,
-                  child: _buildKeyboardWithSizes(
-                    totalWidth: displayWidth,
-                    whiteWidth: whiteWidth,
-                    blackWidth: blackWidth,
-                    whiteHeight: whiteHeight,
-                    blackHeight: blackHeight,
-                  ),
-                ),
-              ),
-            ],
+              ],
+            ),
           );
 
           if (shouldScroll) {
@@ -435,7 +439,7 @@ class _PracticePageState extends State<PracticePage>
               child: content,
             );
           }
-          return content;
+          return Align(alignment: Alignment.center, child: content);
         },
       ),
     );
@@ -455,7 +459,7 @@ class _PracticePageState extends State<PracticePage>
 
     return SizedBox(
       width: totalWidth,
-      height: whiteHeight + 16,
+      height: whiteHeight + AppConstants.spacing12,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
@@ -514,6 +518,7 @@ class _PracticePageState extends State<PracticePage>
     final label = isBlack
         ? ''
         : (isC ? noteLabel(note, withOctave: true) : noteLabel(note));
+    final labelFontSize = max(7.0, min(11.0, keyWidth * 0.45));
 
     return Stack(
       alignment: Alignment.center,
@@ -534,7 +539,7 @@ class _PracticePageState extends State<PracticePage>
             child: Text(
               label,
               style: AppTextStyles.caption.copyWith(
-                fontSize: 10,
+                fontSize: labelFontSize,
                 color: isBlack ? AppColors.whiteKey : AppColors.textSecondary,
               ),
             ),
@@ -646,6 +651,7 @@ class _PracticePageState extends State<PracticePage>
     _totalNotes = _expectedNotes.length;
     _hitNotes = List<bool>.filled(_expectedNotes.length, false);
     _startTime = DateTime.now();
+    _micBuffer.clear();
 
     if (_useMidi) {
       // Already listening via MIDI subscription
@@ -755,16 +761,14 @@ class _PracticePageState extends State<PracticePage>
 
   Future<void> _processAudioChunk(List<int> chunk) async {
     if (_startTime == null) return;
-    // chunk is PCM 16-bit mono
-    final int16 = Int16List.fromList(chunk);
-    if (int16.isEmpty) return;
+    final samples = _convertChunkToSamples(chunk);
+    if (samples.isEmpty) return;
+    _appendSamples(_micBuffer, samples);
 
-    final floatSamples = Float32List(int16.length);
-    for (var i = 0; i < int16.length; i++) {
-      floatSamples[i] = int16[i] / 32768.0;
-    }
+    final window = _latestWindow(_micBuffer);
+    if (window == null) return;
 
-    final freq = _pitchDetector.detectPitch(floatSamples);
+    final freq = _pitchDetector.detectPitch(window);
     if (freq == null) return;
     final midi = _pitchDetector.frequencyToMidiNote(freq);
 
@@ -813,6 +817,50 @@ class _PracticePageState extends State<PracticePage>
       }
     });
     _updateNextExpected();
+  }
+
+  List<double> _convertChunkToSamples(List<int> chunk) {
+    if (chunk.isEmpty) return const [];
+    final looksLikeBytes =
+        chunk is Uint8List ||
+        (chunk is! Int16List && chunk.every((v) => v >= 0 && v <= 255));
+
+    final samples = <double>[];
+    if (looksLikeBytes) {
+      final evenLength = chunk.length - (chunk.length % 2);
+      for (var i = 0; i < evenLength; i += 2) {
+        final lo = chunk[i];
+        final hi = chunk[i + 1];
+        int value = (hi << 8) | lo;
+        if (value >= 0x8000) {
+          value -= 0x10000;
+        }
+        samples.add(value / 32768.0);
+      }
+      return samples;
+    }
+
+    for (final value in chunk) {
+      if (value < -32768 || value > 32767) {
+        continue;
+      }
+      samples.add(value / 32768.0);
+    }
+    return samples;
+  }
+
+  void _appendSamples(List<double> buffer, List<double> samples) {
+    if (samples.isEmpty) return;
+    buffer.addAll(samples);
+    if (buffer.length > _micMaxBufferSamples) {
+      buffer.removeRange(0, buffer.length - _micMaxBufferSamples);
+    }
+  }
+
+  Float32List? _latestWindow(List<double> buffer) {
+    if (buffer.length < PitchDetector.bufferSize) return null;
+    final start = buffer.length - PitchDetector.bufferSize;
+    return Float32List.fromList(buffer.sublist(start));
   }
 
   Future<void> _loadExpectedNotes() async {
@@ -878,19 +926,19 @@ class _PracticePageState extends State<PracticePage>
     final durationMs = 1200;
     DateTime? beepStart;
     StreamSubscription<List<int>>? calibSub;
+    final calibBuffer = <double>[];
     final recorder = RecorderStream();
     try {
       await recorder.initialize(sampleRate: PitchDetector.sampleRate);
       await recorder.start();
       calibSub = recorder.audioStream.listen((chunk) {
         if (beepStart == null) return;
-        final int16 = Int16List.fromList(chunk);
-        if (int16.isEmpty) return;
-        final floatSamples = Float32List(int16.length);
-        for (var i = 0; i < int16.length; i++) {
-          floatSamples[i] = int16[i] / 32768.0;
-        }
-        final freq = _pitchDetector.detectPitch(floatSamples);
+        final samples = _convertChunkToSamples(chunk);
+        if (samples.isEmpty) return;
+        _appendSamples(calibBuffer, samples);
+        final window = _latestWindow(calibBuffer);
+        if (window == null) return;
+        final freq = _pitchDetector.detectPitch(window);
         if (freq == null) return;
         if ((freq - targetFreq).abs() < 80) {
           final delta = DateTime.now().difference(beepStart).inMilliseconds;
@@ -1237,8 +1285,9 @@ class _FallingNotesPainter extends CustomPainter {
   final double fallLead;
   final double fallTail;
   final double Function(int) noteToX;
+  static final Map<String, TextPainter> _labelCache = {};
 
-  String _noteLabel(int midi) {
+  String _barLabel(int midi) {
     const names = [
       'C',
       'C#',
@@ -1254,11 +1303,32 @@ class _FallingNotesPainter extends CustomPainter {
       'B',
     ];
     final base = names[midi % 12];
-    if (midi % 12 == 0) {
-      final octave = (midi ~/ 12) - 1;
-      return '$base$octave';
+    final octave = (midi ~/ 12) - 1;
+    return '$base$octave';
+  }
+
+  TextPainter _getLabelPainter(String label, double fontSize) {
+    final key = '$label:${fontSize.toStringAsFixed(1)}';
+    final cached = _labelCache[key];
+    if (cached != null) {
+      return cached;
     }
-    return base;
+    final painter = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: fontSize,
+          fontWeight: FontWeight.w600,
+          shadows: const [
+            Shadow(color: Colors.black, blurRadius: 2, offset: Offset(0, 1)),
+          ],
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    _labelCache[key] = painter;
+    return painter;
   }
 
   _FallingNotesPainter({
@@ -1298,24 +1368,16 @@ class _FallingNotesPainter extends CustomPainter {
       );
       canvas.drawRRect(rect, paint);
 
-      // Note label
-      final label = _noteLabel(n.pitch);
-      final textPainter = TextPainter(
-        text: TextSpan(
-          text: label,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout(minWidth: 0, maxWidth: width);
-      final textOffset = Offset(
-        x + (width - textPainter.width) / 2,
-        (y - barHeight) + (barHeight - textPainter.height) / 2,
-      );
-      textPainter.paint(canvas, textOffset);
+      if (width >= 14 && barHeight >= 22) {
+        final label = _barLabel(n.pitch);
+        final fontSize = max(9.0, min(12.0, min(width * 0.6, barHeight * 0.4)));
+        final textPainter = _getLabelPainter(label, fontSize);
+        final textOffset = Offset(
+          x + (width - textPainter.width) / 2,
+          (y - barHeight) + (barHeight - textPainter.height) / 2,
+        );
+        textPainter.paint(canvas, textOffset);
+      }
     }
   }
 

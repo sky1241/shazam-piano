@@ -1,5 +1,6 @@
 // ignore_for_file: unused_element
 
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_colors.dart';
@@ -9,6 +10,7 @@ import '../../../domain/entities/level_result.dart';
 import '../../widgets/video_tile.dart';
 import '../../widgets/paywall_modal.dart';
 import '../../state/iap_provider.dart';
+import '../../state/library_provider.dart';
 import '../player/player_page.dart';
 
 class PreviewsPage extends ConsumerStatefulWidget {
@@ -30,8 +32,49 @@ class PreviewsPage extends ConsumerStatefulWidget {
 }
 
 class _PreviewsPageState extends ConsumerState<PreviewsPage> {
+  String? _jobId;
+
+  @override
+  void initState() {
+    super.initState();
+    _jobId = _resolveJobId();
+
+    if (_jobId != null) {
+      unawaited(
+        ref
+            .read(libraryProvider.notifier)
+            .cachePreviews(
+              jobId: _jobId!,
+              levels: widget.levels,
+              trackTitle: widget.trackTitle,
+              trackArtist: widget.trackArtist,
+            ),
+      );
+    }
+
+    if (ref.read(iapProvider).isUnlocked) {
+      unawaited(_maybeStartFullDownload());
+    }
+
+    ref.listen(iapProvider, (prev, next) {
+      final wasUnlocked = prev?.isUnlocked ?? false;
+      if (!wasUnlocked && next.isUnlocked) {
+        unawaited(_maybeStartFullDownload());
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isUnlocked = ref.watch(iapProvider).isUnlocked;
+    final libraryState = ref.watch(libraryProvider);
+    final isActiveJob = _jobId != null && libraryState.activeJobId == _jobId;
+    final showDownload = isActiveJob && libraryState.isDownloading;
+    final showRetry =
+        isActiveJob &&
+        !libraryState.isDownloading &&
+        libraryState.downloadError != null;
+
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(
@@ -80,7 +123,7 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
                         level: level.level,
                         levelName: level.name,
                         previewUrl: level.previewUrl,
-                        isUnlocked: widget.isUnlocked,
+                        isUnlocked: isUnlocked,
                         isLoading: level.isPending,
                         videoKey: level.keyGuess,
                         tempo: level.tempoGuess,
@@ -92,8 +135,69 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
               ),
             ),
 
+            if (showDownload || showRetry)
+              Container(
+                padding: const EdgeInsets.all(AppConstants.spacing16),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  border: Border(
+                    top: BorderSide(color: AppColors.divider, width: 1),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        if (showDownload)
+                          const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        if (showDownload)
+                          const SizedBox(width: AppConstants.spacing8),
+                        Expanded(
+                          child: Text(
+                            showDownload
+                                ? 'Telechargement en cours...'
+                                : 'Telechargement interrompu',
+                            style: AppTextStyles.caption,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (showDownload) ...[
+                      const SizedBox(height: AppConstants.spacing8),
+                      LinearProgressIndicator(
+                        value: libraryState.downloadProgress > 0
+                            ? libraryState.downloadProgress
+                            : null,
+                      ),
+                    ],
+                    if (showRetry) ...[
+                      const SizedBox(height: AppConstants.spacing8),
+                      Text(
+                        libraryState.downloadError ?? '',
+                        style: AppTextStyles.caption.copyWith(
+                          color: AppColors.error,
+                        ),
+                      ),
+                      const SizedBox(height: AppConstants.spacing8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: _maybeStartFullDownload,
+                          child: const Text('Reprendre le telechargement'),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+
             // Unlock button
-            if (!widget.isUnlocked)
+            if (!isUnlocked)
               Container(
                 padding: const EdgeInsets.all(AppConstants.spacing16),
                 decoration: BoxDecoration(
@@ -163,14 +267,21 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
       return;
     }
 
+    final isUnlocked = ref.read(iapProvider).isUnlocked;
+    final item = _findLibraryItem();
+    final localPreview = item?.previewPaths[level.level];
+    final localFull = item?.fullPaths[level.level];
+
     // Navigate to Player (will handle unlock status internally)
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => PlayerPage(
           level: level,
-          isUnlocked: widget.isUnlocked,
+          isUnlocked: isUnlocked,
           trackTitle: widget.trackTitle,
           trackArtist: widget.trackArtist,
+          localPreviewPath: localPreview,
+          localVideoPath: localFull,
         ),
       ),
     );
@@ -189,6 +300,7 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
       setState(() {
         // Force rebuild with unlocked status
       });
+      unawaited(_maybeStartFullDownload());
     }
   }
 
@@ -233,6 +345,58 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('Partage à venir...')));
+  }
+
+  String? _resolveJobId() {
+    for (final level in widget.levels) {
+      final url = level.previewUrl.isNotEmpty
+          ? level.previewUrl
+          : level.videoUrl;
+      if (url.isEmpty) {
+        continue;
+      }
+      final uri = Uri.tryParse(url);
+      final fileName = uri != null && uri.pathSegments.isNotEmpty
+          ? uri.pathSegments.last
+          : url.split('/').last;
+      final index = fileName.indexOf('_L');
+      if (index > 0) {
+        return fileName.substring(0, index);
+      }
+    }
+    return null;
+  }
+
+  LibraryItem? _findLibraryItem() {
+    if (_jobId == null) {
+      return null;
+    }
+    try {
+      return ref
+          .read(libraryProvider)
+          .items
+          .firstWhere((item) => item.jobId == _jobId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _maybeStartFullDownload() async {
+    if (_jobId == null) {
+      return;
+    }
+    final iapState = ref.read(iapProvider);
+    if (!iapState.isUnlocked) {
+      return;
+    }
+    await ref
+        .read(libraryProvider.notifier)
+        .startFullDownload(
+          jobId: _jobId!,
+          levels: widget.levels,
+          trackTitle: widget.trackTitle,
+          trackArtist: widget.trackArtist,
+        );
   }
 
   Future<bool?> _showPaywallModal() {

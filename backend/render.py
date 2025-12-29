@@ -3,13 +3,13 @@ ShazaPiano - Video Renderer
 Generates animated piano keyboard videos from MIDI
 """
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Iterator
 import subprocess
+import gc
 
 import pretty_midi
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-from moviepy.editor import ImageSequenceClip, AudioFileClip, concatenate_videoclips
 from loguru import logger
 
 from config import settings
@@ -37,6 +37,9 @@ COLOR_WHITE_KEY_ACTIVE = (42, 230, 190)  # Primary color #2AE6BE
 COLOR_BLACK_KEY_ACTIVE = (33, 199, 163)  # PrimaryVariant #21C7A3
 COLOR_BACKGROUND = (11, 15, 16)  # Background #0B0F10
 COLOR_TEXT = (233, 245, 241)  # TextPrimary #E9F5F1
+COLOR_KEY_LABEL = (60, 60, 60)
+
+NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
 # Black key positions in octave (0=C, 1=C#, ..., 11=B)
 BLACK_KEY_POSITIONS = [1, 3, 6, 8, 10]  # C#, D#, F#, G#, A#
@@ -45,6 +48,15 @@ BLACK_KEY_POSITIONS = [1, 3, 6, 8, 10]  # C#, D#, F#, G#, A#
 def is_black_key(midi_note: int) -> bool:
     """Check if MIDI note is a black key"""
     return (midi_note % 12) in BLACK_KEY_POSITIONS
+
+
+def note_label(midi_note: int) -> str:
+    """Get label for white keys: C with octave, others without octave."""
+    base = NOTE_NAMES[midi_note % 12]
+    if base == "C":
+        octave = (midi_note // 12) - 1
+        return f"{base}{octave}"
+    return base
 
 
 def get_key_position(midi_note: int) -> Tuple[int, int, bool]:
@@ -109,6 +121,7 @@ def render_keyboard_frame(
     # Create image
     img = Image.new('RGB', (width, height), COLOR_BACKGROUND)
     draw = ImageDraw.Draw(img)
+    font = ImageFont.load_default()
     
     # Calculate keyboard position (bottom of screen, scaled to fit width)
     total_white_keys = 35  # 5 octaves = 35 white keys
@@ -209,6 +222,15 @@ def render_keyboard_frame(
                 outline=COLOR_BACKGROUND,
                 width=2
             )
+
+            label = note_label(midi_note)
+            if label:
+                bbox = draw.textbbox((0, 0), label, font=font)
+                text_w = bbox[2] - bbox[0]
+                text_h = bbox[3] - bbox[1]
+                text_x = x + (key_width - text_w) / 2
+                text_y = y + WHITE_KEY_HEIGHT - text_h - 4
+                draw.text((text_x, text_y), label, fill=COLOR_KEY_LABEL, font=font)
     
     # Draw black keys on top
     for midi_note in range(FIRST_KEY, LAST_KEY + 1):
@@ -271,9 +293,9 @@ def generate_video_frames(
     level: int,
     level_name: str,
     max_duration: float | None = None,
-) -> list:
+) -> tuple[Iterator[np.ndarray], int, float]:
     """
-    Generate all video frames from MIDI
+    Generate video frames from MIDI as a stream
     
     Args:
         midi: PrettyMIDI object
@@ -281,7 +303,7 @@ def generate_video_frames(
         level_name: Level name for display
         
     Returns:
-        List of PIL Images
+        (frame_iterator, num_frames, duration_sec)
     """
     logger.info(f"Generating frames for Level {level}...")
     
@@ -302,8 +324,6 @@ def generate_video_frames(
     effective_duration = duration + preroll
     num_frames = int(effective_duration * fps)
     
-    frames = []
-    
     # Collect all notes with timing
     all_notes = []
     for instrument in midi.instruments:
@@ -313,108 +333,190 @@ def generate_video_frames(
     all_notes = _sanitize_notes(all_notes, frame_dt)
     release_epsilon = 0.02  # tiny release margin to avoid sticky keys
 
-    # Generate each frame
-    for frame_idx in range(num_frames):
-        time = frame_idx * frame_dt - preroll + time_offset  # start with preroll so bars fall from the sky
-        
-        # Find active notes at this time (with global offset)
-        active_notes = set()
-        for pitch, start, end in all_notes:
-            s = start + time_offset
-            e = end + time_offset
-            tolerance_start = 0.05 * frame_dt
-            tolerance_end = 0.1 * frame_dt
-            if (s - tolerance_start) <= time <= (e + tolerance_end - release_epsilon):
-                active_notes.add(pitch)
+    def frame_iterator() -> Iterator[np.ndarray]:
+        # Generate each frame
+        for frame_idx in range(num_frames):
+            time = frame_idx * frame_dt - preroll + time_offset  # start with preroll so bars fall from the sky
 
-        # Upcoming notes for falling bars
-        upcoming = []
-        for pitch, start, end in all_notes:
-            s = start + time_offset
-            e = end + time_offset
-            if (time <= s <= time + settings.VIDEO_LOOKAHEAD_SEC) or (s <= time <= e):
-                upcoming.append((pitch, s, e))
+            # Find active notes at this time (with global offset)
+            active_notes = set()
+            for pitch, start, end in all_notes:
+                s = start + time_offset
+                e = end + time_offset
+                tolerance_start = 0.05 * frame_dt
+                tolerance_end = 0.1 * frame_dt
+                if (s - tolerance_start) <= time <= (e + tolerance_end - release_epsilon):
+                    active_notes.add(pitch)
 
-        # Render frame
-        frame = render_keyboard_frame(
-            active_notes=active_notes,
-            width=width,
-            height=height,
-            level_name="",  # Hide text in video to avoid duplicated titles (front can overlay)
-            current_time=time,
-            upcoming_notes=upcoming,
-            show_level_label=False,
-        )
-        
-        frames.append(np.array(frame))
-        
-        # Log progress
-        if frame_idx % (fps * 2) == 0:  # Every 2 seconds
-            logger.debug(f"Frame {frame_idx}/{num_frames} ({time:.1f}s)")
-    
-    logger.success(f"Generated {len(frames)} frames ({duration:.1f}s)")
-    return frames
+            # Upcoming notes for falling bars
+            upcoming = []
+            for pitch, start, end in all_notes:
+                s = start + time_offset
+                e = end + time_offset
+                if (time <= s <= time + settings.VIDEO_LOOKAHEAD_SEC) or (s <= time <= e):
+                    upcoming.append((pitch, s, e))
+
+            # Render frame
+            frame = render_keyboard_frame(
+                active_notes=active_notes,
+                width=width,
+                height=height,
+                level_name="",  # Hide text in video to avoid duplicated titles (front can overlay)
+                current_time=time,
+                upcoming_notes=upcoming,
+                show_level_label=False,
+            )
+
+            # Log progress
+            if frame_idx % (fps * 2) == 0:  # Every 2 seconds
+                logger.debug(f"Frame {frame_idx}/{num_frames} ({time:.1f}s)")
+
+            yield np.array(frame)
+
+    return frame_iterator(), num_frames, duration
 
 
 def create_video_from_frames(
-    frames: list,
+    frames: Iterator[np.ndarray],
     output_path: Path,
     fps: int = 30,
     audio_path: Optional[Path] = None,
-    max_duration: Optional[float] = None
+    max_duration: Optional[float] = None,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
+    expected_frames: Optional[int] = None,
+    duration_sec: Optional[float] = None,
 ) -> Path:
     """
     Create MP4 video from frames
     
     Args:
-        frames: List of numpy arrays (frames)
+        frames: Iterator of numpy arrays (frames)
         output_path: Output video path
         fps: Frames per second
         audio_path: Optional audio file to add
         max_duration: Optional max duration in seconds (will trim if exceeded)
+        width: Frame width
+        height: Frame height
+        expected_frames: Optional expected frame count
+        duration_sec: Optional duration in seconds
         
     Returns:
         Path to created video
     """
     logger.info(f"Creating video: {output_path.name}")
     
-    video_duration = len(frames) / fps
-    
-    # Clamp duration if max_duration specified
-    if max_duration and video_duration > max_duration:
-        clamped_frames = int(max_duration * fps)
-        frames = frames[:clamped_frames]
-        video_duration = max_duration
-        logger.info(f"Clamped frames to {clamped_frames} for {video_duration}s max duration")
+    if width is None or height is None:
+        raise RuntimeError("Missing frame dimensions for streaming encoder")
 
-    # Create video clip
-    clip = ImageSequenceClip(frames, fps=fps)
-    
-    # Add audio if provided
+    max_frames = None
+    if max_duration:
+        max_frames = int(max_duration * fps)
+        if expected_frames and expected_frames > max_frames:
+            logger.info(
+                f"Clamped frames to {max_frames} for {max_duration}s max duration"
+            )
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-s",
+        f"{width}x{height}",
+        "-r",
+        str(fps),
+        "-i",
+        "-",
+    ]
     if audio_path and audio_path.exists():
-        audio = AudioFileClip(str(audio_path))
-        try:
-          audio = audio.subclip(0, video_duration)
-        except Exception:
-          pass
-        clip = clip.set_audio(audio.set_duration(video_duration))
-    
-    clip = clip.set_duration(video_duration)
-    
-    # Write video
-    clip.write_videofile(
+        cmd += [
+            "-i",
+            str(audio_path),
+            "-shortest",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+        ]
+    else:
+        cmd += ["-an"]
+
+    cmd += [
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-pix_fmt",
+        "yuv420p",
         str(output_path),
-        codec='libx264',
-        audio_codec='aac' if audio_path else None,
-        fps=fps,
-        logger=None  # Suppress MoviePy logs
+    ]
+
+    process = subprocess.Popen(
+        cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE
     )
-    
-    clip.close()
-    if audio_path:
-        audio.close()
-    
+    broken_pipe = False
+    stream_error = None
+    frame_count = 0
+
+    try:
+        for frame in frames:
+            if max_frames is not None and frame_count >= max_frames:
+                break
+            frame_data = np.ascontiguousarray(frame, dtype=np.uint8)
+            try:
+                process.stdin.write(frame_data.tobytes())
+            except BrokenPipeError:
+                broken_pipe = True
+                break
+            frame_count += 1
+    except Exception as exc:
+        stream_error = exc
+    finally:
+        if process.stdin:
+            process.stdin.close()
+
+    stderr_output = b""
+    return_code = None
+    if process.stderr:
+        try:
+            _, stderr_output = process.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            _, stderr_output = process.communicate()
+        return_code = process.returncode
+    else:
+        return_code = process.wait()
+
+    stderr_text = stderr_output.decode("utf-8", errors="replace")
+    tail = "\n".join(stderr_text.splitlines()[-40:])
+
+    if stream_error is not None:
+        if tail:
+            raise RuntimeError(
+                f"{type(stream_error).__name__}: {stream_error}\n{tail}"
+            )
+        raise stream_error
+
+    if broken_pipe or return_code != 0:
+        raise RuntimeError(
+            f"FFmpeg failed while encoding {output_path.name}:\n{tail}"
+        )
+
+    measured_duration = frame_count / fps
+    if duration_sec is None:
+        duration_sec = measured_duration
+    else:
+        duration_sec = max(duration_sec, measured_duration)
+
     logger.success(f"Video saved: {output_path.name}")
+    logger.success(f"Encoded {frame_count} frames ({duration_sec:.1f}s)")
+    gc.collect()
     return output_path
 
 
@@ -533,8 +635,8 @@ def render_level_video(
     if with_audio:
         audio_file = synthesize_audio(midi, audio_path)
     
-    # Generate frames
-    frames = generate_video_frames(
+    # Generate frames (streamed)
+    frame_iter, num_frames, duration_sec = generate_video_frames(
         midi,
         level,
         "",  # hide level/title text in video (front can display it)
@@ -543,11 +645,15 @@ def render_level_video(
     
     # Create full video
     full_video_path = create_video_from_frames(
-        frames,
+        frame_iter,
         full_video_path,
         fps=settings.VIDEO_FPS,
         audio_path=audio_file,
-        max_duration=settings.FULL_VIDEO_MAX_DURATION_SEC
+        max_duration=settings.FULL_VIDEO_MAX_DURATION_SEC,
+        width=settings.VIDEO_WIDTH,
+        height=settings.VIDEO_HEIGHT,
+        expected_frames=num_frames,
+        duration_sec=duration_sec,
     )
     
     # Create preview (16s by config)

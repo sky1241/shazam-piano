@@ -101,6 +101,15 @@ flutter pub get
 flutter run --flavor dev --dart-define=BACKEND_BASE=http://10.0.2.2:8000
 ```
 
+### Dev workflow (Windows)
+```powershell
+.\scripts\dev.ps1
+.\scripts\dev.ps1 -Logcat
+```
+- Ouvre 2 fenetres: Backend + Flutter (et Logcat si -Logcat).
+- `.\scripts\run-app.ps1` reste la commande "golden run" (clean + BUILD_STAMP).
+- Le BUILD_STAMP + BACKEND_BASE sont visibles en overlay debug.
+
 ### Docker
 
 ```bash

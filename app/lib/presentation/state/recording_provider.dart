@@ -25,6 +25,8 @@ class RecordingNotifier extends StateNotifier<RecordingState> {
   final _recorder = AudioRecorder();
   Timer? _durationTimer;
   DateTime? _startTime;
+  bool _isStopping = false;
+  bool _recommendedLogged = false;
 
   /// Start recording
   Future<void> startRecording() async {
@@ -51,6 +53,7 @@ class RecordingNotifier extends StateNotifier<RecordingState> {
       );
 
       _startTime = DateTime.now();
+      _recommendedLogged = false;
       state = state.copyWith(
         isRecording: true,
         recordingDuration: Duration.zero,
@@ -65,15 +68,15 @@ class RecordingNotifier extends StateNotifier<RecordingState> {
           final duration = DateTime.now().difference(_startTime!);
           state = state.copyWith(recordingDuration: duration);
 
-          // Auto-stop at recommended duration (8s) or max (30s)
-          if (duration.inSeconds >=
-              AppConstants.recommendedRecordingDurationSec) {
-            _logInfo('Auto-stopping recording after ${duration.inSeconds}s');
-            stopRecording();
-          } else if (duration.inSeconds >=
-              AppConstants.maxRecordingDurationSec) {
+          // Auto-stop only at max duration
+          if (duration.inSeconds >= AppConstants.maxRecordingDurationSec) {
             _logWarning('Max duration reached, stopping...');
             stopRecording();
+          } else if (!_recommendedLogged &&
+              duration.inSeconds >=
+                  AppConstants.recommendedRecordingDurationSec) {
+            _recommendedLogged = true;
+            _logInfo('Recommended duration reached (${duration.inSeconds}s).');
           }
         }
       });
@@ -84,6 +87,10 @@ class RecordingNotifier extends StateNotifier<RecordingState> {
 
   /// Stop recording
   Future<void> stopRecording() async {
+    if (_isStopping || !state.isRecording) {
+      return;
+    }
+    _isStopping = true;
     try {
       _durationTimer?.cancel();
       _durationTimer = null;
@@ -113,6 +120,8 @@ class RecordingNotifier extends StateNotifier<RecordingState> {
         isRecording: false,
         error: 'Failed to stop recording: $e',
       );
+    } finally {
+      _isStopping = false;
     }
   }
 

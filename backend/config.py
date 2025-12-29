@@ -51,8 +51,8 @@ class Settings(BaseSettings):
     RENDER_TIMEOUT: int = 30
     
     # Video settings
-    VIDEO_WIDTH: int = 960
-    VIDEO_HEIGHT: int = 540  # 16:9 plein ecran - réduit pour tests rapides
+    VIDEO_WIDTH: int = 854
+    VIDEO_HEIGHT: int = 480  # 16:9 plein ecran - réduit pour tests rapides
     VIDEO_FPS: int = 24  # réduit pour tests rapides
     VIDEO_TIME_OFFSET_MS: int = -60  # global timing offset (ms), negative to advance (helps sync bars with audio)
     VIDEO_PREROLL_SEC: float = 1.5  # add lead-in so bars start falling before first notes
