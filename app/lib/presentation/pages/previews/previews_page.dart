@@ -33,6 +33,7 @@ class PreviewsPage extends ConsumerStatefulWidget {
 
 class _PreviewsPageState extends ConsumerState<PreviewsPage> {
   String? _jobId;
+  ProviderSubscription<dynamic>? _sub;
 
   @override
   void initState() {
@@ -56,12 +57,18 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
       unawaited(_maybeStartFullDownload());
     }
 
-    ref.listen(iapProvider, (prev, next) {
+    _sub = ref.listenManual(iapProvider, (prev, next) {
       final wasUnlocked = prev?.isUnlocked ?? false;
       if (!wasUnlocked && next.isUnlocked) {
         unawaited(_maybeStartFullDownload());
       }
     });
+  }
+
+  @override
+  void dispose() {
+    _sub?.close();
+    super.dispose();
   }
 
   @override

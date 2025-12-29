@@ -2,7 +2,8 @@
 param(
   [switch]$Logcat,
   [switch]$Fast,
-  [switch]$NoBuild
+  [switch]$NoBuild,
+  [switch]$UnlockAll
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,6 +16,7 @@ function Show-Help {
   Write-Host "  -Logcat   Open an additional Logcat window (adb must be available)."
   Write-Host "  -Fast     Skip flutter clean/pub get for a quieter, faster launch."
   Write-Host "  -NoBuild  Skip Gradle build if APK already exists."
+  Write-Host "  -UnlockAll  Force DEV unlock (debug only)."
 }
 
 function Stop-WindowByTitle {
@@ -91,6 +93,9 @@ try {
   }
   if ($NoBuild) {
     $runAppArgs = "$runAppArgs -NoBuild"
+  }
+  if ($UnlockAll) {
+    $runAppArgs = "$runAppArgs -UnlockAll"
   }
 
   $flutterScript = @(

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:math';
@@ -18,7 +19,9 @@ import 'package:flutter/scheduler.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../core/debug/debug_job_guard.dart';
 import '../../../domain/entities/level_result.dart';
+import '../../widgets/practice_keyboard.dart';
 import 'pitch_detector.dart';
 
 class PracticePage extends StatefulWidget {
@@ -31,9 +34,8 @@ class PracticePage extends StatefulWidget {
 }
 
 class _PracticePageState extends State<PracticePage>
-    with SingleTickerProviderStateMixin {
-  // MIDI helpers
-  String noteName(int midi) {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+  String _formatMidiNote(int midi, {bool withOctave = false}) {
     const names = [
       'C',
       'C#',
@@ -48,14 +50,12 @@ class _PracticePageState extends State<PracticePage>
       'A#',
       'B',
     ];
-    return names[midi % 12];
-  }
-
-  int noteOctave(int midi) => (midi ~/ 12) - 1; // 60 -> C4
-
-  String noteLabel(int midi, {bool withOctave = false}) {
-    final base = noteName(midi);
-    return withOctave ? '$base${noteOctave(midi)}' : base;
+    final base = names[midi % 12];
+    if (!withOctave) {
+      return base;
+    }
+    final octave = (midi ~/ 12) - 1;
+    return '$base$octave';
   }
 
   bool _isListening = false;
@@ -89,6 +89,23 @@ class _PracticePageState extends State<PracticePage>
   ChewieController? _chewieController;
   bool _videoLoading = true;
   String? _videoError;
+  bool _notesLoading = false;
+  String? _notesError;
+  PermissionStatus? _micPermissionStatus;
+  DateTime? _lastMicFrameAt;
+  double _micRms = 0.0;
+  double? _micFrequency;
+  int? _micNote;
+  double _micConfidence = 0.0;
+  DateTime? _lastMicLogAt;
+  DateTime? _lastMidiFrameAt;
+  int? _lastMidiNote;
+  String? _stopReason;
+  int _micRestartAttempts = 0;
+  bool _micRestarting = false;
+  DateTime? _lastMicRestartAt;
+  DateTime? _lastUiUpdateAt;
+  bool _videoEndFired = false;
 
   // Piano keyboard alignee avec la video (C2 a C7 = 61 touches)
   static const int _firstKey = 36; // C2
@@ -98,6 +115,12 @@ class _PracticePageState extends State<PracticePage>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    final jobId = _extractJobId(widget.level.midiUrl);
+    if (jobId != null) {
+      DebugJobGuard.setCurrentJobId(jobId);
+    }
+    unawaited(_refreshMicPermission());
     _ticker = createTicker((_) {
       if (mounted && _isListening) {
         setState(() {});
@@ -123,6 +146,12 @@ class _PracticePageState extends State<PracticePage>
             ),
             onPressed: () => _togglePractice(),
           ),
+          if (kDebugMode)
+            IconButton(
+              icon: const Icon(Icons.bug_report),
+              tooltip: 'Diagnose',
+              onPressed: _showDiagnostics,
+            ),
         ],
       ),
       body: SingleChildScrollView(
@@ -168,6 +197,7 @@ class _PracticePageState extends State<PracticePage>
                 ],
               ),
             ),
+            _buildMicDebugHud(),
 
             // Score display
             Container(
@@ -232,6 +262,11 @@ class _PracticePageState extends State<PracticePage>
               ),
 
             const SizedBox(height: AppConstants.spacing24),
+
+            _buildVideoPlayer(),
+
+            const SizedBox(height: AppConstants.spacing16),
+
             // Piano roll + clavier uniquement
             _buildPracticeStage(),
 
@@ -339,6 +374,261 @@ class _PracticePageState extends State<PracticePage>
     );
   }
 
+  Widget _buildMicDebugHud() {
+    if (!kDebugMode) {
+      return const SizedBox.shrink();
+    }
+    final now = DateTime.now();
+    final micNoData =
+        _isListening &&
+        !_useMidi &&
+        (_lastMicFrameAt == null ||
+            now.difference(_lastMicFrameAt!) > const Duration(seconds: 2));
+    final micStatus = _isListening && !_useMidi
+        ? (micNoData ? 'NO DATA' : 'ON')
+        : 'OFF';
+    final midiNoData =
+        _useMidi &&
+        (_lastMidiFrameAt == null ||
+            now.difference(_lastMidiFrameAt!) > const Duration(seconds: 2));
+    final midiStatus = _useMidi ? (midiNoData ? 'NO DATA' : 'ON') : 'OFF';
+    final rmsText = _micRms.toStringAsFixed(3);
+    final freqText = _micFrequency != null
+        ? _micFrequency!.toStringAsFixed(1)
+        : '--';
+    final noteText = _useMidi
+        ? (_lastMidiNote != null
+              ? _formatMidiNote(_lastMidiNote!, withOctave: true)
+              : '--')
+        : (_micNote != null
+              ? _formatMidiNote(_micNote!, withOctave: true)
+              : '--');
+    final confText = _micConfidence.toStringAsFixed(2);
+    final permText = _permissionLabel(_micPermissionStatus);
+    final ageText = _useMidi || _lastMicFrameAt == null
+        ? '--'
+        : '${now.difference(_lastMicFrameAt!).inMilliseconds}ms';
+    final subActive = _micSub != null && !_micSub!.isPaused;
+    final subText = _useMidi ? '--' : (subActive ? 'ON' : 'OFF');
+    final stopText = _stopReason ?? '--';
+    final line =
+        'MIC: $micStatus | MIDI: $midiStatus | RMS: $rmsText | '
+        'f0: $freqText Hz | note: $noteText | conf: $confText | '
+        'age: $ageText | sub: $subText | stop: $stopText | perm: $permText';
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppConstants.spacing16,
+        vertical: AppConstants.spacing4,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            line,
+            style: AppTextStyles.caption.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+          Row(
+            children: [
+              TextButton(
+                onPressed: _runDetectionSelfTest,
+                child: const Text('Test detection'),
+              ),
+              TextButton(onPressed: _injectA4, child: const Text('Inject A4')),
+              TextButton(
+                onPressed: _refreshMicPermission,
+                child: const Text('Check mic'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _permissionLabel(PermissionStatus? status) {
+    if (status == null) {
+      return 'unknown';
+    }
+    return status.toString().split('.').last;
+  }
+
+  Future<void> _refreshMicPermission() async {
+    try {
+      final status = await Permission.microphone.status;
+      if (mounted) {
+        setState(() {
+          _micPermissionStatus = status;
+        });
+      } else {
+        _micPermissionStatus = status;
+      }
+    } catch (_) {
+      // ignore permission errors
+    }
+  }
+
+  double _computeRms(List<double> samples) {
+    if (samples.isEmpty) {
+      return 0.0;
+    }
+    double sum = 0.0;
+    for (final value in samples) {
+      sum += value * value;
+    }
+    return sqrt(sum / samples.length);
+  }
+
+  double _confidenceFromRms(double rms) {
+    return (rms * 4).clamp(0.0, 1.0);
+  }
+
+  void _logMicDebug(DateTime now) {
+    if (!kDebugMode) {
+      return;
+    }
+    if (_lastMicLogAt != null &&
+        now.difference(_lastMicLogAt!) < const Duration(seconds: 1)) {
+      return;
+    }
+    _lastMicLogAt = now;
+    final freqText = _micFrequency?.toStringAsFixed(1) ?? '--';
+    final noteText = _micNote != null
+        ? _formatMidiNote(_micNote!, withOctave: true)
+        : '--';
+    debugPrint(
+      'MIC: rms=${_micRms.toStringAsFixed(3)} '
+      'f0=$freqText note=$noteText conf=${_micConfidence.toStringAsFixed(2)}',
+    );
+  }
+
+  void _setStopReason(String reason) {
+    if (_stopReason == reason) {
+      return;
+    }
+    _stopReason = reason;
+    if (kDebugMode) {
+      debugPrint('Practice stop reason: $reason');
+    }
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  bool _shouldKeepMicOn() {
+    return mounted && _isListening && !_useMidi;
+  }
+
+  Future<void> _startMicStream() async {
+    _micSub?.cancel();
+    _micSub = null;
+    try {
+      await _recorder.stop();
+    } catch (_) {}
+
+    try {
+      await _recorder.initialize(sampleRate: PitchDetector.sampleRate);
+      await _recorder.start();
+      _micSub = _recorder.audioStream.listen(
+        _processAudioChunk,
+        onError: (error, _) {
+          _handleMicStreamStop('mic_error', error: error);
+        },
+        onDone: () {
+          _handleMicStreamStop('mic_done');
+        },
+        cancelOnError: true,
+      );
+    } catch (e) {
+      await _handleMicStreamStop('mic_start_error', error: e);
+    }
+  }
+
+  Future<void> _handleMicStreamStop(String reason, {Object? error}) async {
+    if (kDebugMode && error != null) {
+      debugPrint('Mic stream error ($reason): $error');
+    }
+    if (!_shouldKeepMicOn()) {
+      if (_isListening) {
+        _setStopReason(reason);
+      }
+      return;
+    }
+    if (_micRestarting) {
+      return;
+    }
+    final now = DateTime.now();
+    if (_lastMicRestartAt != null &&
+        now.difference(_lastMicRestartAt!) < const Duration(seconds: 2)) {
+      return;
+    }
+    const maxAttempts = 2;
+    if (_micRestartAttempts >= maxAttempts) {
+      _setStopReason(reason);
+      if (mounted) {
+        setState(() {
+          _isListening = false;
+        });
+      } else {
+        _isListening = false;
+      }
+      return;
+    }
+    _micRestarting = true;
+    _micRestartAttempts += 1;
+    _lastMicRestartAt = now;
+    _setStopReason('mic_restart_$reason');
+    await Future.delayed(const Duration(milliseconds: 250));
+    if (_shouldKeepMicOn()) {
+      await _startMicStream();
+    }
+    _micRestarting = false;
+  }
+
+  Future<void> _runDetectionSelfTest() async {
+    if (!kDebugMode) {
+      return;
+    }
+    const freq = 440.0;
+    final samples = Float32List(PitchDetector.bufferSize);
+    for (int i = 0; i < samples.length; i++) {
+      samples[i] = sin(2 * pi * freq * i / PitchDetector.sampleRate);
+    }
+    final detected = _pitchDetector.detectPitch(samples);
+    if (!mounted) {
+      return;
+    }
+    final message = detected == null
+        ? 'No pitch detected'
+        : 'Detected ${detected.toStringAsFixed(1)} Hz '
+              '(${_formatMidiNote(_pitchDetector.frequencyToMidiNote(detected), withOctave: true)})';
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _injectA4() {
+    if (!kDebugMode) {
+      return;
+    }
+    if (!_isListening || _startTime == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Press Play to inject A4')),
+        );
+      }
+      return;
+    }
+    const freq = 440.0;
+    final samples = Float32List(PitchDetector.bufferSize);
+    for (int i = 0; i < samples.length; i++) {
+      samples[i] = sin(2 * pi * freq * i / PitchDetector.sampleRate);
+    }
+    _processSamples(samples, now: DateTime.now(), injected: true);
+  }
+
   Widget _buildPracticeStage() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: AppConstants.spacing16),
@@ -362,15 +652,18 @@ class _PracticePageState extends State<PracticePage>
           );
 
           final whiteCount = _countWhiteKeys();
-          const double minWhiteKeyWidth = 8;
+          const double maxWhiteKeyWidth = 20.0;
           final rawWhiteWidth = innerAvailableWidth / whiteCount;
-          final whiteWidth = max(minWhiteKeyWidth, rawWhiteWidth);
+          final whiteWidth = min(rawWhiteWidth, maxWhiteKeyWidth);
           final blackWidth = whiteWidth * 0.65;
           final contentWidth = whiteWidth * whiteCount;
-          final shouldScroll = contentWidth > innerAvailableWidth;
+          const double keyboardPadding = 0.0;
+          final keyboardWidth = contentWidth;
+          final shouldScroll = keyboardWidth > innerAvailableWidth;
           final displayWidth = shouldScroll
-              ? contentWidth
+              ? keyboardWidth
               : innerAvailableWidth;
+          const double keyboardOffset = 0.0;
           final outerWidth = displayWidth + (stagePadding * 2);
 
           final whiteHeight = isPortrait ? 90.0 : 120.0;
@@ -400,10 +693,50 @@ class _PracticePageState extends State<PracticePage>
                 SizedBox(
                   height: fallAreaHeight,
                   width: displayWidth,
-                  child: _expectedNotes.isEmpty
+                  child: _notesLoading
+                      ? Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                              const SizedBox(height: AppConstants.spacing8),
+                              Text(
+                                'Chargement des notes...',
+                                style: AppTextStyles.caption,
+                              ),
+                            ],
+                          ),
+                        )
+                      : _notesError != null
+                      ? Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                _notesError!,
+                                style: AppTextStyles.caption.copyWith(
+                                  color: AppColors.error,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                              const SizedBox(height: AppConstants.spacing8),
+                              TextButton(
+                                onPressed: _loadExpectedNotes,
+                                child: const Text('Reessayer'),
+                              ),
+                            ],
+                          ),
+                        )
+                      : _expectedNotes.isEmpty
                       ? Center(
                           child: Text(
-                            'Chargement des notes...',
+                            'Aucune note disponible',
                             style: AppTextStyles.caption,
                           ),
                         )
@@ -416,7 +749,12 @@ class _PracticePageState extends State<PracticePage>
                             fallAreaHeight: fallAreaHeight,
                             fallLead: _fallLeadSec,
                             fallTail: _fallTailSec,
-                            noteToX: (n) => _noteToX(n, whiteWidth, blackWidth),
+                            noteToX: (n) => _noteToX(
+                              n,
+                              whiteWidth,
+                              blackWidth,
+                              offset: keyboardOffset + keyboardPadding,
+                            ),
                           ),
                         ),
                 ),
@@ -427,6 +765,7 @@ class _PracticePageState extends State<PracticePage>
                   blackWidth: blackWidth,
                   whiteHeight: whiteHeight,
                   blackHeight: blackHeight,
+                  leftPadding: keyboardOffset + keyboardPadding,
                 ),
               ],
             ),
@@ -436,7 +775,7 @@ class _PracticePageState extends State<PracticePage>
             return SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               physics: const BouncingScrollPhysics(),
-              child: content,
+              child: Align(alignment: Alignment.centerLeft, child: content),
             );
           }
           return Align(alignment: Alignment.center, child: content);
@@ -451,100 +790,20 @@ class _PracticePageState extends State<PracticePage>
     required double blackWidth,
     required double whiteHeight,
     required double blackHeight,
+    required double leftPadding,
   }) {
-    final whiteNotes = <int>[];
-    for (int note = _firstKey; note <= _lastKey; note++) {
-      if (!_isBlackKey(note)) whiteNotes.add(note);
-    }
-
-    return SizedBox(
-      width: totalWidth,
-      height: whiteHeight + AppConstants.spacing12,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          // Touche blanches positionnées au pixel près
-          for (int i = 0; i < whiteNotes.length; i++)
-            Positioned(
-              left: i * whiteWidth,
-              child: _buildPianoKey(
-                whiteNotes[i],
-                isBlack: false,
-                width: whiteWidth,
-                height: whiteHeight,
-              ),
-            ),
-          // Touche noires superposées
-          for (int note = _firstKey; note <= _lastKey; note++)
-            if (_isBlackKey(note))
-              Positioned(
-                left: _noteToX(note, whiteWidth, blackWidth),
-                child: _buildPianoKey(
-                  note,
-                  isBlack: true,
-                  width: blackWidth,
-                  height: blackHeight,
-                ),
-              ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPianoKey(
-    int note, {
-    required bool isBlack,
-    double width = 30,
-    double height = 180,
-  }) {
-    final isExpected = note == _expectedNote;
-    final isDetected = note == _detectedNote;
-
-    Color keyColor;
-    if (isDetected && isExpected) {
-      keyColor = _getAccuracyColor();
-    } else if (isExpected) {
-      keyColor = AppColors.primary.withValues(alpha: 0.5);
-    } else if (isBlack) {
-      keyColor = AppColors.blackKey;
-    } else {
-      keyColor = AppColors.whiteKey;
-    }
-
-    final keyWidth = width;
-    final keyHeight = height;
-
-    final isC = note % 12 == 0;
-    final label = isBlack
-        ? ''
-        : (isC ? noteLabel(note, withOctave: true) : noteLabel(note));
-    final labelFontSize = max(7.0, min(11.0, keyWidth * 0.45));
-
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        Container(
-          width: keyWidth,
-          height: keyHeight,
-          margin: EdgeInsets.zero,
-          decoration: BoxDecoration(
-            color: keyColor,
-            border: Border.all(color: AppColors.divider, width: 1),
-            borderRadius: BorderRadius.circular(4),
-          ),
-        ),
-        if (label.isNotEmpty)
-          Positioned(
-            bottom: 4,
-            child: Text(
-              label,
-              style: AppTextStyles.caption.copyWith(
-                fontSize: labelFontSize,
-                color: isBlack ? AppColors.whiteKey : AppColors.textSecondary,
-              ),
-            ),
-          ),
-      ],
+    return PracticeKeyboard(
+      totalWidth: totalWidth,
+      whiteWidth: whiteWidth,
+      blackWidth: blackWidth,
+      whiteHeight: whiteHeight,
+      blackHeight: blackHeight,
+      firstKey: _firstKey,
+      lastKey: _lastKey,
+      blackKeys: _blackKeys,
+      expectedNote: _expectedNote,
+      detectedNote: _detectedNote,
+      leftPadding: leftPadding,
     );
   }
 
@@ -560,7 +819,12 @@ class _PracticePageState extends State<PracticePage>
     return count;
   }
 
-  double _noteToX(int note, double whiteWidth, double blackWidth) {
+  double _noteToX(
+    int note,
+    double whiteWidth,
+    double blackWidth, {
+    double offset = 0.0,
+  }) {
     int whiteIndex = 0;
     for (int n = _firstKey; n < note; n++) {
       if (!_isBlackKey(n)) {
@@ -571,7 +835,7 @@ class _PracticePageState extends State<PracticePage>
     if (_isBlackKey(note)) {
       x -= (blackWidth / 2);
     }
-    return x;
+    return x + offset;
   }
 
   Color _getAccuracyColor() {
@@ -612,24 +876,59 @@ class _PracticePageState extends State<PracticePage>
       }
       await _startPractice();
     } else {
-      await _stopPractice(showSummary: true);
+      await _stopPractice(showSummary: true, reason: 'user_stop');
     }
   }
 
   Future<void> _startPractice() async {
+    _lastMicFrameAt = null;
+    _micRms = 0.0;
+    _micFrequency = null;
+    _micNote = null;
+    _micConfidence = 0.0;
+    _lastMicLogAt = null;
+    _lastMidiFrameAt = null;
+    _lastMidiNote = null;
+    _stopReason = null;
+    _micRestartAttempts = 0;
+    _micRestarting = false;
+    _lastMicRestartAt = null;
+    _lastUiUpdateAt = null;
+    _videoEndFired = false;
+
     // Try MIDI first
     _useMidi = await _tryStartMidi();
 
     if (!_useMidi) {
       // Permissions for mic
       final micStatus = await Permission.microphone.request();
+      _micPermissionStatus = micStatus;
+      if (mounted) {
+        setState(() {});
+      }
       if (!micStatus.isGranted) {
-        setState(() {
+        final reason = micStatus.isPermanentlyDenied
+            ? 'permission_permanently_denied'
+            : 'permission_denied';
+        _setStopReason(reason);
+        if (mounted) {
+          setState(() {
+            _isListening = false;
+          });
+        } else {
           _isListening = false;
-        });
+        }
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Microphone permission denied')),
+            SnackBar(
+              content: const Text('Microphone permission denied'),
+              action: micStatus.isPermanentlyDenied
+                  ? SnackBarAction(
+                      label: 'Settings',
+                      onPressed: openAppSettings,
+                    )
+                  : null,
+            ),
           );
         }
         return;
@@ -656,26 +955,27 @@ class _PracticePageState extends State<PracticePage>
     if (_useMidi) {
       // Already listening via MIDI subscription
     } else {
-      // Start mic stream
-      try {
-        await _recorder.initialize(sampleRate: PitchDetector.sampleRate);
-        await _recorder.start();
-        _micSub = _recorder.audioStream.listen(_processAudioChunk);
-      } catch (_) {
-        setState(() {
-          _isListening = false;
-        });
-      }
+      await _startMicStream();
     }
   }
 
-  Future<void> _stopPractice({bool showSummary = false}) async {
-    setState(() {
+  Future<void> _stopPractice({
+    bool showSummary = false,
+    String reason = 'user_stop',
+  }) async {
+    _setStopReason(reason);
+    if (mounted) {
+      setState(() {
+        _isListening = false;
+      });
+    } else {
       _isListening = false;
-    });
+    }
     _micSub?.cancel();
     _micSub = null;
-    _recorder.stop();
+    try {
+      await _recorder.stop();
+    } catch (_) {}
     _midiSub?.cancel();
     _midiSub = null;
     await _videoController?.pause();
@@ -701,6 +1001,13 @@ class _PracticePageState extends State<PracticePage>
     setState(() {
       _detectedNote = null;
       _expectedNote = null;
+      _lastMicFrameAt = null;
+      _micRms = 0.0;
+      _micFrequency = null;
+      _micNote = null;
+      _micConfidence = 0.0;
+      _lastMidiFrameAt = null;
+      _lastMidiNote = null;
     });
 
     if (showSummary && mounted) {
@@ -727,6 +1034,7 @@ class _PracticePageState extends State<PracticePage>
           connectTimeout: const Duration(seconds: 20),
         ),
       );
+      DebugJobGuard.attachToDio(dio);
       dio.options.headers['Authorization'] = 'Bearer $token';
 
       await dio.post(
@@ -750,10 +1058,25 @@ class _PracticePageState extends State<PracticePage>
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!mounted) return;
+    if ((state == AppLifecycleState.inactive ||
+            state == AppLifecycleState.paused ||
+            state == AppLifecycleState.detached) &&
+        _isListening) {
+      _stopPractice(showSummary: false, reason: 'lifecycle_pause');
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _ticker.dispose();
     _micSub?.cancel();
     _midiSub?.cancel();
+    try {
+      _recorder.stop();
+    } catch (_) {}
     _videoController?.dispose();
     _chewieController?.dispose();
     super.dispose();
@@ -763,21 +1086,53 @@ class _PracticePageState extends State<PracticePage>
     if (_startTime == null) return;
     final samples = _convertChunkToSamples(chunk);
     if (samples.isEmpty) return;
+    _processSamples(samples, now: DateTime.now());
+  }
+
+  void _processSamples(
+    List<double> samples, {
+    required DateTime now,
+    bool injected = false,
+  }) {
+    if (_startTime == null && !injected) return;
+    _lastMicFrameAt = now;
+    _micRms = _computeRms(samples);
     _appendSamples(_micBuffer, samples);
 
     final window = _latestWindow(_micBuffer);
-    if (window == null) return;
+    int? nextDetected;
+    if (window == null) {
+      _micFrequency = null;
+      _micNote = null;
+      _micConfidence = 0.0;
+      _logMicDebug(now);
+      _updateDetectedNote(null, now);
+      return;
+    }
 
     final freq = _pitchDetector.detectPitch(window);
-    if (freq == null) return;
+    if (freq == null) {
+      _micFrequency = null;
+      _micNote = null;
+      _micConfidence = 0.0;
+      _logMicDebug(now);
+      _updateDetectedNote(null, now);
+      return;
+    }
     final midi = _pitchDetector.frequencyToMidiNote(freq);
+    _micFrequency = freq;
+    _micNote = midi;
+    _micConfidence = _confidenceFromRms(_micRms);
+    _logMicDebug(now);
+    nextDetected = midi;
+    if (!_isListening && !injected) {
+      nextDetected = null;
+    }
 
-    final now = DateTime.now();
+    final prevAccuracy = _accuracy;
+    final startTime = _startTime ?? now;
     final elapsed =
-        (now.difference(_startTime!).inMilliseconds - _latencyMs).clamp(
-          0,
-          1e9,
-        ) /
+        (now.difference(startTime).inMilliseconds - _latencyMs).clamp(0, 1e9) /
         1000.0;
 
     // Find active expected notes
@@ -810,13 +1165,31 @@ class _PracticePageState extends State<PracticePage>
       _accuracy = NoteAccuracy.wrong;
     }
 
-    setState(() {
-      _detectedNote = midi;
-      if (!_isListening) {
-        _detectedNote = null;
-      }
-    });
+    final accuracyChanged = prevAccuracy != _accuracy;
+    _updateDetectedNote(nextDetected, now, accuracyChanged: accuracyChanged);
     _updateNextExpected();
+  }
+
+  void _updateDetectedNote(
+    int? nextDetected,
+    DateTime now, {
+    bool accuracyChanged = false,
+  }) {
+    final prevDetected = _detectedNote;
+    final tooSoon =
+        _lastUiUpdateAt != null &&
+        now.difference(_lastUiUpdateAt!) < const Duration(milliseconds: 120);
+    final shouldUpdate =
+        !tooSoon || prevDetected != nextDetected || accuracyChanged;
+
+    if (shouldUpdate && mounted) {
+      setState(() {
+        _detectedNote = nextDetected;
+      });
+      _lastUiUpdateAt = now;
+    } else {
+      _detectedNote = nextDetected;
+    }
   }
 
   List<double> _convertChunkToSamples(List<int> chunk) {
@@ -864,41 +1237,115 @@ class _PracticePageState extends State<PracticePage>
   }
 
   Future<void> _loadExpectedNotes() async {
+    if (mounted) {
+      setState(() {
+        _notesLoading = true;
+        _notesError = null;
+      });
+    } else {
+      _notesLoading = true;
+      _notesError = null;
+    }
+
+    final midiUrl = widget.level.midiUrl;
+    final jobId = _extractJobId(midiUrl);
+    if (jobId == null) {
+      if (mounted) {
+        setState(() {
+          _notesLoading = false;
+          _notesError = 'Notes indisponibles';
+        });
+      } else {
+        _notesLoading = false;
+        _notesError = 'Notes indisponibles';
+      }
+      debugPrint('Practice notes: invalid job id for $midiUrl');
+      return;
+    }
+
+    final url = '/practice/notes/$jobId/${widget.level.level}';
     try {
       final token = await FirebaseAuth.instance.currentUser?.getIdToken();
-      if (token == null) return;
+      if (token == null) {
+        throw Exception('Missing auth token');
+      }
       final dio = Dio(
         BaseOptions(
           baseUrl: AppConstants.backendBaseUrl,
           connectTimeout: const Duration(seconds: 15),
         ),
       );
+      DebugJobGuard.attachToDio(dio);
       dio.options.headers['Authorization'] = 'Bearer $token';
 
-      final jobId = _extractJobId(widget.level.midiUrl);
-      if (jobId == null) return;
-      final resp = await dio.get(
-        '/practice/notes/$jobId/${widget.level.level}',
-      );
+      final resp = await dio.get(url);
       final data = resp.data;
-      if (data == null || data['notes'] == null) return;
-      final List<dynamic> notesJson = data['notes'];
-      _expectedNotes = notesJson
-          .map(
-            (n) => _ExpectedNote(
-              pitch: n['pitch'] as int,
-              start: (n['start'] as num).toDouble(),
-              end: (n['end'] as num).toDouble(),
-            ),
-          )
-          .toList();
-      _expectedNotes.sort((a, b) => a.start.compareTo(b.start));
-      if (_expectedNotes.isNotEmpty) {
-        _expectedNote = _expectedNotes.first.pitch;
+      if (data == null || data['notes'] == null) {
+        throw Exception('Notes payload missing');
       }
-    } catch (_) {
-      // fallback: empty expected notes
-      _expectedNotes = [];
+      final List<dynamic> notesJson = data['notes'];
+      final expectedNotes =
+          notesJson
+              .map(
+                (n) => _ExpectedNote(
+                  pitch: n['pitch'] as int,
+                  start: (n['start'] as num).toDouble(),
+                  end: (n['end'] as num).toDouble(),
+                ),
+              )
+              .toList()
+            ..sort((a, b) => a.start.compareTo(b.start));
+
+      if (mounted) {
+        setState(() {
+          _expectedNotes = expectedNotes;
+          _expectedNote = expectedNotes.isNotEmpty
+              ? expectedNotes.first.pitch
+              : null;
+          _notesLoading = false;
+          _notesError = expectedNotes.isEmpty ? 'Notes indisponibles' : null;
+        });
+      } else {
+        _expectedNotes = expectedNotes;
+        _expectedNote = expectedNotes.isNotEmpty
+            ? expectedNotes.first.pitch
+            : null;
+        _notesLoading = false;
+        _notesError = expectedNotes.isEmpty ? 'Notes indisponibles' : null;
+      }
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      debugPrint(
+        'Practice notes error: midiUrl=$midiUrl url=$url status=$status error=$e',
+      );
+      if (mounted) {
+        setState(() {
+          _expectedNotes = [];
+          _expectedNote = null;
+          _notesLoading = false;
+          _notesError = 'Notes indisponibles';
+        });
+      } else {
+        _expectedNotes = [];
+        _expectedNote = null;
+        _notesLoading = false;
+        _notesError = 'Notes indisponibles';
+      }
+    } catch (e) {
+      debugPrint('Practice notes error: midiUrl=$midiUrl url=$url error=$e');
+      if (mounted) {
+        setState(() {
+          _expectedNotes = [];
+          _expectedNote = null;
+          _notesLoading = false;
+          _notesError = 'Notes indisponibles';
+        });
+      } else {
+        _expectedNotes = [];
+        _expectedNote = null;
+        _notesLoading = false;
+        _notesError = 'Notes indisponibles';
+      }
     }
   }
 
@@ -1048,6 +1495,8 @@ class _PracticePageState extends State<PracticePage>
       final velocity = data[2];
       if (velocity == 0) return; // note off
       final now = DateTime.now();
+      _lastMidiFrameAt = now;
+      _lastMidiNote = note;
       final elapsed = now.difference(_startTime!).inMilliseconds / 1000.0;
 
       // Find active expected notes
@@ -1102,22 +1551,14 @@ class _PracticePageState extends State<PracticePage>
 
   Future<void> _initVideo() async {
     try {
+      await _disposeVideoControllers();
+      _videoEndFired = false;
       setState(() {
         _videoLoading = true;
         _videoError = null;
       });
 
-      String resolveUrl(String url) {
-        if (url.isEmpty) return url;
-        if (url.startsWith('http')) return url;
-        final baseRaw = AppConstants.backendBaseUrl.trim();
-        final base = baseRaw.isEmpty ? 'http://127.0.0.1:8000' : baseRaw;
-        final baseWithSlash = base.endsWith('/') ? base : '$base/';
-        final cleaned = url.startsWith('/') ? url.substring(1) : url;
-        return Uri.parse(baseWithSlash).resolve(cleaned).toString();
-      }
-
-      final url = resolveUrl(
+      final url = _resolveBackendUrl(
         widget.level.previewUrl.isNotEmpty
             ? widget.level.previewUrl
             : widget.level.videoUrl,
@@ -1137,8 +1578,15 @@ class _PracticePageState extends State<PracticePage>
       _videoController!.addListener(() {
         if (_videoController == null) return;
         final value = _videoController!.value;
-        if (value.position >= value.duration && _isListening) {
-          _stopPractice(showSummary: true);
+        if (!value.isInitialized || value.duration == Duration.zero) {
+          return;
+        }
+        if (_videoEndFired) {
+          return;
+        }
+        if (_isListening && value.position >= value.duration) {
+          _videoEndFired = true;
+          _stopPractice(showSummary: true, reason: 'video_end');
         }
       });
       _chewieController = ChewieController(
@@ -1162,16 +1610,161 @@ class _PracticePageState extends State<PracticePage>
     }
   }
 
-  // ignore: unused_element
+  Future<void> _disposeVideoControllers() async {
+    _chewieController?.dispose();
+    _chewieController = null;
+    _videoController?.dispose();
+    _videoController = null;
+  }
+
+  String _resolveBackendUrl(String url) {
+    if (url.isEmpty) return url;
+    if (url.startsWith('http')) return url;
+    final baseRaw = AppConstants.backendBaseUrl.trim();
+    final base = baseRaw.isEmpty ? 'http://127.0.0.1:8000' : baseRaw;
+    final baseWithSlash = base.endsWith('/') ? base : '$base/';
+    final cleaned = url.startsWith('/') ? url.substring(1) : url;
+    return Uri.parse(baseWithSlash).resolve(cleaned).toString();
+  }
+
+  Future<void> _showDiagnostics() async {
+    if (!kDebugMode) {
+      return;
+    }
+    final results = await _runDiagnostics();
+    if (!mounted) {
+      return;
+    }
+    final lines = results.map((result) => result.summary).join('\n');
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Diagnose Assets'),
+        content: Text(lines),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<List<_DiagResult>> _runDiagnostics() async {
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: AppConstants.backendBaseUrl,
+        connectTimeout: const Duration(seconds: 10),
+        receiveTimeout: const Duration(seconds: 10),
+      ),
+    );
+    DebugJobGuard.attachToDio(dio);
+
+    final targets = <_DiagTarget>[
+      _DiagTarget('MIDI', widget.level.midiUrl),
+      _DiagTarget('Video', widget.level.videoUrl),
+      _DiagTarget('Preview', widget.level.previewUrl),
+    ];
+
+    final results = <_DiagResult>[];
+    for (final target in targets) {
+      results.add(await _checkUrl(dio, target));
+    }
+    return results;
+  }
+
+  Future<_DiagResult> _checkUrl(Dio dio, _DiagTarget target) async {
+    if (target.url.isEmpty) {
+      return _DiagResult.missing(target.label);
+    }
+    final resolved = _resolveBackendUrl(target.url);
+    late Response<dynamic> response;
+    String method = 'HEAD';
+    try {
+      response = await dio.requestUri(
+        Uri.parse(resolved),
+        options: Options(method: 'HEAD', validateStatus: (_) => true),
+      );
+    } on DioException catch (e) {
+      final fallback = e.response;
+      if (fallback == null) {
+        return _DiagResult(
+          label: target.label,
+          url: resolved,
+          method: method,
+          error: e.toString(),
+        );
+      }
+      response = fallback;
+    } catch (e) {
+      return _DiagResult(
+        label: target.label,
+        url: resolved,
+        method: method,
+        error: e.toString(),
+      );
+    }
+
+    final status = response.statusCode;
+    if (status == 405 || status == 404) {
+      method = 'GET';
+      try {
+        response = await dio.requestUri(
+          Uri.parse(resolved),
+          options: Options(
+            method: 'GET',
+            headers: const {'range': 'bytes=0-1'},
+            validateStatus: (_) => true,
+          ),
+        );
+      } on DioException catch (e) {
+        final fallback = e.response;
+        if (fallback == null) {
+          return _DiagResult(
+            label: target.label,
+            url: resolved,
+            method: method,
+            error: e.toString(),
+          );
+        }
+        response = fallback;
+      } catch (e) {
+        return _DiagResult(
+          label: target.label,
+          url: resolved,
+          method: method,
+          error: e.toString(),
+        );
+      }
+    }
+
+    return _DiagResult(
+      label: target.label,
+      url: resolved,
+      statusCode: response.statusCode,
+      method: method,
+    );
+  }
+
   Widget _buildVideoPlayer() {
     if (_videoError != null) {
       return Container(
         color: Colors.black,
         height: 200,
         alignment: Alignment.center,
-        child: Text(
-          _videoError!,
-          style: AppTextStyles.caption.copyWith(color: Colors.white),
+        padding: const EdgeInsets.all(AppConstants.spacing12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _videoError!,
+              style: AppTextStyles.caption.copyWith(color: Colors.white),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: AppConstants.spacing8),
+            TextButton(onPressed: _initVideo, child: const Text('Reessayer')),
+          ],
         ),
       );
     }
@@ -1266,6 +1859,52 @@ class _PracticeSession {
       level: (data['level'] as num?)?.toInt(),
       date: formatDate(data['ended_at'] ?? data['started_at']),
     );
+  }
+}
+
+class _DiagTarget {
+  final String label;
+  final String url;
+
+  const _DiagTarget(this.label, this.url);
+}
+
+class _DiagResult {
+  final String label;
+  final String url;
+  final int? statusCode;
+  final String method;
+  final String? error;
+
+  const _DiagResult({
+    required this.label,
+    required this.url,
+    this.statusCode,
+    required this.method,
+    this.error,
+  });
+
+  factory _DiagResult.missing(String label) {
+    return _DiagResult(label: label, url: '', method: 'N/A', error: 'missing');
+  }
+
+  String get _safeUrl {
+    if (url.isEmpty) return url;
+    final parsed = Uri.tryParse(url);
+    if (parsed == null) {
+      return url;
+    }
+    return parsed.replace(query: '', fragment: '').toString();
+  }
+
+  String get summary {
+    if (statusCode != null) {
+      final ok = statusCode! >= 200 && statusCode! < 300;
+      final tag = ok ? 'OK' : 'HTTP $statusCode';
+      return '$label: $tag ($method) $_safeUrl';
+    }
+    final detail = error ?? 'error';
+    return '$label: $detail ($method) $_safeUrl';
   }
 }
 

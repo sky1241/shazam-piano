@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
   [switch]$Fast,
-  [switch]$NoBuild
+  [switch]$NoBuild,
+  [switch]$UnlockAll
 )
 
 $ErrorActionPreference = "Stop"
@@ -69,6 +70,9 @@ try {
 }
 
 $flutterArgs = @("--dart-define=ENV=dev", "--dart-define=BUILD_STAMP=$stamp")
+if ($UnlockAll) {
+  $flutterArgs += "--dart-define=DEV_UNLOCK_ALL=true"
+}
 if ($NoBuild) {
   $apkPath = Join-Path (Get-Location) "build\app\outputs\flutter-apk\app-debug.apk"
   if (Test-Path $apkPath) {

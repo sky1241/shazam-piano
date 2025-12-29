@@ -5,6 +5,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/constants/app_constants.dart';
 import 'iap_state.dart';
 
+const bool _isProduct = bool.fromEnvironment('dart.vm.product');
+const bool _devUnlockAll =
+    // DEV ONLY: enable with --dart-define=DEV_UNLOCK_ALL=true in debug/dev.
+    !_isProduct && bool.fromEnvironment('DEV_UNLOCK_ALL', defaultValue: false);
+
 /// IAP state provider
 final iapProvider = StateNotifierProvider<IAPNotifier, IAPState>((ref) {
   return IAPNotifier();
@@ -27,9 +32,17 @@ class IAPNotifier extends StateNotifier<IAPState> {
       final available = await _iap.isAvailable();
 
       if (!available) {
+        if (_devUnlockAll) {
+          state = state.copyWith(
+            isInitialized: true,
+            isUnlocked: true,
+            error: null,
+          );
+          return;
+        }
         state = state.copyWith(
           isInitialized: true,
-          error: 'In-app purchases not available',
+          error: 'Purchases unavailable',
         );
         return;
       }
@@ -37,6 +50,7 @@ class IAPNotifier extends StateNotifier<IAPState> {
       // Load saved unlock status
       final prefs = await SharedPreferences.getInstance();
       final isUnlocked = prefs.getBool(_unlockedKey) ?? false;
+      final effectiveUnlocked = isUnlocked || _devUnlockAll;
 
       // Listen to purchase updates
       _subscription = _iap.purchaseStream.listen(
@@ -47,10 +61,13 @@ class IAPNotifier extends StateNotifier<IAPState> {
         },
       );
 
-      state = state.copyWith(isInitialized: true, isUnlocked: isUnlocked);
+      state = state.copyWith(
+        isInitialized: true,
+        isUnlocked: effectiveUnlocked,
+      );
 
       // Auto-restore on startup
-      if (!isUnlocked) {
+      if (!effectiveUnlocked) {
         await restorePurchases();
       }
     } catch (e) {

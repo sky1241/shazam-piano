@@ -143,6 +143,7 @@ class LibraryItem {
 
 class LibraryNotifier extends StateNotifier<LibraryState> {
   static const String _storageKey = 'shazapiano_library';
+  static const String _lastJobKey = 'shazapiano_last_job_id';
 
   final Dio _dio;
   final ApiClient _apiClient;
@@ -209,6 +210,7 @@ class LibraryNotifier extends StateNotifier<LibraryState> {
     if (_isDownloading) {
       return;
     }
+    await _cleanupPreviousJob(jobId);
     await cachePreviews(
       jobId: jobId,
       levels: levels,
@@ -288,8 +290,6 @@ class LibraryNotifier extends StateNotifier<LibraryState> {
         downloadProgress: 1.0,
         resetDownloadError: true,
       );
-
-      await _cleanupRemote(jobId);
     } catch (e) {
       state = state.copyWith(
         isDownloading: false,
@@ -330,6 +330,21 @@ class LibraryNotifier extends StateNotifier<LibraryState> {
       await _apiClient.cleanupJob(jobId);
     } catch (_) {
       // Ignore cleanup failures to avoid blocking local success.
+    }
+  }
+
+  Future<void> _cleanupPreviousJob(String currentJobId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final lastJobId = prefs.getString(_lastJobKey);
+      if (lastJobId != null &&
+          lastJobId.isNotEmpty &&
+          lastJobId != currentJobId) {
+        await _cleanupRemote(lastJobId);
+      }
+      await prefs.setString(_lastJobKey, currentJobId);
+    } catch (_) {
+      // Ignore cleanup persistence failures.
     }
   }
 

@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart' as riverpod;
 import 'package:firebase_auth/firebase_auth.dart';
 import '../config/app_config.dart';
+import '../debug/debug_job_guard.dart';
 import '../../data/datasources/api_client.dart';
 
 /// App configuration provider
@@ -49,6 +50,8 @@ final dioProvider = riverpod.Provider<Dio>((ref) {
   if (config.debugMode) {
     dio.interceptors.add(LogInterceptor(requestBody: true, responseBody: true));
   }
+
+  DebugJobGuard.attachToDio(dio);
 
   return dio;
 });
