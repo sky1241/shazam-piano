@@ -24,10 +24,24 @@ import '../../../domain/entities/level_result.dart';
 import '../../widgets/practice_keyboard.dart';
 import 'pitch_detector.dart';
 
+@visibleForTesting
+bool isVideoEnded(Duration position, Duration duration) {
+  final endThreshold = duration - const Duration(milliseconds: 100);
+  final safeThreshold = endThreshold.isNegative ? Duration.zero : endThreshold;
+  return position >= safeThreshold;
+}
+
 class PracticePage extends StatefulWidget {
   final LevelResult level;
+  final bool forcePreview;
+  final bool isTest;
 
-  const PracticePage({super.key, required this.level});
+  const PracticePage({
+    super.key,
+    required this.level,
+    this.forcePreview = false,
+    this.isTest = false,
+  });
 
   @override
   State<PracticePage> createState() => _PracticePageState();
@@ -35,6 +49,9 @@ class PracticePage extends StatefulWidget {
 
 class _PracticePageState extends State<PracticePage>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+  bool get _isTestEnv =>
+      widget.isTest || const bool.fromEnvironment('FLUTTER_TEST');
+
   String _formatMidiNote(int midi, {bool withOctave = false}) {
     const names = [
       'C',
@@ -60,7 +77,7 @@ class _PracticePageState extends State<PracticePage>
 
   bool _isListening = false;
   int? _detectedNote;
-  int? _expectedNote;
+  int? _targetNote;
   NoteAccuracy _accuracy = NoteAccuracy.miss;
   int _score = 0;
   int _totalNotes = 0;
@@ -70,7 +87,7 @@ class _PracticePageState extends State<PracticePage>
   final RecorderStream _recorder = RecorderStream();
   StreamSubscription<MidiPacket>? _midiSub;
   final _pitchDetector = PitchDetector();
-  List<_ExpectedNote> _expectedNotes = [];
+  List<_NoteEvent> _noteEvents = [];
   List<bool> _hitNotes = [];
   double _latencyMs = 0;
   final AudioPlayer _beepPlayer = AudioPlayer();
@@ -80,9 +97,10 @@ class _PracticePageState extends State<PracticePage>
   bool _midiAvailable = false;
   List<_PracticeSession> _sessions = [];
   late final Ticker _ticker;
-  static const double _fallAreaHeight = 320;
   static const double _fallLeadSec = 2.0;
   static const double _fallTailSec = 0.6;
+  final ScrollController _keyboardScrollController = ScrollController();
+  double _keyboardScrollOffset = 0.0;
   static const int _micMaxBufferSamples = PitchDetector.bufferSize * 4;
   final List<double> _micBuffer = <double>[];
   VideoPlayerController? _videoController;
@@ -120,16 +138,32 @@ class _PracticePageState extends State<PracticePage>
     if (jobId != null) {
       DebugJobGuard.setCurrentJobId(jobId);
     }
-    unawaited(_refreshMicPermission());
+    if (!_isTestEnv) {
+      unawaited(_refreshMicPermission());
+    }
     _ticker = createTicker((_) {
       if (mounted && _isListening) {
         setState(() {});
       }
     })..start();
-    _initVideo();
-    _loadExpectedNotes();
-    _loadSavedLatency();
-    _loadSessions();
+    _keyboardScrollController.addListener(() {
+      final next = _keyboardScrollController.offset;
+      if (next == _keyboardScrollOffset) {
+        return;
+      }
+      _keyboardScrollOffset = next;
+      if (mounted) {
+        setState(() {});
+      }
+    });
+    if (_isTestEnv) {
+      _seedTestData();
+    } else {
+      _initVideo();
+      _loadNoteEvents();
+      _loadSavedLatency();
+      _loadSessions();
+    }
   }
 
   @override
@@ -267,7 +301,7 @@ class _PracticePageState extends State<PracticePage>
 
             const SizedBox(height: AppConstants.spacing16),
 
-            // Piano roll + clavier uniquement
+            // Clavier uniquement
             _buildPracticeStage(),
 
             const SizedBox(height: AppConstants.spacing16),
@@ -645,43 +679,21 @@ class _PracticePageState extends State<PracticePage>
 
           final isPortrait =
               MediaQuery.of(context).orientation == Orientation.portrait;
-          const double stagePadding = AppConstants.spacing12;
-          final innerAvailableWidth = max(
-            0.0,
-            availableWidth - (stagePadding * 2),
-          );
-
-          final whiteCount = _countWhiteKeys();
-          const double maxWhiteKeyWidth = 20.0;
-          final rawWhiteWidth = innerAvailableWidth / whiteCount;
-          final whiteWidth = min(rawWhiteWidth, maxWhiteKeyWidth);
-          final blackWidth = whiteWidth * 0.65;
-          final contentWidth = whiteWidth * whiteCount;
-          const double keyboardPadding = 0.0;
-          final keyboardWidth = contentWidth;
-          final shouldScroll = keyboardWidth > innerAvailableWidth;
-          final displayWidth = shouldScroll
-              ? keyboardWidth
-              : innerAvailableWidth;
-          const double keyboardOffset = 0.0;
-          final outerWidth = displayWidth + (stagePadding * 2);
+          final layout = _computeKeyboardLayout(availableWidth);
+          final whiteWidth = layout.whiteWidth;
+          final blackWidth = layout.blackWidth;
+          final displayWidth = layout.displayWidth;
+          final outerWidth = layout.outerWidth;
+          final shouldScroll = layout.shouldScroll;
 
           final whiteHeight = isPortrait ? 90.0 : 120.0;
           final blackHeight = isPortrait ? 60.0 : 80.0;
-          final fallAreaHeight = isPortrait ? 260.0 : _fallAreaHeight;
-
-          final now = DateTime.now();
-          final elapsedSec = _startTime == null
-              ? 0.0
-              : max(
-                  0.0,
-                  (now.difference(_startTime!).inMilliseconds - _latencyMs) /
-                      1000.0,
-                ).toDouble();
+          final showNotesStatus =
+              _notesLoading || _notesError != null || _noteEvents.isEmpty;
 
           final content = Container(
             width: outerWidth,
-            padding: const EdgeInsets.all(stagePadding),
+            padding: EdgeInsets.all(layout.stagePadding),
             decoration: BoxDecoration(
               color: AppColors.surface,
               borderRadius: BorderRadius.circular(AppConstants.radiusCard),
@@ -690,82 +702,16 @@ class _PracticePageState extends State<PracticePage>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                SizedBox(
-                  height: fallAreaHeight,
-                  width: displayWidth,
-                  child: _notesLoading
-                      ? Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              ),
-                              const SizedBox(height: AppConstants.spacing8),
-                              Text(
-                                'Chargement des notes...',
-                                style: AppTextStyles.caption,
-                              ),
-                            ],
-                          ),
-                        )
-                      : _notesError != null
-                      ? Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                _notesError!,
-                                style: AppTextStyles.caption.copyWith(
-                                  color: AppColors.error,
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-                              const SizedBox(height: AppConstants.spacing8),
-                              TextButton(
-                                onPressed: _loadExpectedNotes,
-                                child: const Text('Reessayer'),
-                              ),
-                            ],
-                          ),
-                        )
-                      : _expectedNotes.isEmpty
-                      ? Center(
-                          child: Text(
-                            'Aucune note disponible',
-                            style: AppTextStyles.caption,
-                          ),
-                        )
-                      : CustomPaint(
-                          painter: _FallingNotesPainter(
-                            expectedNotes: _expectedNotes,
-                            elapsedSec: elapsedSec,
-                            whiteWidth: whiteWidth,
-                            blackWidth: blackWidth,
-                            fallAreaHeight: fallAreaHeight,
-                            fallLead: _fallLeadSec,
-                            fallTail: _fallTailSec,
-                            noteToX: (n) => _noteToX(
-                              n,
-                              whiteWidth,
-                              blackWidth,
-                              offset: keyboardOffset + keyboardPadding,
-                            ),
-                          ),
-                        ),
-                ),
-                const SizedBox(height: AppConstants.spacing8),
+                if (showNotesStatus) _buildNotesStatus(displayWidth),
+                if (showNotesStatus)
+                  const SizedBox(height: AppConstants.spacing8),
                 _buildKeyboardWithSizes(
                   totalWidth: displayWidth,
                   whiteWidth: whiteWidth,
                   blackWidth: blackWidth,
                   whiteHeight: whiteHeight,
                   blackHeight: blackHeight,
-                  leftPadding: keyboardOffset + keyboardPadding,
+                  leftPadding: layout.leftPadding,
                 ),
               ],
             ),
@@ -773,6 +719,7 @@ class _PracticePageState extends State<PracticePage>
 
           if (shouldScroll) {
             return SingleChildScrollView(
+              controller: _keyboardScrollController,
               scrollDirection: Axis.horizontal,
               physics: const BouncingScrollPhysics(),
               child: Align(alignment: Alignment.centerLeft, child: content),
@@ -793,6 +740,7 @@ class _PracticePageState extends State<PracticePage>
     required double leftPadding,
   }) {
     return PracticeKeyboard(
+      key: const Key('practice_keyboard'),
       totalWidth: totalWidth,
       whiteWidth: whiteWidth,
       blackWidth: blackWidth,
@@ -801,10 +749,96 @@ class _PracticePageState extends State<PracticePage>
       firstKey: _firstKey,
       lastKey: _lastKey,
       blackKeys: _blackKeys,
-      expectedNote: _expectedNote,
+      targetNote: _targetNote,
       detectedNote: _detectedNote,
       leftPadding: leftPadding,
     );
+  }
+
+  Widget _buildNotesStatus(double width) {
+    if (_notesLoading) {
+      return SizedBox(
+        width: width,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(height: AppConstants.spacing8),
+              Text('Chargement des notes...', style: AppTextStyles.caption),
+            ],
+          ),
+        ),
+      );
+    }
+    if (_notesError != null) {
+      return SizedBox(
+        width: width,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _notesError!,
+                style: AppTextStyles.caption.copyWith(color: AppColors.error),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: AppConstants.spacing8),
+              TextButton(
+                onPressed: _loadNoteEvents,
+                child: const Text('Reessayer'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    if (_noteEvents.isEmpty) {
+      return SizedBox(
+        width: width,
+        child: Center(
+          child: Text('Aucune note disponible', style: AppTextStyles.caption),
+        ),
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
+  _KeyboardLayout _computeKeyboardLayout(double availableWidth) {
+    const stagePadding = AppConstants.spacing12;
+    final innerAvailableWidth = max(0.0, availableWidth - (stagePadding * 2));
+    final whiteCount = _countWhiteKeys();
+    const maxWhiteKeyWidth = 20.0;
+    final rawWhiteWidth = innerAvailableWidth / whiteCount;
+    final whiteWidth = min(rawWhiteWidth, maxWhiteKeyWidth);
+    final blackWidth = whiteWidth * 0.65;
+    final contentWidth = whiteWidth * whiteCount;
+    final shouldScroll = contentWidth > innerAvailableWidth;
+    final displayWidth = shouldScroll ? contentWidth : innerAvailableWidth;
+    final outerWidth = displayWidth + (stagePadding * 2);
+
+    return _KeyboardLayout(
+      whiteWidth: whiteWidth,
+      blackWidth: blackWidth,
+      displayWidth: displayWidth,
+      outerWidth: outerWidth,
+      stagePadding: stagePadding,
+      shouldScroll: shouldScroll,
+      leftPadding: 0.0,
+    );
+  }
+
+  double _currentElapsedSec() {
+    if (_startTime == null) {
+      return 0.0;
+    }
+    final elapsedMs =
+        DateTime.now().difference(_startTime!).inMilliseconds - _latencyMs;
+    return max(0.0, elapsedMs / 1000.0);
   }
 
   bool _isBlackKey(int note) {
@@ -817,25 +851,6 @@ class _PracticePageState extends State<PracticePage>
       if (!_isBlackKey(n)) count++;
     }
     return count;
-  }
-
-  double _noteToX(
-    int note,
-    double whiteWidth,
-    double blackWidth, {
-    double offset = 0.0,
-  }) {
-    int whiteIndex = 0;
-    for (int n = _firstKey; n < note; n++) {
-      if (!_isBlackKey(n)) {
-        whiteIndex += 1;
-      }
-    }
-    double x = whiteIndex * whiteWidth;
-    if (_isBlackKey(note)) {
-      x -= (blackWidth / 2);
-    }
-    return x + offset;
   }
 
   Color _getAccuracyColor() {
@@ -944,11 +959,11 @@ class _PracticePageState extends State<PracticePage>
     }
 
     // Fetch expected notes from backend
-    await _loadExpectedNotes();
+    await _loadNoteEvents();
     _score = 0;
     _correctNotes = 0;
-    _totalNotes = _expectedNotes.length;
-    _hitNotes = List<bool>.filled(_expectedNotes.length, false);
+    _totalNotes = _noteEvents.length;
+    _hitNotes = List<bool>.filled(_noteEvents.length, false);
     _startTime = DateTime.now();
     _micBuffer.clear();
 
@@ -1000,7 +1015,7 @@ class _PracticePageState extends State<PracticePage>
 
     setState(() {
       _detectedNote = null;
-      _expectedNote = null;
+      _targetNote = null;
       _lastMicFrameAt = null;
       _micRms = 0.0;
       _micFrequency = null;
@@ -1072,6 +1087,7 @@ class _PracticePageState extends State<PracticePage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _ticker.dispose();
+    _keyboardScrollController.dispose();
     _micSub?.cancel();
     _midiSub?.cancel();
     try {
@@ -1137,8 +1153,8 @@ class _PracticePageState extends State<PracticePage>
 
     // Find active expected notes
     final activeIndices = <int>[];
-    for (var i = 0; i < _expectedNotes.length; i++) {
-      final n = _expectedNotes[i];
+    for (var i = 0; i < _noteEvents.length; i++) {
+      final n = _noteEvents[i];
       if (elapsed >= n.start && elapsed <= n.end + 0.2) {
         activeIndices.add(i);
       }
@@ -1150,13 +1166,13 @@ class _PracticePageState extends State<PracticePage>
     bool matched = false;
     for (final idx in activeIndices) {
       if (_hitNotes[idx]) continue;
-      if ((midi - _expectedNotes[idx].pitch).abs() <= 1) {
+      if ((midi - _noteEvents[idx].pitch).abs() <= 1) {
         matched = true;
         _hitNotes[idx] = true;
         _correctNotes += 1;
         _score += 1;
         _accuracy = NoteAccuracy.correct;
-        _expectedNote = _expectedNotes[idx].pitch;
+        _targetNote = _noteEvents[idx].pitch;
         break;
       }
     }
@@ -1236,7 +1252,7 @@ class _PracticePageState extends State<PracticePage>
     return Float32List.fromList(buffer.sublist(start));
   }
 
-  Future<void> _loadExpectedNotes() async {
+  Future<void> _loadNoteEvents() async {
     if (mounted) {
       setState(() {
         _notesLoading = true;
@@ -1284,10 +1300,10 @@ class _PracticePageState extends State<PracticePage>
         throw Exception('Notes payload missing');
       }
       final List<dynamic> notesJson = data['notes'];
-      final expectedNotes =
+      final noteEvents =
           notesJson
               .map(
-                (n) => _ExpectedNote(
+                (n) => _NoteEvent(
                   pitch: n['pitch'] as int,
                   start: (n['start'] as num).toDouble(),
                   end: (n['end'] as num).toDouble(),
@@ -1298,20 +1314,20 @@ class _PracticePageState extends State<PracticePage>
 
       if (mounted) {
         setState(() {
-          _expectedNotes = expectedNotes;
-          _expectedNote = expectedNotes.isNotEmpty
-              ? expectedNotes.first.pitch
+          _noteEvents = noteEvents;
+          _targetNote = noteEvents.isNotEmpty
+              ? noteEvents.first.pitch
               : null;
           _notesLoading = false;
-          _notesError = expectedNotes.isEmpty ? 'Notes indisponibles' : null;
+          _notesError = noteEvents.isEmpty ? 'Notes indisponibles' : null;
         });
       } else {
-        _expectedNotes = expectedNotes;
-        _expectedNote = expectedNotes.isNotEmpty
-            ? expectedNotes.first.pitch
+        _noteEvents = noteEvents;
+        _targetNote = noteEvents.isNotEmpty
+            ? noteEvents.first.pitch
             : null;
         _notesLoading = false;
-        _notesError = expectedNotes.isEmpty ? 'Notes indisponibles' : null;
+        _notesError = noteEvents.isEmpty ? 'Notes indisponibles' : null;
       }
     } on DioException catch (e) {
       final status = e.response?.statusCode;
@@ -1320,14 +1336,14 @@ class _PracticePageState extends State<PracticePage>
       );
       if (mounted) {
         setState(() {
-          _expectedNotes = [];
-          _expectedNote = null;
+          _noteEvents = [];
+          _targetNote = null;
           _notesLoading = false;
           _notesError = 'Notes indisponibles';
         });
       } else {
-        _expectedNotes = [];
-        _expectedNote = null;
+        _noteEvents = [];
+        _targetNote = null;
         _notesLoading = false;
         _notesError = 'Notes indisponibles';
       }
@@ -1335,14 +1351,14 @@ class _PracticePageState extends State<PracticePage>
       debugPrint('Practice notes error: midiUrl=$midiUrl url=$url error=$e');
       if (mounted) {
         setState(() {
-          _expectedNotes = [];
-          _expectedNote = null;
+          _noteEvents = [];
+          _targetNote = null;
           _notesLoading = false;
           _notesError = 'Notes indisponibles';
         });
       } else {
-        _expectedNotes = [];
-        _expectedNote = null;
+        _noteEvents = [];
+        _targetNote = null;
         _notesLoading = false;
         _notesError = 'Notes indisponibles';
       }
@@ -1501,8 +1517,8 @@ class _PracticePageState extends State<PracticePage>
 
       // Find active expected notes
       final activeIndices = <int>[];
-      for (var i = 0; i < _expectedNotes.length; i++) {
-        final n = _expectedNotes[i];
+      for (var i = 0; i < _noteEvents.length; i++) {
+        final n = _noteEvents[i];
         if (elapsed >= n.start && elapsed <= n.end + 0.2) {
           activeIndices.add(i);
         }
@@ -1514,13 +1530,13 @@ class _PracticePageState extends State<PracticePage>
       bool matched = false;
       for (final idx in activeIndices) {
         if (_hitNotes[idx]) continue;
-        if ((note - _expectedNotes[idx].pitch).abs() <= 1) {
+        if ((note - _noteEvents[idx].pitch).abs() <= 1) {
           matched = true;
           _hitNotes[idx] = true;
           _correctNotes += 1;
           _score += 1;
           _accuracy = NoteAccuracy.correct;
-          _expectedNote = _expectedNotes[idx].pitch;
+          _targetNote = _noteEvents[idx].pitch;
           break;
         }
       }
@@ -1540,13 +1556,13 @@ class _PracticePageState extends State<PracticePage>
   }
 
   void _updateNextExpected() {
-    for (var i = 0; i < _expectedNotes.length; i++) {
+    for (var i = 0; i < _noteEvents.length; i++) {
       if (!_hitNotes[i]) {
-        _expectedNote = _expectedNotes[i].pitch;
+        _targetNote = _noteEvents[i].pitch;
         return;
       }
     }
-    _expectedNote = null;
+    _targetNote = null;
   }
 
   Future<void> _initVideo() async {
@@ -1558,11 +1574,23 @@ class _PracticePageState extends State<PracticePage>
         _videoError = null;
       });
 
-      final url = _resolveBackendUrl(
-        widget.level.previewUrl.isNotEmpty
-            ? widget.level.previewUrl
-            : widget.level.videoUrl,
-      );
+      final previewUrl = widget.level.previewUrl;
+      final fullUrl = widget.level.videoUrl;
+      String selectedUrl;
+      if (widget.forcePreview) {
+        if (previewUrl.isEmpty) {
+          setState(() {
+            _videoError = 'Aucun aperçu disponible';
+            _videoLoading = false;
+          });
+          return;
+        }
+        selectedUrl = previewUrl;
+      } else {
+        selectedUrl = fullUrl.isNotEmpty ? fullUrl : previewUrl;
+      }
+
+      final url = _resolveBackendUrl(selectedUrl);
       if (url.isEmpty) {
         setState(() {
           _videoError = 'Aucune video';
@@ -1584,9 +1612,9 @@ class _PracticePageState extends State<PracticePage>
         if (_videoEndFired) {
           return;
         }
-        if (_isListening && value.position >= value.duration) {
+        if (_isListening && isVideoEnded(value.position, value.duration)) {
           _videoEndFired = true;
-          _stopPractice(showSummary: true, reason: 'video_end');
+          unawaited(_stopPractice(showSummary: true, reason: 'video_end'));
         }
       });
       _chewieController = ChewieController(
@@ -1747,38 +1775,143 @@ class _PracticePageState extends State<PracticePage>
     );
   }
 
+  void _seedTestData() {
+    _videoLoading = false;
+    _videoError = null;
+    _notesLoading = false;
+    _notesError = null;
+    _noteEvents = [_NoteEvent(pitch: 60, start: 0.0, end: 1.0)];
+    _hitNotes = List<bool>.filled(_noteEvents.length, false);
+    _targetNote = _noteEvents.first.pitch;
+  }
+
+  Widget _wrapPracticeVideo(Widget child) {
+    return KeyedSubtree(key: const Key('practice_video'), child: child);
+  }
+
   Widget _buildVideoPlayer() {
+    if (_isTestEnv) {
+      return _wrapPracticeVideo(
+        AspectRatio(
+          aspectRatio: 16 / 9,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return Stack(
+                children: [
+                  Positioned.fill(
+                    child: Container(
+                      color: Colors.black,
+                      alignment: Alignment.center,
+                      child: const Text(
+                        'Video placeholder',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  ),
+                  Positioned.fill(child: _buildNotesOverlay(constraints)),
+                ],
+              );
+            },
+          ),
+        ),
+      );
+    }
     if (_videoError != null) {
-      return Container(
-        color: Colors.black,
-        height: 200,
-        alignment: Alignment.center,
-        padding: const EdgeInsets.all(AppConstants.spacing12),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              _videoError!,
-              style: AppTextStyles.caption.copyWith(color: Colors.white),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: AppConstants.spacing8),
-            TextButton(onPressed: _initVideo, child: const Text('Reessayer')),
-          ],
+      return _wrapPracticeVideo(
+        Container(
+          color: Colors.black,
+          height: 200,
+          alignment: Alignment.center,
+          padding: const EdgeInsets.all(AppConstants.spacing12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _videoError!,
+                style: AppTextStyles.caption.copyWith(color: Colors.white),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: AppConstants.spacing8),
+              TextButton(onPressed: _initVideo, child: const Text('Reessayer')),
+            ],
+          ),
         ),
       );
     }
     if (_videoLoading || _chewieController == null) {
-      return Container(
-        color: Colors.black,
-        height: 200,
-        alignment: Alignment.center,
-        child: const CircularProgressIndicator(),
+      return _wrapPracticeVideo(
+        Container(
+          color: Colors.black,
+          height: 200,
+          alignment: Alignment.center,
+          child: const CircularProgressIndicator(),
+        ),
       );
     }
-    return AspectRatio(
-      aspectRatio: _chewieController!.aspectRatio ?? 16 / 9,
-      child: Chewie(controller: _chewieController!),
+    return _wrapPracticeVideo(
+      AspectRatio(
+        aspectRatio: _chewieController!.aspectRatio ?? 16 / 9,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return Stack(
+              children: [
+                Positioned.fill(child: Chewie(controller: _chewieController!)),
+                Positioned.fill(child: _buildNotesOverlay(constraints)),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNotesOverlay(BoxConstraints constraints) {
+    if (_noteEvents.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final screenWidth = MediaQuery.of(context).size.width;
+    final availableWidth = min(
+      constraints.maxWidth,
+      screenWidth - (AppConstants.spacing16 * 2),
+    );
+    final layout = _computeKeyboardLayout(availableWidth);
+    final scrollOffset = layout.shouldScroll ? _keyboardScrollOffset : 0.0;
+    double noteToX(int note) {
+      final x = PracticeKeyboard.noteToX(
+        note: note,
+        firstKey: _firstKey,
+        whiteWidth: layout.whiteWidth,
+        blackWidth: layout.blackWidth,
+        blackKeys: _blackKeys,
+        offset: layout.leftPadding,
+      );
+      return x - scrollOffset;
+    }
+
+    return IgnorePointer(
+      child: Center(
+        child: SizedBox(
+          width: layout.outerWidth,
+          height: constraints.maxHeight,
+          child: Padding(
+            padding: EdgeInsets.all(layout.stagePadding),
+            child: CustomPaint(
+              key: const Key('practice_notes_overlay'),
+              size: Size(layout.displayWidth, constraints.maxHeight),
+              painter: _FallingNotesPainter(
+                noteEvents: _noteEvents,
+                elapsedSec: _currentElapsedSec(),
+                whiteWidth: layout.whiteWidth,
+                blackWidth: layout.blackWidth,
+                fallAreaHeight: constraints.maxHeight,
+                fallLead: _fallLeadSec,
+                fallTail: _fallTailSec,
+                noteToX: noteToX,
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -1908,15 +2041,35 @@ class _DiagResult {
   }
 }
 
-class _ExpectedNote {
+class _NoteEvent {
   final int pitch;
   final double start;
   final double end;
-  _ExpectedNote({required this.pitch, required this.start, required this.end});
+  _NoteEvent({required this.pitch, required this.start, required this.end});
+}
+
+class _KeyboardLayout {
+  final double whiteWidth;
+  final double blackWidth;
+  final double displayWidth;
+  final double outerWidth;
+  final double stagePadding;
+  final bool shouldScroll;
+  final double leftPadding;
+
+  const _KeyboardLayout({
+    required this.whiteWidth,
+    required this.blackWidth,
+    required this.displayWidth,
+    required this.outerWidth,
+    required this.stagePadding,
+    required this.shouldScroll,
+    required this.leftPadding,
+  });
 }
 
 class _FallingNotesPainter extends CustomPainter {
-  final List<_ExpectedNote> expectedNotes;
+  final List<_NoteEvent> noteEvents;
   final double elapsedSec;
   final double whiteWidth;
   final double blackWidth;
@@ -1924,9 +2077,23 @@ class _FallingNotesPainter extends CustomPainter {
   final double fallLead;
   final double fallTail;
   final double Function(int) noteToX;
-  static final Map<String, TextPainter> _labelCache = {};
 
-  String _barLabel(int midi) {
+  static const List<int> _blackKeySteps = [1, 3, 6, 8, 10];
+  static final Map<String, TextPainter> _labelFillCache = {};
+  static final Map<String, TextPainter> _labelStrokeCache = {};
+
+  _FallingNotesPainter({
+    required this.noteEvents,
+    required this.elapsedSec,
+    required this.whiteWidth,
+    required this.blackWidth,
+    required this.fallAreaHeight,
+    required this.fallLead,
+    required this.fallTail,
+    required this.noteToX,
+  });
+
+  String _labelForSpace(int midi, double width, double barHeight) {
     const names = [
       'C',
       'C#',
@@ -1943,48 +2110,67 @@ class _FallingNotesPainter extends CustomPainter {
     ];
     final base = names[midi % 12];
     final octave = (midi ~/ 12) - 1;
-    return '$base$octave';
+    final fullLabel = base == 'C' ? '$base$octave' : base;
+    final noSharp = base.replaceAll('#', '');
+
+    if (width < 10 || barHeight < 12) {
+      return noSharp;
+    }
+    if (width < 16 || barHeight < 16) {
+      return base;
+    }
+    return fullLabel;
   }
 
-  TextPainter _getLabelPainter(String label, double fontSize) {
-    final key = '$label:${fontSize.toStringAsFixed(1)}';
-    final cached = _labelCache[key];
+  double _labelFontSize(double width, double barHeight, String label) {
+    final widthFactor = label.length <= 2 ? 0.75 : 0.6;
+    final raw = min(barHeight * 0.55, width * widthFactor);
+    return raw.clamp(12.0, 18.0);
+  }
+
+  TextPainter _getLabelPainter(
+    String label,
+    double fontSize, {
+    required bool stroke,
+  }) {
+    final key = '$label:${fontSize.toStringAsFixed(1)}:${stroke ? 's' : 'f'}';
+    final cache = stroke ? _labelStrokeCache : _labelFillCache;
+    final cached = cache[key];
     if (cached != null) {
       return cached;
     }
+    final paint = Paint()
+      ..style = stroke ? PaintingStyle.stroke : PaintingStyle.fill
+      ..strokeWidth = stroke ? 2.0 : 0.0
+      ..color = stroke ? Colors.black : Colors.white;
     final painter = TextPainter(
       text: TextSpan(
         text: label,
         style: TextStyle(
-          color: Colors.white,
           fontSize: fontSize,
-          fontWeight: FontWeight.w600,
-          shadows: const [
-            Shadow(color: Colors.black, blurRadius: 2, offset: Offset(0, 1)),
-          ],
+          fontWeight: FontWeight.w700,
+          foreground: paint,
+          shadows: stroke
+              ? null
+              : [
+                  Shadow(
+                    color: Colors.black.withValues(alpha: 0.4),
+                    blurRadius: 2,
+                    offset: const Offset(0, 1),
+                  ),
+                ],
         ),
       ),
       textDirection: TextDirection.ltr,
     )..layout();
-    _labelCache[key] = painter;
+    cache[key] = painter;
     return painter;
   }
-
-  _FallingNotesPainter({
-    required this.expectedNotes,
-    required this.elapsedSec,
-    required this.whiteWidth,
-    required this.blackWidth,
-    required this.fallAreaHeight,
-    required this.fallLead,
-    required this.fallTail,
-    required this.noteToX,
-  });
 
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()..style = PaintingStyle.fill;
-    for (final n in expectedNotes) {
+    for (final n in noteEvents) {
       final appear = n.start - fallLead;
       final disappear = n.end + fallTail;
       if (elapsedSec < appear || elapsedSec > disappear) continue;
@@ -1997,24 +2183,39 @@ class _FallingNotesPainter extends CustomPainter {
       final barHeight = max(10.0, (n.end - n.start) * 60);
 
       final x = noteToX(n.pitch);
-      final isBlack = _PracticePageState._blackKeys.contains(n.pitch % 12);
+      final isBlack = _blackKeySteps.contains(n.pitch % 12);
       final width = isBlack ? blackWidth : whiteWidth;
 
-      paint.color = const Color(0xFF4F9DFD).withValues(alpha: 0.8);
+      paint.color = AppColors.warning.withValues(alpha: 0.85);
       final rect = RRect.fromRectAndRadius(
         Rect.fromLTWH(x, y - barHeight, width, barHeight),
         const Radius.circular(3),
       );
       canvas.drawRRect(rect, paint);
 
-      if (width >= 14 && barHeight >= 22) {
-        final label = _barLabel(n.pitch);
-        final fontSize = max(9.0, min(12.0, min(width * 0.6, barHeight * 0.4)));
-        final textPainter = _getLabelPainter(label, fontSize);
-        final textOffset = Offset(
-          x + (width - textPainter.width) / 2,
-          (y - barHeight) + (barHeight - textPainter.height) / 2,
+      final label = _labelForSpace(n.pitch, width, barHeight);
+      final fontSize = _labelFontSize(width, barHeight, label);
+      final textPainter = _getLabelPainter(label, fontSize, stroke: false);
+      final textOffset = Offset(
+        x + (width - textPainter.width) / 2,
+        (y - barHeight) + (barHeight - textPainter.height) / 2,
+      );
+      if (width > 4 && barHeight > 6) {
+        final background = Paint()..color = Colors.black.withValues(alpha: 0.4);
+        final padX = 3.0;
+        final padY = 2.0;
+        final bgRect = RRect.fromRectAndRadius(
+          Rect.fromLTWH(
+            textOffset.dx - padX,
+            textOffset.dy - padY,
+            textPainter.width + (padX * 2),
+            textPainter.height + (padY * 2),
+          ),
+          const Radius.circular(4),
         );
+        canvas.drawRRect(bgRect, background);
+        final strokePainter = _getLabelPainter(label, fontSize, stroke: true);
+        strokePainter.paint(canvas, textOffset);
         textPainter.paint(canvas, textOffset);
       }
     }
@@ -2023,7 +2224,13 @@ class _FallingNotesPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _FallingNotesPainter oldDelegate) {
     return oldDelegate.elapsedSec != elapsedSec ||
-        oldDelegate.expectedNotes != expectedNotes;
+        oldDelegate.noteEvents != noteEvents ||
+        oldDelegate.whiteWidth != whiteWidth ||
+        oldDelegate.blackWidth != blackWidth ||
+        oldDelegate.fallAreaHeight != fallAreaHeight ||
+        oldDelegate.fallLead != fallLead ||
+        oldDelegate.fallTail != fallTail ||
+        oldDelegate.noteToX != noteToX;
   }
 }
 

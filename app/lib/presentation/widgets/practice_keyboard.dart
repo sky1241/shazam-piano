@@ -15,7 +15,7 @@ class PracticeKeyboard extends StatelessWidget {
   final int firstKey;
   final int lastKey;
   final List<int> blackKeys;
-  final int? expectedNote;
+  final int? targetNote;
   final int? detectedNote;
   final double leftPadding;
 
@@ -29,10 +29,35 @@ class PracticeKeyboard extends StatelessWidget {
     required this.firstKey,
     required this.lastKey,
     required this.blackKeys,
-    required this.expectedNote,
+    required this.targetNote,
     required this.detectedNote,
     required this.leftPadding,
   });
+
+  static double noteToX({
+    required int note,
+    required int firstKey,
+    required double whiteWidth,
+    required double blackWidth,
+    required List<int> blackKeys,
+    double offset = 0.0,
+  }) {
+    int whiteIndex = 0;
+    for (int n = firstKey; n < note; n++) {
+      if (!_isBlackKeyStatic(n, blackKeys)) {
+        whiteIndex += 1;
+      }
+    }
+    double x = whiteIndex * whiteWidth;
+    if (_isBlackKeyStatic(note, blackKeys)) {
+      x -= (blackWidth / 2);
+    }
+    return x + offset;
+  }
+
+  static bool _isBlackKeyStatic(int note, List<int> blackKeys) {
+    return blackKeys.contains(note % 12);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -93,17 +118,13 @@ class PracticeKeyboard extends StatelessWidget {
   }
 
   double _noteToX(int note) {
-    int whiteIndex = 0;
-    for (int n = firstKey; n < note; n++) {
-      if (!_isBlackKey(n)) {
-        whiteIndex += 1;
-      }
-    }
-    double x = whiteIndex * whiteWidth;
-    if (_isBlackKey(note)) {
-      x -= (blackWidth / 2);
-    }
-    return x;
+    return noteToX(
+      note: note,
+      firstKey: firstKey,
+      whiteWidth: whiteWidth,
+      blackWidth: blackWidth,
+      blackKeys: blackKeys,
+    );
   }
 
   String _noteLabel(int midi, {bool withOctave = false}) {
@@ -136,7 +157,7 @@ class PracticeKeyboard extends StatelessWidget {
     required double width,
     required double height,
   }) {
-    final isExpected = note == expectedNote;
+    final isExpected = note == targetNote;
     final isDetected = note == detectedNote;
 
     Color keyColor;
@@ -154,18 +175,17 @@ class PracticeKeyboard extends StatelessWidget {
     final label = isBlack
         ? ''
         : (isC ? _noteLabel(note, withOctave: true) : _noteLabel(note));
-    final labelFontSize = max(10.0, min(14.0, width * 0.65));
-    final onSurface = Theme.of(context).colorScheme.onSurface;
+    final labelFontSize = max(12.0, min(16.0, width * 0.75));
     final labelColor = isBlack
         ? Colors.white.withValues(alpha: 0.95)
-        : onSurface.withValues(alpha: 0.95);
+        : Colors.black.withValues(alpha: 0.85);
     final labelShadow = Shadow(
       color: Colors.black.withValues(alpha: isBlack ? 0.55 : 0.25),
       blurRadius: 2,
     );
     final labelBackground = isBlack
-        ? Colors.black.withValues(alpha: 0.35)
-        : onSurface.withValues(alpha: 0.08);
+        ? Colors.black.withValues(alpha: 0.45)
+        : Colors.black.withValues(alpha: 0.18);
 
     return Stack(
       alignment: Alignment.center,

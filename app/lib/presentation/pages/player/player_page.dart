@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import 'package:chewie/chewie.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/constants/app_constants.dart';
@@ -35,6 +36,8 @@ class _PlayerPageState extends State<PlayerPage> {
   ChewieController? _chewieController;
   bool _isLoading = true;
   String? _error;
+  static const String _expertModeKey = 'expert_mode';
+  bool _expertMode = false;
   // Fullscreen state kept for future UI toggles (kept but unused).
   // ignore: unused_field
   // Fullscreen state kept for future UI toggles (kept but unused).
@@ -46,6 +49,38 @@ class _PlayerPageState extends State<PlayerPage> {
   void initState() {
     super.initState();
     _initializePlayer();
+    _loadExpertMode();
+  }
+
+  Future<void> _loadExpertMode() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final value = prefs.getBool(_expertModeKey) ?? false;
+      if (mounted) {
+        setState(() {
+          _expertMode = value;
+        });
+      } else {
+        _expertMode = value;
+      }
+    } catch (_) {
+      // ignore preference errors
+    }
+  }
+
+  Future<void> _setExpertMode(bool enabled) async {
+    if (_expertMode == enabled) {
+      return;
+    }
+    setState(() {
+      _expertMode = enabled;
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_expertModeKey, enabled);
+    } catch (_) {
+      // ignore preference errors
+    }
   }
 
   Future<void> _initializePlayer() async {
@@ -172,49 +207,20 @@ class _PlayerPageState extends State<PlayerPage> {
     if (isLandscape) {
       return Scaffold(
         backgroundColor: AppColors.bg,
+        appBar: AppBar(
+          title: Text(widget.level.name),
+          actions: [
+            IconButton(icon: const Icon(Icons.share), onPressed: _handleShare),
+            if (widget.isUnlocked)
+              IconButton(
+                icon: const Icon(Icons.download),
+                onPressed: _handleDownload,
+              ),
+            _buildExpertMenu(),
+          ],
+        ),
         body: SafeArea(
-          child: Column(
-            children: [
-              // Top bar with title
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      widget.level.name,
-                      style: AppTextStyles.body.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    Row(
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.share),
-                          onPressed: _handleShare,
-                        ),
-                        if (widget.isUnlocked)
-                          IconButton(
-                            icon: const Icon(Icons.download),
-                            onPressed: _handleDownload,
-                          ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              // Video player area (takes remaining space)
-              Expanded(
-                child: Container(
-                  color: Colors.black,
-                  child: _buildVideoPlayer(),
-                ),
-              ),
-            ],
-          ),
+          child: Container(color: Colors.black, child: _buildVideoPlayer()),
         ),
       );
     }
@@ -231,6 +237,7 @@ class _PlayerPageState extends State<PlayerPage> {
               icon: const Icon(Icons.download),
               onPressed: _handleDownload,
             ),
+          _buildExpertMenu(),
         ],
       ),
       body: SafeArea(
@@ -254,7 +261,7 @@ class _PlayerPageState extends State<PlayerPage> {
                         Text(widget.level.name, style: AppTextStyles.title),
                         const SizedBox(height: AppConstants.spacing8),
                         _buildMetadataRow(
-                          'Tonalite',
+                          'Tonalité',
                           widget.level.keyGuess ?? 'N/A',
                         ),
                         _buildMetadataRow(
@@ -262,8 +269,15 @@ class _PlayerPageState extends State<PlayerPage> {
                           '${widget.level.tempoGuess ?? 0} BPM',
                         ),
                         _buildMetadataRow(
-                          'Duree',
-                          widget.isUnlocked ? 'Complete' : '16s preview',
+                          'Durée',
+                          widget.isUnlocked
+                              ? 'Vidéo complète'
+                              : 'Aperçu gratuit (16 secondes)',
+                          subLabel: _expertMode
+                              ? (widget.isUnlocked
+                                    ? 'tech: full video'
+                                    : 'tech: 16s preview')
+                              : null,
                         ),
                         if (!widget.isUnlocked) ...[
                           const SizedBox(height: AppConstants.spacing16),
@@ -285,7 +299,7 @@ class _PlayerPageState extends State<PlayerPage> {
                                 const SizedBox(width: AppConstants.spacing8),
                                 Expanded(
                                   child: Text(
-                                    'Debloquez pour la video complete',
+                                    'Accède à la vidéo complète',
                                     style: AppTextStyles.caption.copyWith(
                                       color: AppColors.warning,
                                     ),
@@ -309,28 +323,29 @@ class _PlayerPageState extends State<PlayerPage> {
                 child: Column(
                   children: [
                     if (widget.isUnlocked)
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          onPressed: _handlePracticeMode,
-                          icon: const Icon(Icons.piano),
-                          label: const Text('Mode Pratique (beta)'),
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                          ),
-                        ),
+                      _buildActionButton(
+                        label: 'Mode Pratique',
+                        onPressed: _handlePracticeMode,
                       )
-                    else
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton(
-                          onPressed: _handleUnlock,
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                          ),
-                          child: const Text('Debloquer pour 1\$'),
+                    else ...[
+                      Text(
+                        'Paiement unique – pas d’abonnement',
+                        style: AppTextStyles.caption.copyWith(
+                          color: AppColors.textSecondary,
                         ),
+                        textAlign: TextAlign.center,
                       ),
+                      const SizedBox(height: AppConstants.spacing8),
+                      _buildActionButton(
+                        label: 'Débloquer pour 1\$',
+                        onPressed: _handleUnlock,
+                      ),
+                      const SizedBox(height: AppConstants.spacing12),
+                      _buildActionButton(
+                        label: 'Mode Pratique',
+                        onPressed: _handlePracticeMode,
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -443,22 +458,73 @@ class _PlayerPageState extends State<PlayerPage> {
     );
   }
 
-  Widget _buildMetadataRow(String label, String value) {
+  Widget _buildMetadataRow(String label, String value, {String? subLabel}) {
+    final trimmedSub = subLabel?.trim();
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            label,
-            style: AppTextStyles.body.copyWith(color: AppColors.textSecondary),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                label,
+                style: AppTextStyles.body.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              Text(
+                value,
+                style: AppTextStyles.body.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ],
           ),
-          Text(
-            value,
-            style: AppTextStyles.body.copyWith(fontWeight: FontWeight.w600),
-          ),
+          if (trimmedSub != null && trimmedSub.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              trimmedSub,
+              style: AppTextStyles.caption.copyWith(
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ],
         ],
       ),
+    );
+  }
+
+  Widget _buildActionButton({
+    required String label,
+    required VoidCallback onPressed,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton(
+        onPressed: onPressed,
+        style: ElevatedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+        ),
+        child: Text(label),
+      ),
+    );
+  }
+
+  Widget _buildExpertMenu() {
+    return PopupMenuButton<String>(
+      icon: const Icon(Icons.tune),
+      onSelected: (value) {
+        if (value == 'expert') {
+          _setExpertMode(!_expertMode);
+        }
+      },
+      itemBuilder: (context) => [
+        CheckedPopupMenuItem(
+          value: 'expert',
+          checked: _expertMode,
+          child: const Text('Mode expert'),
+        ),
+      ],
     );
   }
 
@@ -477,7 +543,8 @@ class _PlayerPageState extends State<PlayerPage> {
   void _handlePracticeMode() {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => PracticePage(level: widget.level),
+        builder: (context) =>
+            PracticePage(level: widget.level, forcePreview: !widget.isUnlocked),
       ),
     );
   }

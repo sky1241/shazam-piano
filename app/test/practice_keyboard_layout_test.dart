@@ -35,7 +35,7 @@ void main() {
               firstKey: firstKey,
               lastKey: lastKey,
               blackKeys: blackKeys,
-              expectedNote: null,
+              targetNote: null,
               detectedNote: null,
               leftPadding: keyboardPadding,
             ),
