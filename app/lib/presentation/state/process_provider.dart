@@ -1,66 +1,202 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dio/dio.dart';
 import '../../core/providers/app_providers.dart';
+import '../../data/models/job_progress_response_dto.dart';
+import '../../domain/entities/level_result.dart';
+import '../../domain/entities/process_response.dart';
 import 'process_state.dart';
 
 /// Process state provider
 final processProvider = StateNotifierProvider<ProcessNotifier, ProcessState>((
   ref,
 ) {
-  final apiClient = ref.watch(apiClientProvider);
-  return ProcessNotifier(apiClient);
+  final dio = ref.watch(dioProvider);
+  return ProcessNotifier(dio);
 });
 
 class ProcessNotifier extends StateNotifier<ProcessState> {
-  final dynamic _apiClient;
+  final Dio _dio;
+  Timer? _pollTimer;
+  bool _isCreating = false;
+  bool _isStarting = false;
+  bool _pollingInFlight = false;
+  String? _activeJobId;
 
-  ProcessNotifier(this._apiClient) : super(const ProcessState());
+  ProcessNotifier(this._dio) : super(const ProcessState());
 
-  /// Process audio file
-  Future<void> processAudio({
+  Map<int, LevelProgress> _buildProgressMap(List<JobLevelDto> levels) {
+    final progress = Map<int, LevelProgress>.from(
+      ProcessState.defaultLevelProgress,
+    );
+    for (final level in levels) {
+      progress[level.level] = LevelProgress(
+        level: level.level,
+        status: level.status,
+        name: level.name,
+        previewUrl: level.previewUrl,
+        videoUrl: level.videoUrl,
+        midiUrl: level.midiUrl,
+        keyGuess: level.keyGuess,
+        tempoGuess: level.tempoGuess,
+        durationSec: level.durationSec,
+        error: level.error,
+      );
+    }
+    return progress;
+  }
+
+  ProcessResponse? _buildResultIfComplete({
+    required String jobId,
+    required String status,
+    required String? timestamp,
+    required List<LevelProgress> levels,
+    required String? identifiedTitle,
+    required String? identifiedArtist,
+    required String? identifiedAlbum,
+  }) {
+    if (status != 'complete') {
+      return null;
+    }
+    if (levels.any((level) => !level.hasUrls)) {
+      return null;
+    }
+    final sorted = levels.toList()..sort((a, b) => a.level.compareTo(b.level));
+    return ProcessResponse(
+      jobId: jobId,
+      timestamp: timestamp ?? DateTime.now().toIso8601String(),
+      levels: sorted
+          .map(
+            (level) => LevelResult(
+              level: level.level,
+              name: level.name,
+              previewUrl: level.previewUrl,
+              videoUrl: level.videoUrl,
+              midiUrl: level.midiUrl,
+              keyGuess: level.keyGuess,
+              tempoGuess: level.tempoGuess,
+              durationSec: level.durationSec,
+              status: level.status,
+              error: level.error,
+            ),
+          )
+          .toList(),
+      identifiedTitle: identifiedTitle,
+      identifiedArtist: identifiedArtist,
+      identifiedAlbum: identifiedAlbum,
+    );
+  }
+
+  ProcessState _applyJobResponse({
+    required String jobId,
+    required String status,
+    required String? timestamp,
+    required List<JobLevelDto> levels,
+    required String? identifiedTitle,
+    required String? identifiedArtist,
+    required String? identifiedAlbum,
+  }) {
+    final progressMap = _buildProgressMap(levels);
+    final result = _buildResultIfComplete(
+      jobId: jobId,
+      status: status,
+      timestamp: timestamp,
+      levels: progressMap.values.toList(),
+      identifiedTitle: identifiedTitle,
+      identifiedArtist: identifiedArtist,
+      identifiedAlbum: identifiedAlbum,
+    );
+    return state.copyWith(
+      jobId: jobId,
+      jobStatus: status,
+      result: result,
+      identifiedTitle: identifiedTitle,
+      identifiedArtist: identifiedArtist,
+      identifiedAlbum: identifiedAlbum,
+      levelProgress: progressMap,
+      error: null,
+    );
+  }
+
+  ProcessState _applyJobCreate(JobCreateResponseDto dto) {
+    return _applyJobResponse(
+      jobId: dto.jobId,
+      status: dto.status,
+      timestamp: dto.timestamp,
+      levels: dto.levels,
+      identifiedTitle: dto.identifiedTitle,
+      identifiedArtist: dto.identifiedArtist,
+      identifiedAlbum: dto.identifiedAlbum,
+    );
+  }
+
+  ProcessState _applyJobProgress(JobProgressResponseDto dto) {
+    return _applyJobResponse(
+      jobId: dto.jobId,
+      status: dto.status,
+      timestamp: dto.timestamp,
+      levels: dto.levels,
+      identifiedTitle: dto.identifiedTitle,
+      identifiedArtist: dto.identifiedArtist,
+      identifiedAlbum: dto.identifiedAlbum,
+    );
+  }
+
+  String _formatDioError(DioException e) {
+    if (e.response != null) {
+      final data = e.response?.data;
+      if (data is Map<String, dynamic> && data['detail'] != null) {
+        return data['detail'].toString();
+      }
+    }
+    if (e.type == DioExceptionType.connectionTimeout) {
+      return 'Connection timeout';
+    }
+    if (e.type == DioExceptionType.receiveTimeout) {
+      return 'Server timeout - processing may take longer';
+    }
+    return 'Upload failed';
+  }
+
+  /// Create job and run identification only.
+  Future<void> createJob({
     required File audioFile,
     bool withAudio = false,
     List<int> levels = const [1, 2, 3, 4],
   }) async {
+    if (_isCreating) {
+      return;
+    }
+    _isCreating = true;
+    _stopPolling();
     try {
-      // Reset state
-      state = const ProcessState(isUploading: true);
-
-      // Upload with progress
-      final levelsString = levels.join(',');
-
-      // Note: Actual upload with progress tracking would need custom implementation
-      // For now, simple upload
-      state = state.copyWith(uploadProgress: 0.5);
-
-      final response = await _apiClient.processAudio(
-        audio: audioFile,
-        withAudio: withAudio,
-        levels: levelsString,
-      );
-
-      state = state.copyWith(
-        isUploading: false,
+      state = const ProcessState(
+        isUploading: true,
         isProcessing: false,
-        uploadProgress: 1.0,
-        result: response.toDomain(),
+        uploadProgress: 0.1,
       );
-    } on DioException catch (e) {
-      String errorMessage = 'Upload failed';
 
-      if (e.response != null) {
-        errorMessage = e.response?.data['detail'] ?? errorMessage;
-      } else if (e.type == DioExceptionType.connectionTimeout) {
-        errorMessage = 'Connection timeout';
-      } else if (e.type == DioExceptionType.receiveTimeout) {
-        errorMessage = 'Server timeout - processing may take longer';
+      final formData = FormData.fromMap({
+        'audio': await MultipartFile.fromFile(audioFile.path),
+        'with_audio': withAudio,
+        'levels': levels.join(','),
+      });
+      final response = await _dio.post('/jobs', data: formData);
+      final data = response.data;
+      if (data is! Map<String, dynamic>) {
+        throw StateError('Invalid job response');
       }
-
+      final dto = JobCreateResponseDto.fromJson(data);
+      state = _applyJobCreate(
+        dto,
+      ).copyWith(isUploading: false, uploadProgress: 1.0, isProcessing: false);
+      _activeJobId = state.jobId;
+    } on DioException catch (e) {
       state = state.copyWith(
         isUploading: false,
         isProcessing: false,
-        error: errorMessage,
+        error: _formatDioError(e),
       );
     } catch (e) {
       state = state.copyWith(
@@ -68,11 +204,126 @@ class ProcessNotifier extends StateNotifier<ProcessState> {
         isProcessing: false,
         error: 'Unexpected error: $e',
       );
+    } finally {
+      _isCreating = false;
+    }
+  }
+
+  /// Start generation for a job.
+  Future<void> startJob({
+    required String jobId,
+    bool withAudio = false,
+    List<int> levels = const [1, 2, 3, 4],
+  }) async {
+    if (_isStarting) {
+      return;
+    }
+    if (state.jobId == jobId &&
+        (state.jobStatus == 'running' || state.jobStatus == 'complete')) {
+      return;
+    }
+    _isStarting = true;
+    try {
+      final formData = FormData.fromMap({
+        'with_audio': withAudio,
+        'levels': levels.join(','),
+      });
+      final response = await _dio.post('/jobs/$jobId/start', data: formData);
+      final data = response.data;
+      if (data is! Map<String, dynamic>) {
+        throw StateError('Invalid job start response');
+      }
+      final dto = JobProgressResponseDto.fromJson(data);
+      state = _applyJobProgress(dto).copyWith(isProcessing: true);
+      _activeJobId = jobId;
+      _startPolling(jobId);
+    } on DioException catch (e) {
+      state = state.copyWith(isProcessing: false, error: _formatDioError(e));
+    } catch (e) {
+      state = state.copyWith(
+        isProcessing: false,
+        error: 'Unexpected error: $e',
+      );
+    } finally {
+      _isStarting = false;
+    }
+  }
+
+  Future<void> fetchProgress({required String jobId}) async {
+    if (_activeJobId != jobId) {
+      return;
+    }
+    try {
+      final response = await _dio.get('/jobs/$jobId/progress');
+      final data = response.data;
+      if (data is! Map<String, dynamic>) {
+        throw StateError('Invalid progress response');
+      }
+      final dto = JobProgressResponseDto.fromJson(data);
+      if (_activeJobId != jobId) {
+        return;
+      }
+      state = _applyJobProgress(dto);
+      final jobStatus = dto.status;
+      if (jobStatus == 'complete' || jobStatus == 'error') {
+        _stopPolling();
+        state = state.copyWith(isProcessing: false);
+      }
+    } on DioException catch (e) {
+      state = state.copyWith(error: _formatDioError(e));
+    } catch (e) {
+      state = state.copyWith(error: 'Unexpected error: $e');
+    }
+  }
+
+  void _startPolling(String jobId) {
+    if (_pollTimer != null && _activeJobId == jobId) {
+      return;
+    }
+    _pollTimer?.cancel();
+    _activeJobId = jobId;
+    _pollTimer = Timer.periodic(const Duration(milliseconds: 500), (_) async {
+      if (_pollingInFlight) {
+        return;
+      }
+      _pollingInFlight = true;
+      try {
+        await fetchProgress(jobId: jobId);
+      } finally {
+        _pollingInFlight = false;
+      }
+    });
+  }
+
+  void _stopPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = null;
+  }
+
+  void stopPolling() {
+    _stopPolling();
+  }
+
+  void resumePollingIfActive() {
+    final jobId = state.jobId;
+    if (jobId == null) {
+      return;
+    }
+    if (state.jobStatus == 'running') {
+      _startPolling(jobId);
     }
   }
 
   /// Reset state
   void reset() {
+    _stopPolling();
+    _activeJobId = null;
     state = const ProcessState();
+  }
+
+  @override
+  void dispose() {
+    _stopPolling();
+    super.dispose();
   }
 }

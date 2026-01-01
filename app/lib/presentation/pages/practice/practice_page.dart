@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
@@ -11,7 +12,6 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_midi_command/flutter_midi_command.dart';
 import 'package:sound_stream/sound_stream.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:video_player/video_player.dart';
 import 'package:chewie/chewie.dart';
 import 'package:flutter/scheduler.dart';
@@ -22,6 +22,7 @@ import '../../../core/constants/app_constants.dart';
 import '../../../core/debug/debug_job_guard.dart';
 import '../../../domain/entities/level_result.dart';
 import '../../widgets/practice_keyboard.dart';
+import '../../widgets/banner_ad_placeholder.dart';
 import 'pitch_detector.dart';
 
 @visibleForTesting
@@ -77,7 +78,6 @@ class _PracticePageState extends State<PracticePage>
 
   bool _isListening = false;
   int? _detectedNote;
-  int? _targetNote;
   NoteAccuracy _accuracy = NoteAccuracy.miss;
   int _score = 0;
   int _totalNotes = 0;
@@ -95,10 +95,14 @@ class _PracticePageState extends State<PracticePage>
       100.0; // Default offset if calibration fails
   bool _useMidi = false;
   bool _midiAvailable = false;
-  List<_PracticeSession> _sessions = [];
   late final Ticker _ticker;
   static const double _fallLeadSec = 2.0;
   static const double _fallTailSec = 0.6;
+  static const Duration _successFlashDuration = Duration(milliseconds: 200);
+  static const double _minConfidenceForFeedback = 0.2;
+  static const Duration _devTapWindow = Duration(seconds: 2);
+  static const int _devTapTarget = 5;
+  static const double _videoCropFactor = 0.65;
   final ScrollController _keyboardScrollController = ScrollController();
   double _keyboardScrollOffset = 0.0;
   static const int _micMaxBufferSamples = PitchDetector.bufferSize * 4;
@@ -124,6 +128,14 @@ class _PracticePageState extends State<PracticePage>
   DateTime? _lastMicRestartAt;
   DateTime? _lastUiUpdateAt;
   bool _videoEndFired = false;
+  bool _devHudEnabled = false;
+  int _devTapCount = 0;
+  DateTime? _devTapStartAt;
+  DateTime? _lastCorrectHitAt;
+  int? _lastCorrectNote;
+  int? _lastCorrectDetectedNote;
+  DateTime? _lastWrongHitAt;
+  int? _lastWrongDetectedNote;
 
   // Piano keyboard alignee avec la video (C2 a C7 = 61 touches)
   static const int _firstKey = 36; // C2
@@ -162,16 +174,26 @@ class _PracticePageState extends State<PracticePage>
       _initVideo();
       _loadNoteEvents();
       _loadSavedLatency();
-      _loadSessions();
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final instructionText = _isListening ? 'ECOUTE LA NOTE' : 'APPUIE SUR PLAY';
+    final instructionStyle = AppTextStyles.display.copyWith(
+      fontSize: 30,
+      fontWeight: FontWeight.w800,
+      letterSpacing: 0.4,
+      color: AppColors.textPrimary,
+    );
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(
-        title: Text('Practice - ${widget.level.name}'),
+        title: GestureDetector(
+          onTap: kDebugMode ? _handleDevHudTap : null,
+          behavior: HitTestBehavior.translucent,
+          child: Text('Practice - ${widget.level.name}'),
+        ),
         actions: [
           IconButton(
             icon: Icon(
@@ -180,7 +202,7 @@ class _PracticePageState extends State<PracticePage>
             ),
             onPressed: () => _togglePractice(),
           ),
-          if (kDebugMode)
+          if (kDebugMode && _devHudEnabled)
             IconButton(
               icon: const Icon(Icons.bug_report),
               tooltip: 'Diagnose',
@@ -188,231 +210,154 @@ class _PracticePageState extends State<PracticePage>
             ),
         ],
       ),
-      body: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppConstants.spacing16,
-                vertical: AppConstants.spacing8,
+      bottomNavigationBar: const BannerAdPlaceholder(),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: _practiceHorizontalPadding(
+                MediaQuery.of(context).size.width,
               ),
-              child: Wrap(
-                alignment: WrapAlignment.spaceBetween,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                spacing: AppConstants.spacing8,
-                runSpacing: AppConstants.spacing8,
-                children: [
-                  Wrap(
-                    spacing: AppConstants.spacing8,
-                    runSpacing: AppConstants.spacing8,
-                    children: [
-                      _buildChip(
-                        label: _latencyMs > 0
-                            ? 'Sync ${_latencyMs.toStringAsFixed(0)}ms'
-                            : 'Sync auto',
-                        color: AppColors.primary,
-                      ),
-                      _buildChip(
-                        label: _midiAvailable ? 'MIDI connecte' : 'MIDI off',
-                        color: _midiAvailable
-                            ? AppColors.primary
-                            : AppColors.divider,
-                      ),
-                    ],
-                  ),
-                  TextButton(
-                    onPressed: () => _calibrateLatency(force: true),
-                    child: const Text(
-                      'Recalibrer',
-                      style: TextStyle(color: Colors.white),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            _buildMicDebugHud(),
-
-            // Score display
-            Container(
-              padding: const EdgeInsets.all(AppConstants.spacing16),
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                border: Border(
-                  bottom: BorderSide(color: AppColors.divider, width: 1),
-                ),
-              ),
-              child: Wrap(
-                alignment: WrapAlignment.spaceEvenly,
-                runSpacing: AppConstants.spacing8,
-                spacing: AppConstants.spacing16,
-                children: [
-                  _buildScoreStat('Score', _score.toString()),
-                  _buildScoreStat(
-                    'Precision',
-                    _totalNotes > 0
-                        ? '${(_correctNotes / _totalNotes * 100).toStringAsFixed(1)}%'
-                        : '0%',
-                  ),
-                  _buildScoreStat('Notes', '$_correctNotes/$_totalNotes'),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: AppConstants.spacing24),
-
-            // Current note display
-            Center(
-              child: Text(
-                _isListening ? 'Ecoute...' : 'Appuie sur Play',
-                style: AppTextStyles.title,
-              ),
-            ),
-
-            const SizedBox(height: AppConstants.spacing16),
-
-            // Accuracy indicator
-            if (_detectedNote != null)
-              Center(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppConstants.spacing24,
-                    vertical: AppConstants.spacing12,
-                  ),
-                  decoration: BoxDecoration(
-                    color: _getAccuracyColor().withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(
-                      AppConstants.radiusCard,
-                    ),
-                    border: Border.all(color: _getAccuracyColor(), width: 2),
-                  ),
-                  child: Text(
-                    _getAccuracyText(),
-                    style: AppTextStyles.title.copyWith(
-                      color: _getAccuracyColor(),
-                    ),
-                  ),
-                ),
-              ),
-
-            const SizedBox(height: AppConstants.spacing24),
-
-            _buildVideoPlayer(),
-
-            const SizedBox(height: AppConstants.spacing16),
-
-            // Clavier uniquement
-            _buildPracticeStage(),
-
-            const SizedBox(height: AppConstants.spacing16),
-
-            // Instructions
-            Padding(
-              padding: const EdgeInsets.all(AppConstants.spacing16),
-              child: Text(
-                'Joue les notes sur ton piano.\nLes touches s\'allumeront selon ta precision.',
-                style: AppTextStyles.caption,
-                textAlign: TextAlign.center,
-              ),
-            ),
-
-            const SizedBox(height: AppConstants.spacing16),
-
-            // Historique (scores précédents)
-            _buildHistory(),
-            const SizedBox(height: AppConstants.spacing24),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHistory() {
-    if (_sessions.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.all(AppConstants.spacing16),
-        child: Text('Pas encore de sessions', style: AppTextStyles.caption),
-      );
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppConstants.spacing16,
-          ),
-          child: Text('Historique Practice', style: AppTextStyles.title),
-        ),
-        const SizedBox(height: AppConstants.spacing8),
-        ..._sessions.map((s) {
-          final subtitleParts = <String>[];
-          if (s.date != null) subtitleParts.add(s.date!);
-          if (s.score != null) {
-            subtitleParts.add('Score ${s.score!.toStringAsFixed(1)}');
-          }
-          if (s.level != null) subtitleParts.add('L${s.level}');
-          return Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppConstants.spacing16,
               vertical: AppConstants.spacing8,
             ),
-            child: Card(
-              color: AppColors.surface,
-              child: ListTile(
-                title: Text(
-                  s.title ?? 'Session ${s.jobId}',
-                  style: AppTextStyles.body,
-                ),
-                subtitle: Text(
-                  subtitleParts.join(' | '),
-                  style: AppTextStyles.caption.copyWith(
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-              ),
+            child: _buildTopStatsLine(),
+          ),
+          _buildMicDebugHud(),
+          const SizedBox(height: AppConstants.spacing16),
+          Center(
+            child: Text(
+              instructionText,
+              style: instructionStyle,
+              textAlign: TextAlign.center,
             ),
-          );
-        }),
-      ],
+          ),
+          const SizedBox(height: AppConstants.spacing12),
+          Expanded(
+            child: Column(
+              children: [
+                Expanded(child: _buildVideoPlayer()),
+                _buildPracticeStage(),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _buildChip({required String label, required Color color}) {
+  double _practiceHorizontalPadding(double screenWidth) {
+    return screenWidth < 360 ? AppConstants.spacing8 : AppConstants.spacing16;
+  }
+
+  Widget _buildTopStatsLine() {
+    final precisionValue = _totalNotes > 0
+        ? '${(_correctNotes / _totalNotes * 100).toStringAsFixed(1)}%'
+        : '0%';
+    final statsText =
+        'Précision: $precisionValue   Notes justes: $_correctNotes/$_totalNotes   Score: $_score';
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppConstants.spacing12,
+        vertical: AppConstants.spacing8,
+      ),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color, width: 1),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppConstants.radiusCard),
+        border: Border.all(color: AppColors.divider),
       ),
-      child: Text(
-        label,
-        style: AppTextStyles.caption.copyWith(color: Colors.white),
-      ),
-    );
-  }
-
-  Widget _buildScoreStat(String label, String value) {
-    return Column(
-      children: [
-        Text(
-          value,
-          style: AppTextStyles.display.copyWith(
-            fontSize: 28,
-            color: AppColors.primary,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.centerLeft,
+        child: Text(
+          statsText,
+          style: AppTextStyles.body.copyWith(
+            fontWeight: FontWeight.w600,
+            color: AppColors.textPrimary,
           ),
         ),
-        const SizedBox(height: 4),
-        Text(label, style: AppTextStyles.caption),
-      ],
+      ),
     );
+  }
+
+  int? _normalizeToKeyboardRange(int? note) {
+    if (note == null) return null;
+    if (note < _firstKey || note > _lastKey) return null;
+    return note;
+  }
+
+  int? _resolveTargetNote() {
+    if (_noteEvents.isEmpty) {
+      return null;
+    }
+    final elapsed = _startTime == null ? null : _currentElapsedSec();
+    int? nextUpcoming;
+
+    for (var i = 0; i < _noteEvents.length; i++) {
+      final wasHit = i < _hitNotes.length && _hitNotes[i];
+      if (wasHit) {
+        continue;
+      }
+      final note = _noteEvents[i];
+      if (elapsed != null &&
+          elapsed >= note.start &&
+          elapsed <= note.end + 0.2) {
+        return note.pitch;
+      }
+      if (nextUpcoming == null && (elapsed == null || elapsed < note.start)) {
+        nextUpcoming = note.pitch;
+      }
+    }
+
+    return nextUpcoming;
+  }
+
+  int? _uiTargetNote() {
+    return _normalizeToKeyboardRange(_resolveTargetNote());
+  }
+
+  int? _uiDetectedNote() {
+    return _normalizeToKeyboardRange(_detectedNote);
+  }
+
+  void _handleDevHudTap() {
+    if (!kDebugMode) {
+      return;
+    }
+    final now = DateTime.now();
+    if (_devTapStartAt == null ||
+        now.difference(_devTapStartAt!) > _devTapWindow) {
+      _devTapStartAt = now;
+      _devTapCount = 1;
+    } else {
+      _devTapCount += 1;
+    }
+
+    if (_devTapCount >= _devTapTarget) {
+      _devTapCount = 0;
+      _devTapStartAt = null;
+      if (mounted) {
+        setState(() {
+          _devHudEnabled = !_devHudEnabled;
+        });
+      } else {
+        _devHudEnabled = !_devHudEnabled;
+      }
+    }
   }
 
   Widget _buildMicDebugHud() {
-    if (!kDebugMode) {
+    if (!kDebugMode || !_devHudEnabled) {
       return const SizedBox.shrink();
     }
     final now = DateTime.now();
+    final horizontalPadding = _practiceHorizontalPadding(
+      MediaQuery.of(context).size.width,
+    );
+    final targetRaw = _resolveTargetNote();
+    final accuracyText = _accuracy.toString().split('.').last;
+    final midiAvailText = _midiAvailable ? 'yes' : 'no';
     final micNoData =
         _isListening &&
         !_useMidi &&
@@ -449,15 +394,24 @@ class _PracticePageState extends State<PracticePage>
         'MIC: $micStatus | MIDI: $midiStatus | RMS: $rmsText | '
         'f0: $freqText Hz | note: $noteText | conf: $confText | '
         'age: $ageText | sub: $subText | stop: $stopText | perm: $permText';
+    final stateLine =
+        'target: ${targetRaw ?? '--'} | detected: ${_detectedNote ?? '--'} | '
+        'accuracy: $accuracyText | midiAvail: $midiAvailText';
 
     return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppConstants.spacing16,
+      padding: EdgeInsets.symmetric(
+        horizontal: horizontalPadding,
         vertical: AppConstants.spacing4,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Text(
+            stateLine,
+            style: AppTextStyles.caption.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
           Text(
             line,
             style: AppTextStyles.caption.copyWith(
@@ -474,6 +428,10 @@ class _PracticePageState extends State<PracticePage>
               TextButton(
                 onPressed: _refreshMicPermission,
                 child: const Text('Check mic'),
+              ),
+              TextButton(
+                onPressed: () => _calibrateLatency(force: true),
+                child: const Text('Recalibrer'),
               ),
             ],
           ),
@@ -665,17 +623,22 @@ class _PracticePageState extends State<PracticePage>
 
   Widget _buildPracticeStage() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppConstants.spacing16),
+      padding: EdgeInsets.symmetric(
+        horizontal: _practiceHorizontalPadding(
+          MediaQuery.of(context).size.width,
+        ),
+      ),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final screenWidth = MediaQuery.of(context).size.width;
+          final horizontalPadding = _practiceHorizontalPadding(screenWidth);
           // If constraints are unbounded (e.g. inside a scroll view), fall back to screen width
           final availableWidth =
               constraints.hasBoundedWidth &&
                   constraints.maxWidth.isFinite &&
                   constraints.maxWidth > 0
               ? constraints.maxWidth
-              : screenWidth - (AppConstants.spacing16 * 2);
+              : screenWidth - (horizontalPadding * 2);
 
           final isPortrait =
               MediaQuery.of(context).orientation == Orientation.portrait;
@@ -693,7 +656,12 @@ class _PracticePageState extends State<PracticePage>
 
           final content = Container(
             width: outerWidth,
-            padding: EdgeInsets.all(layout.stagePadding),
+            padding: EdgeInsets.fromLTRB(
+              layout.stagePadding,
+              0,
+              layout.stagePadding,
+              layout.stagePadding,
+            ),
             decoration: BoxDecoration(
               color: AppColors.surface,
               borderRadius: BorderRadius.circular(AppConstants.radiusCard),
@@ -739,6 +707,9 @@ class _PracticePageState extends State<PracticePage>
     required double blackHeight,
     required double leftPadding,
   }) {
+    final now = DateTime.now();
+    final successFlashActive = _isSuccessFlashActive(now);
+    final wrongFlashActive = _isWrongFlashActive(now);
     return PracticeKeyboard(
       key: const Key('practice_keyboard'),
       totalWidth: totalWidth,
@@ -749,8 +720,12 @@ class _PracticePageState extends State<PracticePage>
       firstKey: _firstKey,
       lastKey: _lastKey,
       blackKeys: _blackKeys,
-      targetNote: _targetNote,
-      detectedNote: _detectedNote,
+      targetNote: _uiTargetNote(),
+      detectedNote: _uiDetectedNote(),
+      successFlashNote: _lastCorrectDetectedNote,
+      successFlashActive: successFlashActive,
+      wrongFlashNote: _lastWrongDetectedNote,
+      wrongFlashActive: wrongFlashActive,
       leftPadding: leftPadding,
     );
   }
@@ -809,16 +784,17 @@ class _PracticePageState extends State<PracticePage>
   }
 
   _KeyboardLayout _computeKeyboardLayout(double availableWidth) {
-    const stagePadding = AppConstants.spacing12;
+    final stagePadding = availableWidth < 360
+        ? AppConstants.spacing8
+        : AppConstants.spacing12;
     final innerAvailableWidth = max(0.0, availableWidth - (stagePadding * 2));
     final whiteCount = _countWhiteKeys();
-    const maxWhiteKeyWidth = 20.0;
-    final rawWhiteWidth = innerAvailableWidth / whiteCount;
-    final whiteWidth = min(rawWhiteWidth, maxWhiteKeyWidth);
+    final rawWhiteWidth = whiteCount > 0
+        ? innerAvailableWidth / whiteCount
+        : 0.0;
+    final whiteWidth = rawWhiteWidth;
     final blackWidth = whiteWidth * 0.65;
-    final contentWidth = whiteWidth * whiteCount;
-    final shouldScroll = contentWidth > innerAvailableWidth;
-    final displayWidth = shouldScroll ? contentWidth : innerAvailableWidth;
+    final displayWidth = innerAvailableWidth;
     final outerWidth = displayWidth + (stagePadding * 2);
 
     return _KeyboardLayout(
@@ -827,7 +803,7 @@ class _PracticePageState extends State<PracticePage>
       displayWidth: displayWidth,
       outerWidth: outerWidth,
       stagePadding: stagePadding,
-      shouldScroll: shouldScroll,
+      shouldScroll: false,
       leftPadding: 0.0,
     );
   }
@@ -851,32 +827,6 @@ class _PracticePageState extends State<PracticePage>
       if (!_isBlackKey(n)) count++;
     }
     return count;
-  }
-
-  Color _getAccuracyColor() {
-    switch (_accuracy) {
-      case NoteAccuracy.correct:
-        return AppColors.success;
-      case NoteAccuracy.close:
-        return AppColors.warning;
-      case NoteAccuracy.wrong:
-        return AppColors.error;
-      case NoteAccuracy.miss:
-        return AppColors.divider;
-    }
-  }
-
-  String _getAccuracyText() {
-    switch (_accuracy) {
-      case NoteAccuracy.correct:
-        return 'Parfait !';
-      case NoteAccuracy.close:
-        return '~ Proche';
-      case NoteAccuracy.wrong:
-        return 'Faux';
-      case NoteAccuracy.miss:
-        return 'Aucune note';
-    }
   }
 
   Future<void> _togglePractice() async {
@@ -964,6 +914,11 @@ class _PracticePageState extends State<PracticePage>
     _correctNotes = 0;
     _totalNotes = _noteEvents.length;
     _hitNotes = List<bool>.filled(_noteEvents.length, false);
+    _lastCorrectHitAt = null;
+    _lastCorrectNote = null;
+    _lastCorrectDetectedNote = null;
+    _lastWrongHitAt = null;
+    _lastWrongDetectedNote = null;
     _startTime = DateTime.now();
     _micBuffer.clear();
 
@@ -1011,11 +966,9 @@ class _PracticePageState extends State<PracticePage>
       startedAt: startedAtIso ?? finishedAt,
       endedAt: finishedAt,
     );
-    await _loadSessions();
 
     setState(() {
       _detectedNote = null;
-      _targetNote = null;
       _lastMicFrameAt = null;
       _micRms = 0.0;
       _micFrequency = null;
@@ -1023,6 +976,11 @@ class _PracticePageState extends State<PracticePage>
       _micConfidence = 0.0;
       _lastMidiFrameAt = null;
       _lastMidiNote = null;
+      _lastCorrectHitAt = null;
+      _lastCorrectNote = null;
+      _lastCorrectDetectedNote = null;
+      _lastWrongHitAt = null;
+      _lastWrongDetectedNote = null;
     });
 
     if (showSummary && mounted) {
@@ -1172,18 +1130,25 @@ class _PracticePageState extends State<PracticePage>
         _correctNotes += 1;
         _score += 1;
         _accuracy = NoteAccuracy.correct;
-        _targetNote = _noteEvents[idx].pitch;
+        _registerCorrectHit(
+          targetNote: _noteEvents[idx].pitch,
+          detectedNote: midi,
+          now: now,
+        );
         break;
       }
     }
 
     if (!matched && activeIndices.isNotEmpty) {
       _accuracy = NoteAccuracy.wrong;
+      final isConfident = _micConfidence >= _minConfidenceForFeedback;
+      if (nextDetected != null && isConfident) {
+        _registerWrongHit(detectedNote: nextDetected, now: now);
+      }
     }
 
     final accuracyChanged = prevAccuracy != _accuracy;
     _updateDetectedNote(nextDetected, now, accuracyChanged: accuracyChanged);
-    _updateNextExpected();
   }
 
   void _updateDetectedNote(
@@ -1205,6 +1170,35 @@ class _PracticePageState extends State<PracticePage>
       _lastUiUpdateAt = now;
     } else {
       _detectedNote = nextDetected;
+    }
+  }
+
+  void _registerCorrectHit({
+    required int targetNote,
+    required int detectedNote,
+    required DateTime now,
+  }) {
+    _lastCorrectNote = targetNote;
+    _lastCorrectDetectedNote = detectedNote;
+    _lastCorrectHitAt = now;
+    HapticFeedback.lightImpact();
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _registerWrongHit({required int detectedNote, required DateTime now}) {
+    final tooSoon =
+        _lastWrongHitAt != null &&
+        now.difference(_lastWrongHitAt!) < _successFlashDuration;
+    if (tooSoon && _lastWrongDetectedNote == detectedNote) {
+      return;
+    }
+    _lastWrongHitAt = now;
+    _lastWrongDetectedNote = detectedNote;
+    HapticFeedback.selectionClick();
+    if (mounted) {
+      setState(() {});
     }
   }
 
@@ -1315,17 +1309,11 @@ class _PracticePageState extends State<PracticePage>
       if (mounted) {
         setState(() {
           _noteEvents = noteEvents;
-          _targetNote = noteEvents.isNotEmpty
-              ? noteEvents.first.pitch
-              : null;
           _notesLoading = false;
           _notesError = noteEvents.isEmpty ? 'Notes indisponibles' : null;
         });
       } else {
         _noteEvents = noteEvents;
-        _targetNote = noteEvents.isNotEmpty
-            ? noteEvents.first.pitch
-            : null;
         _notesLoading = false;
         _notesError = noteEvents.isEmpty ? 'Notes indisponibles' : null;
       }
@@ -1337,13 +1325,11 @@ class _PracticePageState extends State<PracticePage>
       if (mounted) {
         setState(() {
           _noteEvents = [];
-          _targetNote = null;
           _notesLoading = false;
           _notesError = 'Notes indisponibles';
         });
       } else {
         _noteEvents = [];
-        _targetNote = null;
         _notesLoading = false;
         _notesError = 'Notes indisponibles';
       }
@@ -1352,13 +1338,11 @@ class _PracticePageState extends State<PracticePage>
       if (mounted) {
         setState(() {
           _noteEvents = [];
-          _targetNote = null;
           _notesLoading = false;
           _notesError = 'Notes indisponibles';
         });
       } else {
         _noteEvents = [];
-        _targetNote = null;
         _notesLoading = false;
         _notesError = 'Notes indisponibles';
       }
@@ -1429,34 +1413,6 @@ class _PracticePageState extends State<PracticePage>
         _latencyMs = _fallbackLatencyMs;
       }
       await _persistLatency();
-    }
-  }
-
-  Future<void> _loadSessions() async {
-    try {
-      final auth = FirebaseAuth.instance;
-      final user = auth.currentUser ?? (await auth.signInAnonymously()).user;
-      final uid = user?.uid;
-      if (uid == null) return;
-
-      final snapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .collection('practice_sessions')
-          .orderBy('ended_at', descending: true)
-          .limit(20)
-          .get();
-
-      final sessions = snapshot.docs
-          .map((doc) => _PracticeSession.fromDoc(doc))
-          .toList();
-      if (mounted) {
-        setState(() {
-          _sessions = sessions;
-        });
-      }
-    } catch (_) {
-      // ignore history errors in UI
     }
   }
 
@@ -1536,13 +1492,18 @@ class _PracticePageState extends State<PracticePage>
           _correctNotes += 1;
           _score += 1;
           _accuracy = NoteAccuracy.correct;
-          _targetNote = _noteEvents[idx].pitch;
+          _registerCorrectHit(
+            targetNote: _noteEvents[idx].pitch,
+            detectedNote: note,
+            now: now,
+          );
           break;
         }
       }
 
       if (!matched && activeIndices.isNotEmpty) {
         _accuracy = NoteAccuracy.wrong;
+        _registerWrongHit(detectedNote: note, now: now);
       }
 
       setState(() {
@@ -1551,18 +1512,7 @@ class _PracticePageState extends State<PracticePage>
           _detectedNote = null;
         }
       });
-      _updateNextExpected();
     }
-  }
-
-  void _updateNextExpected() {
-    for (var i = 0; i < _noteEvents.length; i++) {
-      if (!_hitNotes[i]) {
-        _targetNote = _noteEvents[i].pitch;
-        return;
-      }
-    }
-    _targetNote = null;
   }
 
   Future<void> _initVideo() async {
@@ -1782,87 +1732,103 @@ class _PracticePageState extends State<PracticePage>
     _notesError = null;
     _noteEvents = [_NoteEvent(pitch: 60, start: 0.0, end: 1.0)];
     _hitNotes = List<bool>.filled(_noteEvents.length, false);
-    _targetNote = _noteEvents.first.pitch;
   }
 
   Widget _wrapPracticeVideo(Widget child) {
     return KeyedSubtree(key: const Key('practice_video'), child: child);
   }
 
+  bool _isSuccessFlashActive(DateTime now) {
+    return _lastCorrectHitAt != null &&
+        _lastCorrectNote != null &&
+        now.difference(_lastCorrectHitAt!) <= _successFlashDuration;
+  }
+
+  bool _isWrongFlashActive(DateTime now) {
+    return _lastWrongHitAt != null &&
+        _lastWrongDetectedNote != null &&
+        now.difference(_lastWrongHitAt!) <= _successFlashDuration;
+  }
+
+  Widget _buildCroppedVideoLayer({
+    required Widget child,
+    required double aspectRatio,
+  }) {
+    final safeAspect = aspectRatio > 0 ? aspectRatio : 16 / 9;
+    const baseWidth = 1000.0;
+    final baseHeight = baseWidth / safeAspect;
+
+    return FittedBox(
+      fit: BoxFit.cover,
+      alignment: Alignment.topCenter,
+      child: ClipRect(
+        child: Align(
+          alignment: Alignment.topCenter,
+          heightFactor: _videoCropFactor,
+          child: SizedBox(width: baseWidth, height: baseHeight, child: child),
+        ),
+      ),
+    );
+  }
+
   Widget _buildVideoPlayer() {
+    return _wrapPracticeVideo(
+      LayoutBuilder(
+        builder: (context, constraints) {
+          final aspectRatio = _chewieController?.aspectRatio ?? 16 / 9;
+          final videoLayer = _buildCroppedVideoLayer(
+            aspectRatio: aspectRatio,
+            child: _buildVideoContent(),
+          );
+          return Stack(
+            children: [
+              Positioned.fill(child: videoLayer),
+              Positioned.fill(child: _buildNotesOverlay(constraints)),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildVideoContent() {
     if (_isTestEnv) {
-      return _wrapPracticeVideo(
-        AspectRatio(
-          aspectRatio: 16 / 9,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              return Stack(
-                children: [
-                  Positioned.fill(
-                    child: Container(
-                      color: Colors.black,
-                      alignment: Alignment.center,
-                      child: const Text(
-                        'Video placeholder',
-                        style: TextStyle(color: Colors.white),
-                      ),
-                    ),
-                  ),
-                  Positioned.fill(child: _buildNotesOverlay(constraints)),
-                ],
-              );
-            },
-          ),
+      return Container(
+        color: Colors.black,
+        alignment: Alignment.center,
+        child: const Text(
+          'Video placeholder',
+          style: TextStyle(color: Colors.white),
         ),
       );
     }
     if (_videoError != null) {
-      return _wrapPracticeVideo(
-        Container(
-          color: Colors.black,
-          height: 200,
-          alignment: Alignment.center,
-          padding: const EdgeInsets.all(AppConstants.spacing12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                _videoError!,
-                style: AppTextStyles.caption.copyWith(color: Colors.white),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: AppConstants.spacing8),
-              TextButton(onPressed: _initVideo, child: const Text('Reessayer')),
-            ],
-          ),
+      return Container(
+        color: Colors.black,
+        alignment: Alignment.center,
+        padding: const EdgeInsets.all(AppConstants.spacing12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _videoError!,
+              style: AppTextStyles.caption.copyWith(color: Colors.white),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: AppConstants.spacing8),
+            TextButton(onPressed: _initVideo, child: const Text('Reessayer')),
+          ],
         ),
       );
     }
     if (_videoLoading || _chewieController == null) {
-      return _wrapPracticeVideo(
-        Container(
-          color: Colors.black,
-          height: 200,
-          alignment: Alignment.center,
-          child: const CircularProgressIndicator(),
-        ),
+      return Container(
+        color: Colors.black,
+        alignment: Alignment.center,
+        child: const CircularProgressIndicator(),
       );
     }
-    return _wrapPracticeVideo(
-      AspectRatio(
-        aspectRatio: _chewieController!.aspectRatio ?? 16 / 9,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            return Stack(
-              children: [
-                Positioned.fill(child: Chewie(controller: _chewieController!)),
-                Positioned.fill(child: _buildNotesOverlay(constraints)),
-              ],
-            );
-          },
-        ),
-      ),
-    );
+    return Chewie(controller: _chewieController!);
   }
 
   Widget _buildNotesOverlay(BoxConstraints constraints) {
@@ -1870,10 +1836,15 @@ class _PracticePageState extends State<PracticePage>
       return const SizedBox.shrink();
     }
     final screenWidth = MediaQuery.of(context).size.width;
+    final horizontalPadding = _practiceHorizontalPadding(screenWidth);
     final availableWidth = min(
       constraints.maxWidth,
-      screenWidth - (AppConstants.spacing16 * 2),
+      screenWidth - (horizontalPadding * 2),
     );
+    final now = DateTime.now();
+    final successFlashActive = _isSuccessFlashActive(now);
+    final wrongFlashActive = _isWrongFlashActive(now);
+    final targetNote = _uiTargetNote();
     final layout = _computeKeyboardLayout(availableWidth);
     final scrollOffset = layout.shouldScroll ? _keyboardScrollOffset : 0.0;
     double noteToX(int note) {
@@ -1894,7 +1865,7 @@ class _PracticePageState extends State<PracticePage>
           width: layout.outerWidth,
           height: constraints.maxHeight,
           child: Padding(
-            padding: EdgeInsets.all(layout.stagePadding),
+            padding: EdgeInsets.symmetric(horizontal: layout.stagePadding),
             child: CustomPaint(
               key: const Key('practice_notes_overlay'),
               size: Size(layout.displayWidth, constraints.maxHeight),
@@ -1907,6 +1878,11 @@ class _PracticePageState extends State<PracticePage>
                 fallLead: _fallLeadSec,
                 fallTail: _fallTailSec,
                 noteToX: noteToX,
+                targetNote: targetNote,
+                successNote: _lastCorrectNote,
+                successFlashActive: successFlashActive,
+                wrongNote: _lastWrongDetectedNote,
+                wrongFlashActive: wrongFlashActive,
               ),
             ),
           ),
@@ -1937,60 +1913,6 @@ class _PracticePageState extends State<PracticePage>
           ),
         ],
       ),
-    );
-  }
-}
-
-class _PracticeSession {
-  final String id;
-  final String? jobId;
-  final String? title;
-  final double? score;
-  final double? accuracy;
-  final int? level;
-  final String? date;
-
-  _PracticeSession({
-    required this.id,
-    this.jobId,
-    this.title,
-    this.score,
-    this.accuracy,
-    this.level,
-    this.date,
-  });
-
-  factory _PracticeSession.fromDoc(
-    QueryDocumentSnapshot<Map<String, dynamic>> doc,
-  ) {
-    final data = doc.data();
-
-    DateTime? asDate(dynamic value) {
-      try {
-        if (value is Timestamp) return value.toDate();
-        if (value is String) return DateTime.parse(value);
-      } catch (_) {}
-      return null;
-    }
-
-    String? formatDate(dynamic value) {
-      final dt = asDate(value);
-      if (dt == null) return null;
-      String two(int v) => v.toString().padLeft(2, '0');
-      return '${two(dt.day)}/${two(dt.month)} ${two(dt.hour)}:${two(dt.minute)}';
-    }
-
-    final rawTitle =
-        data['title'] ?? data['identified_title'] ?? data['identifiedTitle'];
-
-    return _PracticeSession(
-      id: doc.id,
-      jobId: data['job_id'] as String?,
-      title: rawTitle is String ? rawTitle : null,
-      score: (data['score'] as num?)?.toDouble(),
-      accuracy: (data['accuracy'] as num?)?.toDouble(),
-      level: (data['level'] as num?)?.toInt(),
-      date: formatDate(data['ended_at'] ?? data['started_at']),
     );
   }
 }
@@ -2077,6 +1999,11 @@ class _FallingNotesPainter extends CustomPainter {
   final double fallLead;
   final double fallTail;
   final double Function(int) noteToX;
+  final int? targetNote;
+  final int? successNote;
+  final bool successFlashActive;
+  final int? wrongNote;
+  final bool wrongFlashActive;
 
   static const List<int> _blackKeySteps = [1, 3, 6, 8, 10];
   static final Map<String, TextPainter> _labelFillCache = {};
@@ -2091,6 +2018,11 @@ class _FallingNotesPainter extends CustomPainter {
     required this.fallLead,
     required this.fallTail,
     required this.noteToX,
+    required this.targetNote,
+    required this.successNote,
+    required this.successFlashActive,
+    required this.wrongNote,
+    required this.wrongFlashActive,
   });
 
   String _labelForSpace(int midi, double width, double barHeight) {
@@ -2186,7 +2118,28 @@ class _FallingNotesPainter extends CustomPainter {
       final isBlack = _blackKeySteps.contains(n.pitch % 12);
       final width = isBlack ? blackWidth : whiteWidth;
 
-      paint.color = AppColors.warning.withValues(alpha: 0.85);
+      final isTarget = targetNote != null && n.pitch == targetNote;
+      final isSuccessFlash =
+          successFlashActive && successNote != null && n.pitch == successNote;
+      final isWrongFlash =
+          wrongFlashActive && wrongNote != null && n.pitch == wrongNote;
+
+      if (isTarget) {
+        final glowPaint = Paint()
+          ..color = AppColors.accent.withValues(alpha: 0.35)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10);
+        final glowRect = RRect.fromRectAndRadius(
+          Rect.fromLTWH(x - 2, y - barHeight - 2, width + 4, barHeight + 4),
+          const Radius.circular(5),
+        );
+        canvas.drawRRect(glowRect, glowPaint);
+      }
+
+      paint.color = isSuccessFlash
+          ? AppColors.success.withValues(alpha: 0.95)
+          : isWrongFlash
+          ? AppColors.error.withValues(alpha: 0.9)
+          : AppColors.warning.withValues(alpha: 0.85);
       final rect = RRect.fromRectAndRadius(
         Rect.fromLTWH(x, y - barHeight, width, barHeight),
         const Radius.circular(3),
@@ -2196,11 +2149,9 @@ class _FallingNotesPainter extends CustomPainter {
       final label = _labelForSpace(n.pitch, width, barHeight);
       final fontSize = _labelFontSize(width, barHeight, label);
       final textPainter = _getLabelPainter(label, fontSize, stroke: false);
-      final textOffset = Offset(
-        x + (width - textPainter.width) / 2,
-        (y - barHeight) + (barHeight - textPainter.height) / 2,
-      );
-      if (width > 4 && barHeight > 6) {
+      final labelY = max(y - textPainter.height - 4, y - barHeight + 2);
+      final textOffset = Offset(x + (width - textPainter.width) / 2, labelY);
+      if (width > 4 && barHeight > textPainter.height + 4) {
         final background = Paint()..color = Colors.black.withValues(alpha: 0.4);
         final padX = 3.0;
         final padY = 2.0;
@@ -2230,7 +2181,12 @@ class _FallingNotesPainter extends CustomPainter {
         oldDelegate.fallAreaHeight != fallAreaHeight ||
         oldDelegate.fallLead != fallLead ||
         oldDelegate.fallTail != fallTail ||
-        oldDelegate.noteToX != noteToX;
+        oldDelegate.noteToX != noteToX ||
+        oldDelegate.targetNote != targetNote ||
+        oldDelegate.successNote != successNote ||
+        oldDelegate.successFlashActive != successFlashActive ||
+        oldDelegate.wrongNote != wrongNote ||
+        oldDelegate.wrongFlashActive != wrongFlashActive;
   }
 }
 

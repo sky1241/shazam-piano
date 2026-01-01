@@ -14,9 +14,9 @@ class ResultBottomSheet extends StatelessWidget {
     final hasId =
         result.identifiedTitle != null || result.identifiedArtist != null;
     return Container(
-      decoration: BoxDecoration(
+      decoration: const BoxDecoration(
         color: AppColors.card,
-        borderRadius: const BorderRadius.vertical(
+        borderRadius: BorderRadius.vertical(
           top: Radius.circular(AppConstants.radiusCard),
         ),
       ),
@@ -25,10 +25,10 @@ class ResultBottomSheet extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          const Row(
             children: [
               Icon(Icons.music_note, color: AppColors.primary),
-              const SizedBox(width: AppConstants.spacing8),
+              SizedBox(width: AppConstants.spacing8),
               Text('Analyse terminée', style: AppTextStyles.title),
             ],
           ),

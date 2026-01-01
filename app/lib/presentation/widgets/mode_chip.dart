@@ -42,9 +42,9 @@ class ModeChip extends StatelessWidget {
   Widget _buildStatusIcon() {
     switch (status) {
       case ModeChipStatus.queued:
-        return Icon(Icons.schedule, size: 16, color: AppColors.divider);
+        return const Icon(Icons.schedule, size: 16, color: AppColors.divider);
       case ModeChipStatus.processing:
-        return SizedBox(
+        return const SizedBox(
           width: 16,
           height: 16,
           child: CircularProgressIndicator(
@@ -53,9 +53,13 @@ class ModeChip extends StatelessWidget {
           ),
         );
       case ModeChipStatus.completed:
-        return Icon(Icons.check_circle, size: 16, color: AppColors.success);
+        return const Icon(
+          Icons.check_circle,
+          size: 16,
+          color: AppColors.success,
+        );
       case ModeChipStatus.error:
-        return Icon(Icons.error, size: 16, color: AppColors.error);
+        return const Icon(Icons.error, size: 16, color: AppColors.error);
     }
   }
 

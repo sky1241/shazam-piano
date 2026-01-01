@@ -30,7 +30,9 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets('PracticePage shows single video/keyboard/overlay', (tester) async {
+  testWidgets('PracticePage shows single video/keyboard/overlay', (
+    tester,
+  ) async {
     addTearDown(() async {
       await tester.binding.setSurfaceSize(null);
     });

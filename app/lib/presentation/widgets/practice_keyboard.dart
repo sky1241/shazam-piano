@@ -17,6 +17,10 @@ class PracticeKeyboard extends StatelessWidget {
   final List<int> blackKeys;
   final int? targetNote;
   final int? detectedNote;
+  final int? successFlashNote;
+  final bool successFlashActive;
+  final int? wrongFlashNote;
+  final bool wrongFlashActive;
   final double leftPadding;
 
   const PracticeKeyboard({
@@ -31,6 +35,10 @@ class PracticeKeyboard extends StatelessWidget {
     required this.blackKeys,
     required this.targetNote,
     required this.detectedNote,
+    this.successFlashNote,
+    this.successFlashActive = false,
+    this.wrongFlashNote,
+    this.wrongFlashActive = false,
     required this.leftPadding,
   });
 
@@ -161,7 +169,15 @@ class PracticeKeyboard extends StatelessWidget {
     final isDetected = note == detectedNote;
 
     Color keyColor;
-    if (isDetected && isExpected) {
+    if (successFlashActive &&
+        successFlashNote != null &&
+        note == successFlashNote) {
+      keyColor = AppColors.success.withValues(alpha: 0.9);
+    } else if (wrongFlashActive &&
+        wrongFlashNote != null &&
+        note == wrongFlashNote) {
+      keyColor = AppColors.error.withValues(alpha: 0.9);
+    } else if (isDetected && isExpected) {
       keyColor = AppColors.success;
     } else if (isExpected) {
       keyColor = AppColors.primary.withValues(alpha: 0.5);
@@ -174,7 +190,8 @@ class PracticeKeyboard extends StatelessWidget {
     final isC = note % 12 == 0;
     final label = isBlack
         ? ''
-        : (isC ? _noteLabel(note, withOctave: true) : _noteLabel(note));
+        : (isC ? _noteLabel(note, withOctave: true) : '');
+    final labelMaxWidth = max(0.0, width - 6);
     final labelFontSize = max(12.0, min(16.0, width * 0.75));
     final labelColor = isBlack
         ? Colors.white.withValues(alpha: 0.95)
@@ -203,20 +220,31 @@ class PracticeKeyboard extends StatelessWidget {
         if (label.isNotEmpty)
           Positioned(
             bottom: 6,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-              decoration: BoxDecoration(
-                color: labelBackground,
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                label,
-                style: AppTextStyles.caption.copyWith(
-                  fontSize: labelFontSize,
-                  fontWeight: FontWeight.w700,
-                  height: 1,
-                  color: labelColor,
-                  shadows: [labelShadow],
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: labelMaxWidth),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                decoration: BoxDecoration(
+                  color: labelBackground,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: SizedBox(
+                  width: labelMaxWidth,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      label,
+                      style: AppTextStyles.caption.copyWith(
+                        fontSize: labelFontSize,
+                        fontWeight: FontWeight.w700,
+                        height: 1,
+                        color: labelColor,
+                        shadows: [labelShadow],
+                      ),
+                      overflow: TextOverflow.clip,
+                      softWrap: false,
+                    ),
+                  ),
                 ),
               ),
             ),

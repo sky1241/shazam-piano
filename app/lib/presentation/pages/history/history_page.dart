@@ -27,7 +27,11 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.history, size: 64, color: AppColors.textSecondary),
+                  const Icon(
+                    Icons.history,
+                    size: 64,
+                    color: AppColors.textSecondary,
+                  ),
                   const SizedBox(height: AppConstants.spacing16),
                   Text(
                     'Aucune generation recente',
@@ -47,7 +51,8 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
             )
           : ListView.separated(
               itemCount: history.length,
-              separatorBuilder: (_, __) => Divider(color: AppColors.divider),
+              separatorBuilder: (_, __) =>
+                  const Divider(color: AppColors.divider),
               itemBuilder: (context, index) {
                 final item = history[index];
                 final title = item.identifiedTitle ?? 'Session ${item.jobId}';

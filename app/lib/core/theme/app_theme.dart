@@ -11,7 +11,7 @@ class AppTheme {
 
       // Colors
       scaffoldBackgroundColor: AppColors.bg,
-      colorScheme: ColorScheme.dark(
+      colorScheme: const ColorScheme.dark(
         primary: AppColors.primary,
         secondary: AppColors.accent,
         surface: AppColors.surface,
@@ -23,7 +23,7 @@ class AppTheme {
       ),
 
       // Text Theme
-      textTheme: TextTheme(
+      textTheme: const TextTheme(
         displayLarge: AppTextStyles.display,
         titleLarge: AppTextStyles.title,
         bodyLarge: AppTextStyles.body,
@@ -62,7 +62,10 @@ class AppTheme {
       ),
 
       // Divider
-      dividerTheme: DividerThemeData(color: AppColors.divider, thickness: 1),
+      dividerTheme: const DividerThemeData(
+        color: AppColors.divider,
+        thickness: 1,
+      ),
 
       // Input
       inputDecorationTheme: InputDecorationTheme(
