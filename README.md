@@ -105,10 +105,17 @@ flutter run --flavor dev --dart-define=BACKEND_BASE=http://10.0.2.2:8000
 ```powershell
 .\scripts\dev.ps1
 .\scripts\dev.ps1 -Logcat
+.\scripts\run-app.ps1
 ```
 - Ouvre 2 fenetres: Backend + Flutter (et Logcat si -Logcat).
 - `.\scripts\run-app.ps1` reste la commande "golden run" (clean + BUILD_STAMP).
 - Le BUILD_STAMP + BACKEND_BASE sont visibles en overlay debug.
+
+### Mobile services (Firebase/AdMob)
+- Firebase Android config: `app/android/app/google-services.json` (gitignored; do NOT commit).
+- AdMob: debug/profile use test ad IDs; release uses real IDs (kReleaseMode in `app/lib/ads/admob_ads.dart`).
+- Privacy & Data screen: Settings -> Confidentialité & données (`app/lib/presentation/pages/settings/privacy_data_page.dart`).
+- Mic permission is requested when starting Practice or calibration; rationale shows first, then denied flow offers retry + open settings.
 
 ### Docker
 

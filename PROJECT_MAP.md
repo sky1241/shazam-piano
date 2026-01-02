@@ -1,10 +1,11 @@
 # Project Map — ShazaPiano
 
 ## App/lib structure
-- `core/`: env config (`config/app_config.dart`), constants, Riverpod providers (`core/providers.dart`), Firebase bootstrap (`core/services/firebase_service.dart`), theming.
+- `ads/`: AdMob helpers (test vs release IDs, banner + one-time interstitial).
+- `core/`: env config (`config/app_config.dart`), constants (`core/constants/strings_fr.dart`), Riverpod providers (`core/providers.dart`), Firebase bootstrap (`core/services/firebase_service.dart`), theming.
 - `data/`: Retrofit client (`datasources/api_client.dart` + g.dart), DTOs (`data/models/*`) mirroring backend payloads.
 - `domain/`: simple entities (`level_result.dart`, `process_response.dart`).
-- `presentation/pages/`: screens (home, player, practice, previews, history, settings, results).
+- `presentation/pages/`: screens (home, player, practice, previews, history, settings, results, `settings/privacy_data_page.dart`).
 - `presentation/state/`: Riverpod notifiers/providers for recordings, processing, history, IAP.
 - `presentation/widgets/`: shared UI (record button, paywall modal, mode chips, video tiles, logos).
 
@@ -20,6 +21,7 @@
 ## Audio / media
 - Video playback: `Chewie` + `video_player` in `presentation/pages/player/player_page.dart` and practice preview pieces.
 - Practice listening/scoring: `presentation/pages/practice/practice_page.dart` uses `sound_stream` `RecorderStream`, `PitchDetector`, and scoring logic; `audioplayers` for metronome/feedback.
+- Mic permission rationale + denied fallback live in `presentation/pages/practice/practice_page.dart`.
 - Recording UI/state: `presentation/widgets/big_record_button.dart` with `RecordButtonState`, tied into `recording_provider.dart`.
 
 ## Firebase / IAP

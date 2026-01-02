@@ -16,9 +16,11 @@ import 'package:video_player/video_player.dart';
 import 'package:chewie/chewie.dart';
 import 'package:flutter/scheduler.dart';
 
+import '../../../ads/admob_ads.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../core/constants/strings_fr.dart';
 import '../../../core/debug/debug_job_guard.dart';
 import '../../../domain/entities/level_result.dart';
 import '../../widgets/practice_keyboard.dart';
@@ -114,6 +116,7 @@ class _PracticePageState extends State<PracticePage>
   bool _notesLoading = false;
   String? _notesError;
   PermissionStatus? _micPermissionStatus;
+  bool _showMicPermissionFallback = false;
   DateTime? _lastMicFrameAt;
   double _micRms = 0.0;
   double? _micFrequency;
@@ -174,7 +177,17 @@ class _PracticePageState extends State<PracticePage>
       _initVideo();
       _loadNoteEvents();
       _loadSavedLatency();
+      _maybeShowPracticeInterstitial();
     }
+  }
+
+  void _maybeShowPracticeInterstitial() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _isTestEnv) {
+        return;
+      }
+      AdmobInterstitialOnce.maybeShowPractice();
+    });
   }
 
   @override
@@ -232,6 +245,7 @@ class _PracticePageState extends State<PracticePage>
               textAlign: TextAlign.center,
             ),
           ),
+          if (_showMicPermissionFallback) _buildMicPermissionFallback(),
           const SizedBox(height: AppConstants.spacing12),
           Expanded(
             child: Column(
@@ -460,6 +474,150 @@ class _PracticePageState extends State<PracticePage>
     } catch (_) {
       // ignore permission errors
     }
+  }
+
+  Future<bool> _ensureMicPermission() async {
+    if (_isTestEnv) {
+      return true;
+    }
+    PermissionStatus status;
+    try {
+      status = await Permission.microphone.status;
+    } catch (_) {
+      return false;
+    }
+    _setMicPermissionStatus(status);
+    if (status.isGranted) {
+      _setMicPermissionFallback(false);
+      return true;
+    }
+    if (status.isPermanentlyDenied) {
+      _setMicPermissionFallback(true);
+      return false;
+    }
+    final proceed = await _showMicRationaleDialog();
+    if (!proceed) {
+      return false;
+    }
+    final requestStatus = await Permission.microphone.request();
+    _setMicPermissionStatus(requestStatus);
+    if (!requestStatus.isGranted) {
+      _setMicPermissionFallback(true);
+      return false;
+    }
+    _setMicPermissionFallback(false);
+    return true;
+  }
+
+  void _setMicPermissionStatus(PermissionStatus status) {
+    if (mounted) {
+      setState(() {
+        _micPermissionStatus = status;
+      });
+    } else {
+      _micPermissionStatus = status;
+    }
+  }
+
+  void _setMicPermissionFallback(bool show) {
+    if (mounted) {
+      setState(() {
+        _showMicPermissionFallback = show;
+      });
+    } else {
+      _showMicPermissionFallback = show;
+    }
+  }
+
+  Future<bool> _showMicRationaleDialog() async {
+    if (!mounted) {
+      return false;
+    }
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.card,
+        title: const Text(StringsFr.micAccessTitle),
+        content: const Text(StringsFr.micRationaleBody),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text(StringsFr.micRationaleCancel),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text(StringsFr.micRationaleContinue),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
+  Widget _buildMicPermissionFallback() {
+    final status = _micPermissionStatus;
+    final isPermanentlyDenied = status?.isPermanentlyDenied ?? false;
+    final title = StringsFr.micAccessTitle;
+    final body = isPermanentlyDenied
+        ? StringsFr.micPermanentlyDeniedMessage
+        : StringsFr.micDeniedMessage;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppConstants.spacing16,
+        AppConstants.spacing12,
+        AppConstants.spacing16,
+        0,
+      ),
+      child: Container(
+        padding: const EdgeInsets.all(AppConstants.spacing12),
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(AppConstants.radiusCard),
+          border: Border.all(color: AppColors.divider),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: AppTextStyles.body.copyWith(
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: AppConstants.spacing8),
+            Text(
+              body,
+              style: AppTextStyles.caption.copyWith(
+                color: AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: AppConstants.spacing12),
+            Wrap(
+              spacing: AppConstants.spacing8,
+              children: [
+                TextButton(
+                  onPressed: _handleRetryMicPermission,
+                  child: const Text(StringsFr.micRetry),
+                ),
+                TextButton(
+                  onPressed: openAppSettings,
+                  child: const Text(StringsFr.micOpenSettings),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleRetryMicPermission() async {
+    if (_isListening) {
+      return;
+    }
+    _setMicPermissionFallback(false);
+    await _togglePractice();
   }
 
   double _computeRms(List<double> samples) {
@@ -865,14 +1023,10 @@ class _PracticePageState extends State<PracticePage>
     _useMidi = await _tryStartMidi();
 
     if (!_useMidi) {
-      // Permissions for mic
-      final micStatus = await Permission.microphone.request();
-      _micPermissionStatus = micStatus;
-      if (mounted) {
-        setState(() {});
-      }
-      if (!micStatus.isGranted) {
-        final reason = micStatus.isPermanentlyDenied
+      final micGranted = await _ensureMicPermission();
+      if (!micGranted) {
+        final status = _micPermissionStatus;
+        final reason = status?.isPermanentlyDenied == true
             ? 'permission_permanently_denied'
             : 'permission_denied';
         _setStopReason(reason);
@@ -882,19 +1036,6 @@ class _PracticePageState extends State<PracticePage>
           });
         } else {
           _isListening = false;
-        }
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('Microphone permission denied'),
-              action: micStatus.isPermanentlyDenied
-                  ? SnackBarAction(
-                      label: 'Settings',
-                      onPressed: openAppSettings,
-                    )
-                  : null,
-            ),
-          );
         }
         return;
       }
@@ -1365,8 +1506,8 @@ class _PracticePageState extends State<PracticePage>
   Future<void> _calibrateLatency({bool force = false}) async {
     // Already calibrated
     if (_latencyMs > 0 && !force) return;
-    final micStatus = await Permission.microphone.request();
-    if (!micStatus.isGranted) {
+    final micGranted = await _ensureMicPermission();
+    if (!micGranted) {
       return;
     }
     final targetFreq = 880.0; // A5 beep

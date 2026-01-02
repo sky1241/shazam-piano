@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../core/constants/strings_fr.dart';
 import '../../state/iap_provider.dart';
+import 'privacy_data_page.dart';
 
 /// Settings Page
 class SettingsPage extends ConsumerStatefulWidget {
@@ -68,6 +70,19 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           _buildSection(
             title: 'À propos',
             children: [
+              ListTile(
+                leading: const Icon(
+                  Icons.privacy_tip,
+                  color: AppColors.textSecondary,
+                ),
+                title: const Text(StringsFr.settingsPrivacyLabel),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => const PrivacyDataPage(),
+                  ),
+                ),
+              ),
               const ListTile(
                 leading: Icon(Icons.info, color: AppColors.primary),
                 title: Text('Version'),

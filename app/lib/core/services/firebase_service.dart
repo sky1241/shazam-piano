@@ -32,6 +32,13 @@ class FirebaseService {
       return;
     }
 
+    try {
+      await analytics.setAnalyticsCollectionEnabled(true);
+      debugPrint('Firebase Analytics enabled');
+    } catch (e) {
+      debugPrint('Firebase Analytics setup failed (non-critical): $e');
+    }
+
     // Setup Crashlytics (non-blocking)
     try {
       await _setupCrashlytics().timeout(_crashlyticsTimeout);
