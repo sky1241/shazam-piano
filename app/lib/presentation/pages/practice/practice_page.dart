@@ -140,10 +140,15 @@ class _PracticePageState extends State<PracticePage>
   DateTime? _lastWrongHitAt;
   int? _lastWrongDetectedNote;
 
-  // Piano keyboard alignee avec la video (C2 a C7 = 61 touches)
-  static const int _firstKey = 36; // C2
-  static const int _lastKey = 96; // C7
+  // Default keyboard range (A#1 to C7 = 63 keys).
+  static const int _defaultFirstKey = 34; // A#1
+  static const int _defaultLastKey = 96; // C7
+  static const int _rangeMargin = 2;
+  static const double _minNoteDurationSec = 0.03;
+  static const double _dedupeToleranceSec = 0.01;
   static const List<int> _blackKeys = [1, 3, 6, 8, 10]; // C#, D#, F#, G#, A#
+  int _displayFirstKey = _defaultFirstKey;
+  int _displayLastKey = _defaultLastKey;
 
   @override
   void initState() {
@@ -297,7 +302,7 @@ class _PracticePageState extends State<PracticePage>
 
   int? _normalizeToKeyboardRange(int? note) {
     if (note == null) return null;
-    if (note < _firstKey || note > _lastKey) return null;
+    if (note < _displayFirstKey || note > _displayLastKey) return null;
     return note;
   }
 
@@ -875,8 +880,8 @@ class _PracticePageState extends State<PracticePage>
       blackWidth: blackWidth,
       whiteHeight: whiteHeight,
       blackHeight: blackHeight,
-      firstKey: _firstKey,
-      lastKey: _lastKey,
+      firstKey: _displayFirstKey,
+      lastKey: _displayLastKey,
       blackKeys: _blackKeys,
       targetNote: _uiTargetNote(),
       detectedNote: _uiDetectedNote(),
@@ -947,12 +952,14 @@ class _PracticePageState extends State<PracticePage>
         : AppConstants.spacing12;
     final innerAvailableWidth = max(0.0, availableWidth - (stagePadding * 2));
     final whiteCount = _countWhiteKeys();
-    final rawWhiteWidth = whiteCount > 0
-        ? innerAvailableWidth / whiteCount
+    const blackWidthFactor = 0.65;
+    final whiteWidth = whiteCount > 0
+        ? innerAvailableWidth / (whiteCount + blackWidthFactor)
         : 0.0;
-    final whiteWidth = rawWhiteWidth;
-    final blackWidth = whiteWidth * 0.65;
-    final displayWidth = innerAvailableWidth;
+    final blackWidth = whiteWidth * blackWidthFactor;
+    final leftPadding = blackWidth / 2;
+    final rightPadding = leftPadding;
+    final displayWidth = (whiteCount * whiteWidth) + leftPadding + rightPadding;
     final outerWidth = displayWidth + (stagePadding * 2);
 
     return _KeyboardLayout(
@@ -962,7 +969,7 @@ class _PracticePageState extends State<PracticePage>
       outerWidth: outerWidth,
       stagePadding: stagePadding,
       shouldScroll: false,
-      leftPadding: 0.0,
+      leftPadding: leftPadding,
     );
   }
 
@@ -981,7 +988,7 @@ class _PracticePageState extends State<PracticePage>
 
   int _countWhiteKeys() {
     int count = 0;
-    for (int n = _firstKey; n <= _lastKey; n++) {
+    for (int n = _displayFirstKey; n <= _displayLastKey; n++) {
       if (!_isBlackKey(n)) count++;
     }
     return count;
@@ -1405,10 +1412,14 @@ class _PracticePageState extends State<PracticePage>
         setState(() {
           _notesLoading = false;
           _notesError = 'Notes indisponibles';
+          _displayFirstKey = _defaultFirstKey;
+          _displayLastKey = _defaultLastKey;
         });
       } else {
         _notesLoading = false;
         _notesError = 'Notes indisponibles';
+        _displayFirstKey = _defaultFirstKey;
+        _displayLastKey = _defaultLastKey;
       }
       debugPrint('Practice notes: invalid job id for $midiUrl');
       return;
@@ -1435,7 +1446,7 @@ class _PracticePageState extends State<PracticePage>
         throw Exception('Notes payload missing');
       }
       final List<dynamic> notesJson = data['notes'];
-      final noteEvents =
+      final rawEvents =
           notesJson
               .map(
                 (n) => _NoteEvent(
@@ -1446,15 +1457,114 @@ class _PracticePageState extends State<PracticePage>
               )
               .toList()
             ..sort((a, b) => a.start.compareTo(b.start));
+      final tempoBpm = widget.level.tempoGuess;
+      final secondsPerBeat = tempoBpm != null && tempoBpm > 0
+          ? 60.0 / tempoBpm
+          : null;
+      final minDurationSec = secondsPerBeat != null
+          ? max(_minNoteDurationSec, secondsPerBeat / 32)
+          : _minNoteDurationSec;
+      var droppedInvalidTiming = 0;
+      var droppedTooShort = 0;
+      int? minPitch;
+      int? maxPitch;
+      final durationFilteredEvents = <_NoteEvent>[];
+      for (final note in rawEvents) {
+        final duration = note.end - note.start;
+        if (duration <= 0) {
+          droppedInvalidTiming += 1;
+          continue;
+        }
+        if (duration < minDurationSec) {
+          droppedTooShort += 1;
+          continue;
+        }
+        durationFilteredEvents.add(note);
+        minPitch = minPitch == null ? note.pitch : min(minPitch, note.pitch);
+        maxPitch = maxPitch == null ? note.pitch : max(maxPitch, note.pitch);
+      }
+
+      var droppedDup = 0;
+      final dedupedSet = <_NoteEvent>{};
+      final sortedForDedupe = List<_NoteEvent>.from(durationFilteredEvents)
+        ..sort((a, b) {
+          final pitchCmp = a.pitch.compareTo(b.pitch);
+          if (pitchCmp != 0) {
+            return pitchCmp;
+          }
+          final startCmp = a.start.compareTo(b.start);
+          if (startCmp != 0) {
+            return startCmp;
+          }
+          return a.end.compareTo(b.end);
+        });
+      _NoteEvent? previous;
+      for (final note in sortedForDedupe) {
+        if (previous != null &&
+            note.pitch == previous.pitch &&
+            (note.start - previous.start).abs() < _dedupeToleranceSec &&
+            (note.end - previous.end).abs() < _dedupeToleranceSec) {
+          droppedDup += 1;
+          continue;
+        }
+        dedupedSet.add(note);
+        previous = note;
+      }
+      final dedupedEvents = durationFilteredEvents
+          .where((note) => dedupedSet.contains(note))
+          .toList();
+
+      final int displayFirstKey;
+      final int displayLastKey;
+      if (minPitch == null || maxPitch == null) {
+        displayFirstKey = _defaultFirstKey;
+        displayLastKey = _defaultLastKey;
+      } else {
+        displayFirstKey = max(
+          0,
+          min(127, min(_defaultFirstKey, minPitch - _rangeMargin)),
+        );
+        displayLastKey = max(
+          0,
+          min(127, max(_defaultLastKey, maxPitch + _rangeMargin)),
+        );
+      }
+      final clampedFirstKey = min(displayFirstKey, displayLastKey);
+      final clampedLastKey = max(displayFirstKey, displayLastKey);
+
+      var droppedOutOfRange = 0;
+      final noteEvents = <_NoteEvent>[];
+      for (final note in dedupedEvents) {
+        if (note.pitch < clampedFirstKey || note.pitch > clampedLastKey) {
+          droppedOutOfRange += 1;
+          continue;
+        }
+        noteEvents.add(note);
+      }
+      if (kDebugMode) {
+        debugPrint(
+          'Practice notes sanitized: kept=${noteEvents.length} '
+          'minPitch=${minPitch ?? '-'} maxPitch=${maxPitch ?? '-'} '
+          'displayFirstKey=$clampedFirstKey displayLastKey=$clampedLastKey '
+          'droppedTiming=$droppedInvalidTiming '
+          'droppedTooShort=$droppedTooShort '
+          'droppedDup=$droppedDup '
+          'droppedOutOfRange=$droppedOutOfRange',
+        );
+      }
 
       if (mounted) {
         setState(() {
           _noteEvents = noteEvents;
+          _displayFirstKey = clampedFirstKey;
+          _displayLastKey = clampedLastKey;
           _notesLoading = false;
           _notesError = noteEvents.isEmpty ? 'Notes indisponibles' : null;
         });
       } else {
         _noteEvents = noteEvents;
+        _displayFirstKey = clampedFirstKey;
+        _displayLastKey = clampedLastKey;
         _notesLoading = false;
         _notesError = noteEvents.isEmpty ? 'Notes indisponibles' : null;
       }
@@ -1468,11 +1578,15 @@ class _PracticePageState extends State<PracticePage>
           _noteEvents = [];
           _notesLoading = false;
           _notesError = 'Notes indisponibles';
+          _displayFirstKey = _defaultFirstKey;
+          _displayLastKey = _defaultLastKey;
         });
       } else {
         _noteEvents = [];
         _notesLoading = false;
         _notesError = 'Notes indisponibles';
+        _displayFirstKey = _defaultFirstKey;
+        _displayLastKey = _defaultLastKey;
       }
     } catch (e) {
       debugPrint('Practice notes error: midiUrl=$midiUrl url=$url error=$e');
@@ -1481,11 +1595,15 @@ class _PracticePageState extends State<PracticePage>
           _noteEvents = [];
           _notesLoading = false;
           _notesError = 'Notes indisponibles';
+          _displayFirstKey = _defaultFirstKey;
+          _displayLastKey = _defaultLastKey;
         });
       } else {
         _noteEvents = [];
         _notesLoading = false;
         _notesError = 'Notes indisponibles';
+        _displayFirstKey = _defaultFirstKey;
+        _displayLastKey = _defaultLastKey;
       }
     }
   }
@@ -1991,7 +2109,7 @@ class _PracticePageState extends State<PracticePage>
     double noteToX(int note) {
       final x = PracticeKeyboard.noteToX(
         note: note,
-        firstKey: _firstKey,
+        firstKey: _displayFirstKey,
         whiteWidth: layout.whiteWidth,
         blackWidth: layout.blackWidth,
         blackKeys: _blackKeys,
@@ -2024,6 +2142,7 @@ class _PracticePageState extends State<PracticePage>
                 successFlashActive: successFlashActive,
                 wrongNote: _lastWrongDetectedNote,
                 wrongFlashActive: wrongFlashActive,
+                forceLabels: widget.forcePreview,
               ),
             ),
           ),
@@ -2145,6 +2264,7 @@ class _FallingNotesPainter extends CustomPainter {
   final bool successFlashActive;
   final int? wrongNote;
   final bool wrongFlashActive;
+  final bool forceLabels;
 
   static const List<int> _blackKeySteps = [1, 3, 6, 8, 10];
   static final Map<String, TextPainter> _labelFillCache = {};
@@ -2164,6 +2284,7 @@ class _FallingNotesPainter extends CustomPainter {
     required this.successFlashActive,
     required this.wrongNote,
     required this.wrongFlashActive,
+    required this.forceLabels,
   });
 
   String _labelForSpace(int midi, double width, double barHeight) {
@@ -2254,10 +2375,18 @@ class _FallingNotesPainter extends CustomPainter {
       );
       final y = progress * fallAreaHeight;
       final barHeight = max(10.0, (n.end - n.start) * 60);
+      final rectTop = y - barHeight;
+      final rectBottom = y;
+      if (rectBottom < 0 || rectTop > fallAreaHeight) {
+        continue;
+      }
 
       final x = noteToX(n.pitch);
       final isBlack = _blackKeySteps.contains(n.pitch % 12);
       final width = isBlack ? blackWidth : whiteWidth;
+      if (x + width < 0 || x > size.width) {
+        continue;
+      }
 
       final isTarget = targetNote != null && n.pitch == targetNote;
       final isSuccessFlash =
@@ -2291,8 +2420,15 @@ class _FallingNotesPainter extends CustomPainter {
       final fontSize = _labelFontSize(width, barHeight, label);
       final textPainter = _getLabelPainter(label, fontSize, stroke: false);
       final labelY = max(y - textPainter.height - 4, y - barHeight + 2);
-      final textOffset = Offset(x + (width - textPainter.width) / 2, labelY);
-      if (width > 4 && barHeight > textPainter.height + 4) {
+      final maxLabelY = max(0.0, fallAreaHeight - textPainter.height);
+      final clampedLabelY = labelY.clamp(0.0, maxLabelY);
+      final textOffset = Offset(
+        x + (width - textPainter.width) / 2,
+        clampedLabelY,
+      );
+      final canDrawLabel =
+          width > 4 && (barHeight > textPainter.height + 4 || forceLabels);
+      if (canDrawLabel) {
         final background = Paint()..color = Colors.black.withValues(alpha: 0.4);
         final padX = 3.0;
         final padY = 2.0;
@@ -2327,7 +2463,8 @@ class _FallingNotesPainter extends CustomPainter {
         oldDelegate.successNote != successNote ||
         oldDelegate.successFlashActive != successFlashActive ||
         oldDelegate.wrongNote != wrongNote ||
-        oldDelegate.wrongFlashActive != wrongFlashActive;
+        oldDelegate.wrongFlashActive != wrongFlashActive ||
+        oldDelegate.forceLabels != forceLabels;
   }
 }
 
