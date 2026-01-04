@@ -2,15 +2,22 @@
 ShazaPiano - MIDI Arranger
 Transforms basic melody into 4 difficulty levels
 """
-from typing import List, Tuple
+from typing import List, Tuple, Optional, Dict, Any, Iterable
 from copy import deepcopy
 import math
+import json
+from pathlib import Path
 
 import pretty_midi
 import numpy as np
 from loguru import logger
 
 from config import get_level_config, MAJOR_SCALE, MINOR_SCALE
+
+EXPECTED_NOTES_MIN_DURATION_MS = 50
+EXPECTED_NOTES_MERGE_GAP_MS = 80
+EXPECTED_NOTES_MAX_DURATION_MS = 6000
+EXPECTED_NOTES_VIDEO_TOLERANCE_SEC = 0.25
 
 
 def quantize_notes(notes: List[pretty_midi.Note], grid: float) -> List[pretty_midi.Note]:
@@ -397,3 +404,166 @@ def arrange_level(
     
     return arranged_midi
 
+
+def _collect_notes(midi: pretty_midi.PrettyMIDI) -> List[pretty_midi.Note]:
+    notes: List[pretty_midi.Note] = []
+    for instrument in midi.instruments:
+        notes.extend(instrument.notes)
+    return notes
+
+
+def _sanitize_expected_notes(
+    notes: Iterable[pretty_midi.Note],
+    duration_sec: Optional[float],
+    min_duration_ms: int,
+    merge_gap_ms: int,
+    max_duration_ms: int,
+) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    notes_list = list(notes)
+    min_duration_sec = min_duration_ms / 1000.0
+    merge_gap_sec = merge_gap_ms / 1000.0
+    max_duration_sec = max_duration_ms / 1000.0
+
+    dropped_too_short = 0
+    dropped_too_long = 0
+    clamped_to_duration = 0
+    by_pitch: Dict[int, List[Tuple[float, float, int]]] = {}
+
+    max_start = None
+    if duration_sec is not None:
+        max_start = duration_sec + EXPECTED_NOTES_VIDEO_TOLERANCE_SEC
+
+    for note in notes_list:
+        start = float(note.start)
+        end = float(note.end)
+        if start < 0 or end < 0:
+            dropped_too_short += 1
+            continue
+        if max_start is not None:
+            if start > max_start or end > max_start:
+                dropped_too_short += 1
+                continue
+            if duration_sec is not None and end > duration_sec:
+                end = duration_sec
+                clamped_to_duration += 1
+        if end <= start:
+            dropped_too_short += 1
+            continue
+        if end - start < min_duration_sec:
+            dropped_too_short += 1
+            continue
+        by_pitch.setdefault(note.pitch, []).append(
+            (start, end, int(note.velocity))
+        )
+
+    merged: List[Tuple[int, float, float, int]] = []
+    for pitch, spans in by_pitch.items():
+        spans.sort(key=lambda s: s[0])
+        current_start, current_end, current_velocity = spans[0]
+        for start, end, velocity in spans[1:]:
+            if start - current_end <= merge_gap_sec:
+                current_end = max(current_end, end)
+                current_velocity = max(current_velocity, velocity)
+            else:
+                merged.append((pitch, current_start, current_end, current_velocity))
+                current_start, current_end, current_velocity = start, end, velocity
+        merged.append((pitch, current_start, current_end, current_velocity))
+
+    sanitized: List[Tuple[int, float, float, int]] = []
+    for pitch, start, end, velocity in merged:
+        duration = end - start
+        if duration > max_duration_sec:
+            dropped_too_long += 1
+            segment_start = start
+            while segment_start < end:
+                segment_end = min(segment_start + max_duration_sec, end)
+                if segment_end - segment_start < min_duration_sec:
+                    dropped_too_short += 1
+                else:
+                    sanitized.append(
+                        (pitch, segment_start, segment_end, velocity)
+                    )
+                segment_start = segment_end
+        else:
+            sanitized.append((pitch, start, end, velocity))
+
+    sanitized.sort(key=lambda n: (n[1], n[0]))
+    payload_notes = [
+        {
+            "pitch": pitch,
+            "start": float(start),
+            "end": float(end),
+            "velocity": int(velocity),
+        }
+        for pitch, start, end, velocity in sanitized
+    ]
+
+    stats = {
+        "notes_in": len(notes_list),
+        "notes_out": len(payload_notes),
+        "dropped_too_short": dropped_too_short,
+        "dropped_too_long": dropped_too_long,
+        "clamped_to_duration": clamped_to_duration,
+    }
+    return payload_notes, stats
+
+
+def build_expected_notes_payload(
+    midi: pretty_midi.PrettyMIDI,
+    job_id: str,
+    level: int,
+    duration_sec: Optional[float] = None,
+    melody_quality: Optional[float] = None,
+    min_duration_ms: int = EXPECTED_NOTES_MIN_DURATION_MS,
+    merge_gap_ms: int = EXPECTED_NOTES_MERGE_GAP_MS,
+    max_duration_ms: int = EXPECTED_NOTES_MAX_DURATION_MS,
+) -> Dict[str, Any]:
+    raw_notes = _collect_notes(midi)
+    payload_duration = duration_sec if duration_sec is not None else midi.get_end_time()
+    payload_duration = float(payload_duration or 0.0)
+    payload_notes, stats = _sanitize_expected_notes(
+        raw_notes,
+        payload_duration,
+        min_duration_ms,
+        merge_gap_ms,
+        max_duration_ms,
+    )
+
+    return {
+        "job_id": job_id,
+        "level": level,
+        "duration_sec": payload_duration,
+        "melody_quality": float(melody_quality) if melody_quality is not None else None,
+        "notes": payload_notes,
+        "stats": stats,
+    }
+
+
+def export_expected_notes_json(
+    midi: pretty_midi.PrettyMIDI,
+    output_dir: Path,
+    job_id: str,
+    level: int,
+    duration_sec: Optional[float] = None,
+    melody_quality: Optional[float] = None,
+    min_duration_ms: int = EXPECTED_NOTES_MIN_DURATION_MS,
+    merge_gap_ms: int = EXPECTED_NOTES_MERGE_GAP_MS,
+    max_duration_ms: int = EXPECTED_NOTES_MAX_DURATION_MS,
+) -> Path:
+    payload = build_expected_notes_payload(
+        midi=midi,
+        job_id=job_id,
+        level=level,
+        duration_sec=duration_sec,
+        melody_quality=melody_quality,
+        min_duration_ms=min_duration_ms,
+        merge_gap_ms=merge_gap_ms,
+        max_duration_ms=max_duration_ms,
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{job_id}_expected_notes_L{level}.json"
+    output_path.write_text(
+        json.dumps(payload, ensure_ascii=True),
+        encoding="utf-8",
+    )
+    return output_path

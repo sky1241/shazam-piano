@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -89,6 +90,7 @@ class _PracticePageState extends State<PracticePage>
   final RecorderStream _recorder = RecorderStream();
   StreamSubscription<MidiPacket>? _midiSub;
   final _pitchDetector = PitchDetector();
+  List<_NoteEvent> _rawNoteEvents = [];
   List<_NoteEvent> _noteEvents = [];
   List<bool> _hitNotes = [];
   double _latencyMs = 0;
@@ -110,6 +112,7 @@ class _PracticePageState extends State<PracticePage>
   static const int _micMaxBufferSamples = PitchDetector.bufferSize * 4;
   final List<double> _micBuffer = <double>[];
   VideoPlayerController? _videoController;
+  double? _videoDurationSec;
   ChewieController? _chewieController;
   bool _videoLoading = true;
   String? _videoError;
@@ -145,7 +148,9 @@ class _PracticePageState extends State<PracticePage>
   static const int _defaultLastKey = 96; // C7
   static const int _rangeMargin = 2;
   static const double _minNoteDurationSec = 0.03;
+  static const double _maxNoteDurationFallbackSec = 10.0;
   static const double _dedupeToleranceSec = 0.01;
+  static const double _videoDurationToleranceSec = 0.25;
   static const List<int> _blackKeys = [1, 3, 6, 8, 10]; // C#, D#, F#, G#, A#
   int _displayFirstKey = _defaultFirstKey;
   int _displayLastKey = _defaultLastKey;
@@ -218,7 +223,7 @@ class _PracticePageState extends State<PracticePage>
               _isListening ? Icons.stop : Icons.play_arrow,
               color: AppColors.primary,
             ),
-            onPressed: () => _togglePractice(),
+            onPressed: _togglePractice,
           ),
           if (kDebugMode && _devHudEnabled)
             IconButton(
@@ -310,7 +315,7 @@ class _PracticePageState extends State<PracticePage>
     if (_noteEvents.isEmpty) {
       return null;
     }
-    final elapsed = _startTime == null ? null : _currentElapsedSec();
+    final elapsed = _startTime == null ? null : _practiceClockSec();
     int? nextUpcoming;
 
     for (var i = 0; i < _noteEvents.length; i++) {
@@ -973,13 +978,72 @@ class _PracticePageState extends State<PracticePage>
     );
   }
 
-  double _currentElapsedSec() {
+  double _practiceClockSec() {
+    final controller = _videoController;
+    if (controller != null && controller.value.isInitialized) {
+      final positionMs = controller.value.position.inMilliseconds.toDouble();
+      final adjustedMs = (positionMs - _latencyMs).clamp(0.0, 1e12);
+      return adjustedMs / 1000.0;
+    }
     if (_startTime == null) {
       return 0.0;
     }
     final elapsedMs =
         DateTime.now().difference(_startTime!).inMilliseconds - _latencyMs;
     return max(0.0, elapsedMs / 1000.0);
+  }
+
+  double? _effectiveVideoDurationSec() {
+    if (_videoDurationSec != null && _videoDurationSec! > 0) {
+      return _videoDurationSec;
+    }
+    final levelDuration = widget.level.durationSec;
+    if (levelDuration != null && levelDuration > 0) {
+      return levelDuration;
+    }
+    return null;
+  }
+
+  double _minDurationSecForTempo(int? tempoBpm) {
+    if (tempoBpm != null && tempoBpm > 0) {
+      final secondsPerBeat = 60.0 / tempoBpm;
+      return max(_minNoteDurationSec, secondsPerBeat / 32);
+    }
+    return _minNoteDurationSec;
+  }
+
+  double _maxDurationSecForTempo(int? tempoBpm) {
+    if (tempoBpm != null && tempoBpm > 0) {
+      final secondsPerBeat = 60.0 / tempoBpm;
+      return max(_maxNoteDurationFallbackSec, secondsPerBeat * 8);
+    }
+    return _maxNoteDurationFallbackSec;
+  }
+
+  bool _canStartPractice() {
+    if (_videoLoading || _videoError != null) {
+      return false;
+    }
+    final controller = _videoController;
+    if (controller == null || !controller.value.isInitialized) {
+      return false;
+    }
+    final effectiveDuration = _effectiveVideoDurationSec();
+    if (effectiveDuration == null || effectiveDuration <= 0) {
+      return false;
+    }
+    return true;
+  }
+
+  void _showVideoNotReadyHint() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Video en cours de chargement, reessaye dans un instant.',
+        ),
+      ),
+    );
   }
 
   bool _isBlackKey(int note) {
@@ -996,9 +1060,17 @@ class _PracticePageState extends State<PracticePage>
 
   Future<void> _togglePractice() async {
     final next = !_isListening;
-    setState(() {
+    if (next && !_canStartPractice()) {
+      _showVideoNotReadyHint();
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _isListening = next;
+      });
+    } else {
       _isListening = next;
-    });
+    }
 
     if (next) {
       if (_videoController != null) {
@@ -1011,6 +1083,17 @@ class _PracticePageState extends State<PracticePage>
   }
 
   Future<void> _startPractice() async {
+    if (!_canStartPractice()) {
+      _showVideoNotReadyHint();
+      if (mounted) {
+        setState(() {
+          _isListening = false;
+        });
+      } else {
+        _isListening = false;
+      }
+      return;
+    }
     _lastMicFrameAt = null;
     _micRms = 0.0;
     _micFrequency = null;
@@ -1058,6 +1141,7 @@ class _PracticePageState extends State<PracticePage>
 
     // Fetch expected notes from backend
     await _loadNoteEvents();
+    await _startPracticeVideo();
     _score = 0;
     _correctNotes = 0;
     _totalNotes = _noteEvents.length;
@@ -1075,6 +1159,17 @@ class _PracticePageState extends State<PracticePage>
     } else {
       await _startMicStream();
     }
+  }
+
+  Future<void> _startPracticeVideo() async {
+    final controller = _videoController;
+    if (controller == null || !controller.value.isInitialized) {
+      return;
+    }
+    try {
+      await controller.seekTo(Duration.zero);
+      await controller.play();
+    } catch (_) {}
   }
 
   Future<void> _stopPractice({
@@ -1252,10 +1347,7 @@ class _PracticePageState extends State<PracticePage>
     }
 
     final prevAccuracy = _accuracy;
-    final startTime = _startTime ?? now;
-    final elapsed =
-        (now.difference(startTime).inMilliseconds - _latencyMs).clamp(0, 1e9) /
-        1000.0;
+    final elapsed = _practiceClockSec();
 
     // Find active expected notes
     final activeIndices = <int>[];
@@ -1394,6 +1486,197 @@ class _PracticePageState extends State<PracticePage>
     return Float32List.fromList(buffer.sublist(start));
   }
 
+  _SanitizedNotes _sanitizeNoteEvents({
+    required List<_NoteEvent> rawEvents,
+    required double minDurationSec,
+    required double maxDurationSec,
+    double? videoDurationSec,
+  }) {
+    var droppedInvalidTiming = 0;
+    var droppedTooShort = 0;
+    var droppedTooLong = 0;
+    var droppedDup = 0;
+    var droppedOutOfRange = 0;
+    var droppedOutOfVideo = 0;
+    var clampedToVideo = 0;
+    int? minPitch;
+    int? maxPitch;
+    final durationFilteredEvents = <_NoteEvent>[];
+    final longNoteSamples = <String>[];
+
+    final maxStartSec = videoDurationSec != null
+        ? videoDurationSec + _videoDurationToleranceSec
+        : null;
+
+    for (final note in rawEvents) {
+      var start = note.start;
+      var end = note.end;
+      if (start < 0 || end < 0) {
+        droppedInvalidTiming += 1;
+        continue;
+      }
+      if (videoDurationSec != null && maxStartSec != null) {
+        if (start > maxStartSec) {
+          droppedOutOfVideo += 1;
+          continue;
+        }
+        if (end > maxStartSec) {
+          droppedOutOfVideo += 1;
+          continue;
+        }
+        if (end > videoDurationSec) {
+          end = videoDurationSec;
+          clampedToVideo += 1;
+        }
+      }
+
+      final duration = end - start;
+      if (duration <= 0) {
+        droppedInvalidTiming += 1;
+        continue;
+      }
+      if (duration < minDurationSec) {
+        droppedTooShort += 1;
+        continue;
+      }
+      if (duration > maxDurationSec) {
+        droppedTooLong += 1;
+        if (longNoteSamples.length < 3) {
+          longNoteSamples.add(
+            'pitch=${note.pitch} start=${start.toStringAsFixed(2)} '
+            'end=${end.toStringAsFixed(2)} dur=${duration.toStringAsFixed(2)}',
+          );
+        }
+        continue;
+      }
+
+      final adjustedNote = end == note.end
+          ? note
+          : _NoteEvent(pitch: note.pitch, start: start, end: end);
+      durationFilteredEvents.add(adjustedNote);
+      minPitch = minPitch == null
+          ? adjustedNote.pitch
+          : min(minPitch, adjustedNote.pitch);
+      maxPitch = maxPitch == null
+          ? adjustedNote.pitch
+          : max(maxPitch, adjustedNote.pitch);
+    }
+
+    final dedupedSet = <_NoteEvent>{};
+    final sortedForDedupe = List<_NoteEvent>.from(durationFilteredEvents)
+      ..sort((a, b) {
+        final pitchCmp = a.pitch.compareTo(b.pitch);
+        if (pitchCmp != 0) {
+          return pitchCmp;
+        }
+        final startCmp = a.start.compareTo(b.start);
+        if (startCmp != 0) {
+          return startCmp;
+        }
+        return a.end.compareTo(b.end);
+      });
+    _NoteEvent? previous;
+    for (final note in sortedForDedupe) {
+      if (previous != null &&
+          note.pitch == previous.pitch &&
+          (note.start - previous.start).abs() < _dedupeToleranceSec &&
+          (note.end - previous.end).abs() < _dedupeToleranceSec) {
+        droppedDup += 1;
+        continue;
+      }
+      dedupedSet.add(note);
+      previous = note;
+    }
+    final dedupedEvents = durationFilteredEvents
+        .where((note) => dedupedSet.contains(note))
+        .toList();
+
+    final int displayFirstKey;
+    final int displayLastKey;
+    if (minPitch == null || maxPitch == null) {
+      displayFirstKey = _defaultFirstKey;
+      displayLastKey = _defaultLastKey;
+    } else {
+      displayFirstKey = max(
+        0,
+        min(127, min(_defaultFirstKey, minPitch - _rangeMargin)),
+      );
+      displayLastKey = max(
+        0,
+        min(127, max(_defaultLastKey, maxPitch + _rangeMargin)),
+      );
+    }
+    final clampedFirstKey = min(displayFirstKey, displayLastKey);
+    final clampedLastKey = max(displayFirstKey, displayLastKey);
+
+    final noteEvents = <_NoteEvent>[];
+    for (final note in dedupedEvents) {
+      if (note.pitch < clampedFirstKey || note.pitch > clampedLastKey) {
+        droppedOutOfRange += 1;
+        continue;
+      }
+      noteEvents.add(note);
+    }
+
+    if (kDebugMode) {
+      final videoLabel = videoDurationSec == null
+          ? '-'
+          : videoDurationSec.toStringAsFixed(2);
+      debugPrint(
+        'Practice notes sanitized: kept=${noteEvents.length} '
+        'minPitch=${minPitch ?? '-'} maxPitch=${maxPitch ?? '-'} '
+        'displayFirstKey=$clampedFirstKey displayLastKey=$clampedLastKey '
+        'videoDurationSec=$videoLabel '
+        'droppedTiming=$droppedInvalidTiming '
+        'droppedTooShort=$droppedTooShort '
+        'droppedTooLong=$droppedTooLong '
+        'droppedDup=$droppedDup '
+        'droppedOutOfVideo=$droppedOutOfVideo '
+        'clampedToVideo=$clampedToVideo '
+        'droppedOutOfRange=$droppedOutOfRange',
+      );
+      if (longNoteSamples.isNotEmpty) {
+        debugPrint(
+          'Practice notes long samples: ${longNoteSamples.join(' | ')}',
+        );
+      }
+    }
+
+    return _SanitizedNotes(
+      events: noteEvents,
+      displayFirstKey: clampedFirstKey,
+      displayLastKey: clampedLastKey,
+    );
+  }
+
+  void _resanitizeNoteEventsForVideoDuration() {
+    if (_rawNoteEvents.isEmpty || _notesLoading || _isListening) {
+      return;
+    }
+    final tempoBpm = widget.level.tempoGuess;
+    final minDurationSec = _minDurationSecForTempo(tempoBpm);
+    final maxDurationSec = _maxDurationSecForTempo(tempoBpm);
+    final sanitized = _sanitizeNoteEvents(
+      rawEvents: _rawNoteEvents,
+      minDurationSec: minDurationSec,
+      maxDurationSec: maxDurationSec,
+      videoDurationSec: _effectiveVideoDurationSec(),
+    );
+    if (mounted) {
+      setState(() {
+        _noteEvents = sanitized.events;
+        _displayFirstKey = sanitized.displayFirstKey;
+        _displayLastKey = sanitized.displayLastKey;
+        _notesError = sanitized.events.isEmpty ? 'Notes indisponibles' : null;
+      });
+    } else {
+      _noteEvents = sanitized.events;
+      _displayFirstKey = sanitized.displayFirstKey;
+      _displayLastKey = sanitized.displayLastKey;
+      _notesError = sanitized.events.isEmpty ? 'Notes indisponibles' : null;
+    }
+  }
+
   Future<void> _loadNoteEvents() async {
     if (mounted) {
       setState(() {
@@ -1412,12 +1695,16 @@ class _PracticePageState extends State<PracticePage>
         setState(() {
           _notesLoading = false;
           _notesError = 'Notes indisponibles';
+          _rawNoteEvents = [];
+          _noteEvents = [];
           _displayFirstKey = _defaultFirstKey;
           _displayLastKey = _defaultLastKey;
         });
       } else {
         _notesLoading = false;
         _notesError = 'Notes indisponibles';
+        _rawNoteEvents = [];
+        _noteEvents = [];
         _displayFirstKey = _defaultFirstKey;
         _displayLastKey = _defaultLastKey;
       }
@@ -1425,7 +1712,6 @@ class _PracticePageState extends State<PracticePage>
       return;
     }
 
-    final url = '/practice/notes/$jobId/${widget.level.level}';
     try {
       final token = await FirebaseAuth.instance.currentUser?.getIdToken();
       if (token == null) {
@@ -1440,118 +1726,31 @@ class _PracticePageState extends State<PracticePage>
       DebugJobGuard.attachToDio(dio);
       dio.options.headers['Authorization'] = 'Bearer $token';
 
-      final resp = await dio.get(url);
-      final data = resp.data;
-      if (data == null || data['notes'] == null) {
-        throw Exception('Notes payload missing');
-      }
-      final List<dynamic> notesJson = data['notes'];
+      final expectedNotes = await _fetchExpectedNotes(dio, jobId);
+      final url = '/practice/notes/$jobId/${widget.level.level}';
       final rawEvents =
-          notesJson
-              .map(
-                (n) => _NoteEvent(
-                  pitch: n['pitch'] as int,
-                  start: (n['start'] as num).toDouble(),
-                  end: (n['end'] as num).toDouble(),
-                ),
-              )
-              .toList()
-            ..sort((a, b) => a.start.compareTo(b.start));
+          expectedNotes ??
+          await () async {
+            if (kDebugMode) {
+              debugPrint('Practice notes: fallback to MIDI notes url=$url');
+            }
+            final resp = await dio.get(url);
+            final data = _decodeNotesPayload(resp.data);
+            return _parseNoteEvents(data['notes']);
+          }();
+      _rawNoteEvents = rawEvents;
       final tempoBpm = widget.level.tempoGuess;
-      final secondsPerBeat = tempoBpm != null && tempoBpm > 0
-          ? 60.0 / tempoBpm
-          : null;
-      final minDurationSec = secondsPerBeat != null
-          ? max(_minNoteDurationSec, secondsPerBeat / 32)
-          : _minNoteDurationSec;
-      var droppedInvalidTiming = 0;
-      var droppedTooShort = 0;
-      int? minPitch;
-      int? maxPitch;
-      final durationFilteredEvents = <_NoteEvent>[];
-      for (final note in rawEvents) {
-        final duration = note.end - note.start;
-        if (duration <= 0) {
-          droppedInvalidTiming += 1;
-          continue;
-        }
-        if (duration < minDurationSec) {
-          droppedTooShort += 1;
-          continue;
-        }
-        durationFilteredEvents.add(note);
-        minPitch = minPitch == null ? note.pitch : min(minPitch, note.pitch);
-        maxPitch = maxPitch == null ? note.pitch : max(maxPitch, note.pitch);
-      }
-
-      var droppedDup = 0;
-      final dedupedSet = <_NoteEvent>{};
-      final sortedForDedupe = List<_NoteEvent>.from(durationFilteredEvents)
-        ..sort((a, b) {
-          final pitchCmp = a.pitch.compareTo(b.pitch);
-          if (pitchCmp != 0) {
-            return pitchCmp;
-          }
-          final startCmp = a.start.compareTo(b.start);
-          if (startCmp != 0) {
-            return startCmp;
-          }
-          return a.end.compareTo(b.end);
-        });
-      _NoteEvent? previous;
-      for (final note in sortedForDedupe) {
-        if (previous != null &&
-            note.pitch == previous.pitch &&
-            (note.start - previous.start).abs() < _dedupeToleranceSec &&
-            (note.end - previous.end).abs() < _dedupeToleranceSec) {
-          droppedDup += 1;
-          continue;
-        }
-        dedupedSet.add(note);
-        previous = note;
-      }
-      final dedupedEvents = durationFilteredEvents
-          .where((note) => dedupedSet.contains(note))
-          .toList();
-
-      final int displayFirstKey;
-      final int displayLastKey;
-      if (minPitch == null || maxPitch == null) {
-        displayFirstKey = _defaultFirstKey;
-        displayLastKey = _defaultLastKey;
-      } else {
-        displayFirstKey = max(
-          0,
-          min(127, min(_defaultFirstKey, minPitch - _rangeMargin)),
-        );
-        displayLastKey = max(
-          0,
-          min(127, max(_defaultLastKey, maxPitch + _rangeMargin)),
-        );
-      }
-      final clampedFirstKey = min(displayFirstKey, displayLastKey);
-      final clampedLastKey = max(displayFirstKey, displayLastKey);
-
-      var droppedOutOfRange = 0;
-      final noteEvents = <_NoteEvent>[];
-      for (final note in dedupedEvents) {
-        if (note.pitch < clampedFirstKey || note.pitch > clampedLastKey) {
-          droppedOutOfRange += 1;
-          continue;
-        }
-        noteEvents.add(note);
-      }
-      if (kDebugMode) {
-        debugPrint(
-          'Practice notes sanitized: kept=${noteEvents.length} '
-          'minPitch=${minPitch ?? '-'} maxPitch=${maxPitch ?? '-'} '
-          'displayFirstKey=$clampedFirstKey displayLastKey=$clampedLastKey '
-          'droppedTiming=$droppedInvalidTiming '
-          'droppedTooShort=$droppedTooShort '
-          'droppedDup=$droppedDup '
-          'droppedOutOfRange=$droppedOutOfRange',
-        );
-      }
+      final minDurationSec = _minDurationSecForTempo(tempoBpm);
+      final maxDurationSec = _maxDurationSecForTempo(tempoBpm);
+      final sanitized = _sanitizeNoteEvents(
+        rawEvents: rawEvents,
+        minDurationSec: minDurationSec,
+        maxDurationSec: maxDurationSec,
+        videoDurationSec: _effectiveVideoDurationSec(),
+      );
+      final noteEvents = sanitized.events;
+      final clampedFirstKey = sanitized.displayFirstKey;
+      final clampedLastKey = sanitized.displayLastKey;
 
       if (mounted) {
         setState(() {
@@ -1571,10 +1770,11 @@ class _PracticePageState extends State<PracticePage>
     } on DioException catch (e) {
       final status = e.response?.statusCode;
       debugPrint(
-        'Practice notes error: midiUrl=$midiUrl url=$url status=$status error=$e',
+        'Practice notes error: midiUrl=$midiUrl status=$status error=$e',
       );
       if (mounted) {
         setState(() {
+          _rawNoteEvents = [];
           _noteEvents = [];
           _notesLoading = false;
           _notesError = 'Notes indisponibles';
@@ -1582,6 +1782,7 @@ class _PracticePageState extends State<PracticePage>
           _displayLastKey = _defaultLastKey;
         });
       } else {
+        _rawNoteEvents = [];
         _noteEvents = [];
         _notesLoading = false;
         _notesError = 'Notes indisponibles';
@@ -1589,9 +1790,10 @@ class _PracticePageState extends State<PracticePage>
         _displayLastKey = _defaultLastKey;
       }
     } catch (e) {
-      debugPrint('Practice notes error: midiUrl=$midiUrl url=$url error=$e');
+      debugPrint('Practice notes error: midiUrl=$midiUrl error=$e');
       if (mounted) {
         setState(() {
+          _rawNoteEvents = [];
           _noteEvents = [];
           _notesLoading = false;
           _notesError = 'Notes indisponibles';
@@ -1599,6 +1801,7 @@ class _PracticePageState extends State<PracticePage>
           _displayLastKey = _defaultLastKey;
         });
       } else {
+        _rawNoteEvents = [];
         _noteEvents = [];
         _notesLoading = false;
         _notesError = 'Notes indisponibles';
@@ -1619,6 +1822,85 @@ class _PracticePageState extends State<PracticePage>
       }
     } catch (_) {}
     return null;
+  }
+
+  String _expectedNotesPath(String jobId, int level) {
+    return '/media/out/${jobId}_expected_notes_L$level.json';
+  }
+
+  Map<String, dynamic> _decodeNotesPayload(dynamic data) {
+    if (data is String) {
+      final decoded = jsonDecode(data);
+      if (decoded is Map<String, dynamic>) {
+        return decoded;
+      }
+      if (decoded is Map) {
+        return Map<String, dynamic>.from(decoded);
+      }
+      throw const FormatException('Invalid notes payload');
+    }
+    if (data is Map<String, dynamic>) {
+      return data;
+    }
+    if (data is Map) {
+      return Map<String, dynamic>.from(data);
+    }
+    throw const FormatException('Invalid notes payload');
+  }
+
+  List<_NoteEvent> _parseNoteEvents(dynamic notesValue) {
+    if (notesValue is! List) {
+      throw const FormatException('Notes payload missing');
+    }
+    final events = <_NoteEvent>[];
+    for (final entry in notesValue) {
+      if (entry is! Map) {
+        continue;
+      }
+      final pitch = entry['pitch'];
+      final start = entry['start'];
+      final end = entry['end'];
+      if (pitch is! num || start is! num || end is! num) {
+        continue;
+      }
+      events.add(
+        _NoteEvent(
+          pitch: pitch.toInt(),
+          start: start.toDouble(),
+          end: end.toDouble(),
+        ),
+      );
+    }
+    events.sort((a, b) => a.start.compareTo(b.start));
+    return events;
+  }
+
+  Future<List<_NoteEvent>?> _fetchExpectedNotes(Dio dio, String jobId) async {
+    final url = _expectedNotesPath(jobId, widget.level.level);
+    try {
+      final resp = await dio.get(url);
+      final data = _decodeNotesPayload(resp.data);
+      final notes = _parseNoteEvents(data['notes']);
+      if (kDebugMode) {
+        debugPrint(
+          'Practice notes: loaded expected_notes $url count=${notes.length}',
+        );
+      }
+      return notes;
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      if (kDebugMode) {
+        debugPrint(
+          'Practice notes: expected_notes error url=$url status=$status error=$e',
+        );
+      }
+      return null;
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('Practice notes: expected_notes parse error url=$url $e');
+      }
+      return null;
+    }
   }
 
   Future<void> _calibrateLatency({bool force = false}) async {
@@ -1728,7 +2010,7 @@ class _PracticePageState extends State<PracticePage>
       final now = DateTime.now();
       _lastMidiFrameAt = now;
       _lastMidiNote = note;
-      final elapsed = now.difference(_startTime!).inMilliseconds / 1000.0;
+      final elapsed = _practiceClockSec();
 
       // Find active expected notes
       final activeIndices = <int>[];
@@ -1812,6 +2094,10 @@ class _PracticePageState extends State<PracticePage>
       await _videoController!.initialize();
       _videoController!.setLooping(false);
       await _videoController!.pause();
+      final duration = _videoController!.value.duration;
+      _videoDurationSec = duration > Duration.zero
+          ? duration.inMilliseconds / 1000.0
+          : null;
       _videoController!.addListener(() {
         if (_videoController == null) return;
         final value = _videoController!.value;
@@ -1835,6 +2121,7 @@ class _PracticePageState extends State<PracticePage>
             ? 16 / 9
             : _videoController!.value.aspectRatio,
       );
+      _resanitizeNoteEventsForVideoDuration();
 
       setState(() {
         _videoLoading = false;
@@ -1852,6 +2139,7 @@ class _PracticePageState extends State<PracticePage>
     _chewieController = null;
     _videoController?.dispose();
     _videoController = null;
+    _videoDurationSec = null;
   }
 
   String _resolveBackendUrl(String url) {
@@ -2091,9 +2379,6 @@ class _PracticePageState extends State<PracticePage>
   }
 
   Widget _buildNotesOverlay(BoxConstraints constraints) {
-    if (_noteEvents.isEmpty) {
-      return const SizedBox.shrink();
-    }
     final screenWidth = MediaQuery.of(context).size.width;
     final horizontalPadding = _practiceHorizontalPadding(screenWidth);
     final availableWidth = min(
@@ -2103,7 +2388,9 @@ class _PracticePageState extends State<PracticePage>
     final now = DateTime.now();
     final successFlashActive = _isSuccessFlashActive(now);
     final wrongFlashActive = _isWrongFlashActive(now);
-    final targetNote = _uiTargetNote();
+    final shouldPaintNotes = _isListening && _startTime != null;
+    final targetNote = shouldPaintNotes ? _uiTargetNote() : null;
+    final noteEvents = shouldPaintNotes ? _noteEvents : const <_NoteEvent>[];
     final layout = _computeKeyboardLayout(availableWidth);
     final scrollOffset = layout.shouldScroll ? _keyboardScrollOffset : 0.0;
     double noteToX(int note) {
@@ -2129,8 +2416,8 @@ class _PracticePageState extends State<PracticePage>
               key: const Key('practice_notes_overlay'),
               size: Size(layout.displayWidth, constraints.maxHeight),
               painter: _FallingNotesPainter(
-                noteEvents: _noteEvents,
-                elapsedSec: _currentElapsedSec(),
+                noteEvents: noteEvents,
+                elapsedSec: shouldPaintNotes ? _practiceClockSec() : 0.0,
                 whiteWidth: layout.whiteWidth,
                 blackWidth: layout.blackWidth,
                 fallAreaHeight: constraints.maxHeight,
@@ -2228,6 +2515,18 @@ class _NoteEvent {
   final double start;
   final double end;
   _NoteEvent({required this.pitch, required this.start, required this.end});
+}
+
+class _SanitizedNotes {
+  final List<_NoteEvent> events;
+  final int displayFirstKey;
+  final int displayLastKey;
+
+  const _SanitizedNotes({
+    required this.events,
+    required this.displayFirstKey,
+    required this.displayLastKey,
+  });
 }
 
 class _KeyboardLayout {

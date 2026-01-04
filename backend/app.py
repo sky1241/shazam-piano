@@ -19,7 +19,7 @@ from loguru import logger
 
 from config import settings, init_directories, get_level_config, ERROR_MESSAGES
 from inference import process_audio_to_midi
-from arranger import arrange_level
+from arranger import arrange_level, export_expected_notes_json
 from render import render_level_video
 from identify import identify_audio
 from separation import separate_melody
@@ -82,6 +82,8 @@ class ProcessResponse(BaseModel):
     identified_title: Optional[str] = None
     identified_artist: Optional[str] = None
     identified_album: Optional[str] = None
+    expected_notes_urls: Optional[Dict[str, str]] = None
+    melody_quality: Optional[float] = None
 
 
 class JobProgressResponse(BaseModel):
@@ -93,6 +95,8 @@ class JobProgressResponse(BaseModel):
     identified_title: Optional[str] = None
     identified_artist: Optional[str] = None
     identified_album: Optional[str] = None
+    expected_notes_urls: Optional[Dict[str, str]] = None
+    melody_quality: Optional[float] = None
 
 
 class HealthResponse(BaseModel):
@@ -203,6 +207,8 @@ def _build_job_response(job: dict) -> JobProgressResponse:
         identified_title=identified.get("title"),
         identified_artist=identified.get("artist"),
         identified_album=identified.get("album"),
+        expected_notes_urls=job.get("expected_notes_urls"),
+        melody_quality=job.get("melody_quality"),
     )
 
 
@@ -313,6 +319,8 @@ async def _run_job_generation(
 
         key_guess = metadata.get("key", "C")
         tempo_guess = metadata.get("tempo", 120)
+        melody_quality = metadata.get("melody_quality")
+        expected_notes_urls: Dict[str, str] = {}
 
         for level in requested_levels:
             await _update_job_level(job_id, level, {"status": "processing"})
@@ -334,7 +342,22 @@ async def _run_job_generation(
                     job_id=job_id,
                     with_audio=with_audio,
                 )
+                duration_sec = arranged_midi.get_end_time()
+                max_duration = settings.FULL_VIDEO_MAX_DURATION_SEC
+                if max_duration:
+                    duration_sec = min(duration_sec, max_duration)
+                expected_notes_path = export_expected_notes_json(
+                    midi=arranged_midi,
+                    output_dir=settings.OUTPUT_DIR,
+                    job_id=job_id,
+                    level=level,
+                    duration_sec=duration_sec,
+                    melody_quality=melody_quality,
+                )
                 base = settings.BASE_URL.rstrip("/")
+                expected_notes_urls[f"L{level}"] = (
+                    f"{base}/media/out/{expected_notes_path.name}"
+                )
                 await _update_job_level(
                     job_id,
                     level,
@@ -371,6 +394,8 @@ async def _run_job_generation(
             if job:
                 job["status"] = "complete"
                 job["updated_at"] = _now_iso()
+                job["expected_notes_urls"] = expected_notes_urls or None
+                job["melody_quality"] = melody_quality
         logger.success(f"Job {job_id} completed")
     except Exception as fatal_error:
         logger.error(f"Job {job_id} fatal error: {fatal_error}")
@@ -456,6 +481,8 @@ async def process_audio(
         # Process audio and generate videos
         results = []
         identified = None
+        expected_notes_urls: Dict[str, str] = {}
+        melody_quality: Optional[float] = None
         
         try:
             # Optional: identify track via ACRCloud
@@ -504,6 +531,7 @@ async def process_audio(
                 
                 key_guess = metadata.get("key", "C")
                 tempo_guess = metadata.get("tempo", 120)
+                melody_quality = metadata.get("melody_quality")
                 num_notes = metadata.get("num_notes", 0)
                 
                 logger.success(f"=" * 60)
@@ -546,9 +574,24 @@ async def process_audio(
                         job_id=job_id,
                         with_audio=with_audio
                     )
+                    duration_sec = arranged_midi.get_end_time()
+                    max_duration = settings.FULL_VIDEO_MAX_DURATION_SEC
+                    if max_duration:
+                        duration_sec = min(duration_sec, max_duration)
+                    expected_notes_path = export_expected_notes_json(
+                        midi=arranged_midi,
+                        output_dir=settings.OUTPUT_DIR,
+                        job_id=job_id,
+                        level=level,
+                        duration_sec=duration_sec,
+                        melody_quality=melody_quality,
+                    )
                     
                     # Build result
                     base = settings.BASE_URL.rstrip("/")
+                    expected_notes_urls[f"L{level}"] = (
+                        f"{base}/media/out/{expected_notes_path.name}"
+                    )
                     results.append(
                         LevelResult(
                             level=level,
@@ -608,6 +651,8 @@ async def process_audio(
             identified_title=identified.get("title") if identified else None,
             identified_artist=identified.get("artist") if identified else None,
             identified_album=identified.get("album") if identified else None,
+            expected_notes_urls=expected_notes_urls or None,
+            melody_quality=melody_quality,
         )
 
         # Persist job metadata to Firestore

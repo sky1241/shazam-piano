@@ -209,6 +209,27 @@ class ProcessNotifier extends StateNotifier<ProcessState> {
     }
   }
 
+  /// Convenience wrapper for upload + start generation.
+  Future<void> processAudio({
+    required File audioFile,
+    bool withAudio = false,
+    List<int> levels = const [1, 2, 3, 4],
+  }) async {
+    await createJob(
+      audioFile: audioFile,
+      withAudio: withAudio,
+      levels: levels,
+    );
+    if (state.jobId == null || state.error != null) {
+      return;
+    }
+    await startJob(
+      jobId: state.jobId!,
+      withAudio: withAudio,
+      levels: levels,
+    );
+  }
+
   /// Start generation for a job.
   Future<void> startJob({
     required String jobId,

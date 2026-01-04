@@ -174,6 +174,14 @@ flutter test test/widgets/
 flutter test integration_test/
 ```
 
+### VS Code analysis issues
+
+If `flutter analyze` and `flutter test` are clean but VS Code still reports
+undefined symbols:
+- Run "Dart: Restart Analysis Server"
+- Delete `app/.dart_tool` and `app/build`
+- Run `flutter pub get`
+
 ## 🏗️ Build
 
 ### Android
