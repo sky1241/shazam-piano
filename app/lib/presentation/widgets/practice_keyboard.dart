@@ -15,13 +15,15 @@ class PracticeKeyboard extends StatelessWidget {
   final int firstKey;
   final int lastKey;
   final List<int> blackKeys;
-  final int? targetNote;
+  final Set<int> targetNotes;
   final int? detectedNote;
   final int? successFlashNote;
   final bool successFlashActive;
   final int? wrongFlashNote;
   final bool wrongFlashActive;
-  final double leftPadding;
+  final double Function(int) noteToXFn;
+  final bool showDebugLabels;
+  final bool showMidiNumbers;
 
   const PracticeKeyboard({
     super.key,
@@ -33,13 +35,15 @@ class PracticeKeyboard extends StatelessWidget {
     required this.firstKey,
     required this.lastKey,
     required this.blackKeys,
-    required this.targetNote,
+    required this.targetNotes,
     required this.detectedNote,
     this.successFlashNote,
     this.successFlashActive = false,
     this.wrongFlashNote,
     this.wrongFlashActive = false,
-    required this.leftPadding,
+    required this.noteToXFn,
+    this.showDebugLabels = false,
+    this.showMidiNumbers = false,
   });
 
   static double noteToX({
@@ -93,7 +97,7 @@ class PracticeKeyboard extends StatelessWidget {
             children: [
               for (int i = 0; i < whiteNotes.length; i++)
                 Positioned(
-                  left: leftPadding + (i * whiteWidth),
+                  left: _resolveNoteToX(whiteNotes[i]),
                   child: _buildPianoKey(
                     context,
                     whiteNotes[i],
@@ -105,7 +109,7 @@ class PracticeKeyboard extends StatelessWidget {
               for (int note = firstKey; note <= lastKey; note++)
                 if (_isBlackKey(note))
                   Positioned(
-                    left: leftPadding + _noteToX(note),
+                    left: _resolveNoteToX(note),
                     child: _buildPianoKey(
                       context,
                       note,
@@ -125,14 +129,8 @@ class PracticeKeyboard extends StatelessWidget {
     return blackKeys.contains(note % 12);
   }
 
-  double _noteToX(int note) {
-    return noteToX(
-      note: note,
-      firstKey: firstKey,
-      whiteWidth: whiteWidth,
-      blackWidth: blackWidth,
-      blackKeys: blackKeys,
-    );
+  double _resolveNoteToX(int note) {
+    return noteToXFn(note);
   }
 
   String _noteLabel(int midi, {bool withOctave = false}) {
@@ -165,7 +163,7 @@ class PracticeKeyboard extends StatelessWidget {
     required double width,
     required double height,
   }) {
-    final isExpected = note == targetNote;
+    final isExpected = targetNotes.contains(note);
     final isDetected = note == detectedNote;
 
     Color keyColor;
@@ -187,10 +185,11 @@ class PracticeKeyboard extends StatelessWidget {
       keyColor = AppColors.whiteKey;
     }
 
-    final isC = note % 12 == 0;
-    final label = isBlack
-        ? ''
-        : (isC ? _noteLabel(note, withOctave: true) : '');
+    final showLabel = !isBlack || showDebugLabels;
+    final baseLabel = _noteLabel(note, withOctave: true);
+    final label = showLabel
+        ? (showMidiNumbers ? '$baseLabel ($note)' : baseLabel)
+        : '';
     final labelMaxWidth = max(0.0, width - 6);
     final labelFontSize = max(12.0, min(16.0, width * 0.75));
     final labelColor = isBlack
