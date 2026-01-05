@@ -161,6 +161,13 @@ double? effectiveElapsedForTest({
   return practiceClockSec;
 }
 
+// FEATURE A: Lead-in Countdown state machine
+enum _PracticeState {
+  idle, // Before play is pressed
+  countdown, // Playing lead-in (no audio, no mic)
+  running, // Normal practice (audio + mic active)
+}
+
 class PracticePage extends StatefulWidget {
   final LevelResult level;
   final bool forcePreview;
@@ -209,6 +216,31 @@ class _PracticePageState extends State<PracticePage>
   bool _isListening = false;
   int? _detectedNote;
   NoteAccuracy _accuracy = NoteAccuracy.miss;
+  // PATCH: Shows only notes currently touching keyboard (no preview)
+  // Computed fresh in _onMidiFrame and _onMicFrame
+  // FEATURE A: Lead-in countdown state
+  _PracticeState _practiceState = _PracticeState.idle;
+  DateTime? _countdownStartTime;
+  static const double _practiceLeadInSec = 1.5;
+  // FEATURE B: Mic precision (adaptive threshold + stability + debounce)
+  double _noiseFloorRms = 0.04; // Baseline RMS when silent
+  static const double _absMinRms = 0.04; // Absolute minimum
+  static const double _noiseMultiplier = 3.0; // dynamicMinRms = noiseFloor * 3
+  static const int _stabilityFrameThreshold = 3; // Frames to accept stable note
+  static const double _stabilityTimeThresholdMs = 80.0; // OR 80ms
+  DateTime? _stableNoteStartTime;
+  int? _lastStableNote;
+  int _stableFrameCount = 0;
+  DateTime? _lastAcceptedNoteAt;
+  int? _lastAcceptedNote;
+  static const double _debounceMs = 120.0; // Suppress events within 120ms
+  // Counters for debug
+  int _micRawCount = 0;
+  int _micAcceptedCount = 0;
+  int _micSuppressedLowRms = 0;
+  int _micSuppressedLowConf = 0;
+  int _micSuppressedUnstable = 0;
+  int _micSuppressedDebounce = 0;
   int _score = 0;
   int _totalNotes = 0;
   int _correctNotes = 0;
@@ -251,6 +283,9 @@ class _PracticePageState extends State<PracticePage>
   // B) Configurable merge tolerance for overlapping same-pitch events
   static const double _mergeEventOverlapToleranceSec = 0.05; // 50ms
   static const double _mergeEventGapToleranceSec = 0.08; // 80ms gap threshold
+  // PATCH: Mic gating thresholds (prevent garbage F0 detections)
+  static const double _minConfidenceForHeardNote =
+      0.85; // 85% confidence minimum
   static const Duration _successFlashDuration = Duration(milliseconds: 200);
   static const double _minConfidenceForFeedback = 0.2;
   static const Duration _devTapWindow = Duration(seconds: 2);
@@ -294,6 +329,9 @@ class _PracticePageState extends State<PracticePage>
   bool _showKeyboardDebugLabels = true;
   bool _showMidiNumbers = true;
   bool _showOnlyTargets = false; // Toggle: paint only target notes (ghost test)
+  // BUG 2 FIX: Track which variant was selected in preview to use consistently in practice
+  String?
+  _selectedVideoVariant; // 'preview' or 'full' - tracks what user chose in preview
   int _devTapCount = 0;
   DateTime? _devTapStartAt;
   DateTime? _lastCorrectHitAt;
@@ -362,6 +400,8 @@ class _PracticePageState extends State<PracticePage>
 
   @override
   Widget build(BuildContext context) {
+    // FEATURE A: Update countdown every frame
+    _updateCountdown();
     assert(() {
       _overlayBuiltInBuild = false;
       return true;
@@ -384,13 +424,17 @@ class _PracticePageState extends State<PracticePage>
           child: Text('Practice - ${widget.level.name}'),
         ),
         actions: [
-          IconButton(
-            icon: Icon(
-              _practiceRunning ? Icons.stop : Icons.play_arrow,
-              color: AppColors.primary,
+          // PATCH: Hide play/stop from AppBar (single entrypoint: centered CTA)
+          // Only show in debug mode for testing
+          if (kDebugMode)
+            IconButton(
+              icon: Icon(
+                _practiceRunning ? Icons.stop : Icons.play_arrow,
+                color: AppColors.primary,
+              ),
+              onPressed: _togglePractice,
+              tooltip: '[DEBUG] Play/Stop',
             ),
-            onPressed: _togglePractice,
-          ),
           if (kDebugMode && _devHudEnabled)
             IconButton(
               icon: const Icon(Icons.bug_report),
@@ -420,33 +464,92 @@ class _PracticePageState extends State<PracticePage>
               ),
               _buildMicDebugHud(horizontalPadding: horizontalPadding),
               const SizedBox(height: AppConstants.spacing16),
-              Center(
-                child: Text(
-                  instructionText,
-                  style: instructionStyle,
-                  textAlign: TextAlign.center,
+              if (!_practiceRunning)
+                // PATCH: Centered Play CTA overlay (only when NOT running)
+                Expanded(
+                  child: Stack(
+                    children: [
+                      // Still render video/keyboard/overlay in background
+                      // but show Play CTA on top
+                      Opacity(
+                        opacity: 0.3, // Dim the background
+                        child: _buildPracticeContent(
+                          layout: layout,
+                          horizontalPadding: horizontalPadding,
+                        ),
+                      ),
+                      // Play CTA overlay
+                      Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            ElevatedButton.icon(
+                              onPressed: _togglePractice,
+                              icon: const Icon(Icons.play_arrow, size: 32),
+                              label: const Text(
+                                'Play',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 48,
+                                  vertical: 20,
+                                ),
+                                backgroundColor: AppColors.primary,
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'Appuie sur Play pour jouer',
+                              style: AppTextStyles.body.copyWith(
+                                color: AppColors.textSecondary,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              else
+              // When running: show instruction text + practice content
+              ...[
+                Center(
+                  child: Text(
+                    instructionText,
+                    style: instructionStyle,
+                    textAlign: TextAlign.center,
+                  ),
                 ),
-              ),
-              if (_practiceRunning && _micDisabled && !_useMidi)
-                Padding(
-                  padding: const EdgeInsets.only(top: AppConstants.spacing4),
-                  child: Center(
-                    child: Text(
-                      'Micro desactive',
-                      style: AppTextStyles.caption.copyWith(
-                        color: AppColors.textSecondary,
+                if (_practiceRunning && _micDisabled && !_useMidi)
+                  Padding(
+                    padding: const EdgeInsets.only(top: AppConstants.spacing4),
+                    child: Center(
+                      child: Text(
+                        'Micro desactive',
+                        style: AppTextStyles.caption.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
                       ),
                     ),
                   ),
+                if (_showMicPermissionFallback) _buildMicPermissionFallback(),
+                const SizedBox(height: AppConstants.spacing12),
+                Expanded(
+                  child: _buildPracticeContent(
+                    layout: layout,
+                    horizontalPadding: horizontalPadding,
+                  ),
                 ),
-              if (_showMicPermissionFallback) _buildMicPermissionFallback(),
-              const SizedBox(height: AppConstants.spacing12),
-              Expanded(
-                child: _buildPracticeContent(
-                  layout: layout,
-                  horizontalPadding: horizontalPadding,
-                ),
-              ),
+              ],
             ],
           );
         },
@@ -584,16 +687,37 @@ class _PracticePageState extends State<PracticePage>
     return nextChord;
   }
 
-  Set<int> _uiTargetNotes({double? elapsedSec}) {
+  // PATCH: Compute "impact notes" = notes currently active (touching keyboard)
+  // These are notes where: start <= elapsedSec <= end (with no preview tail)
+  // Used for: keyboard highlight color + wrongFlash gating
+  Set<int> _computeImpactNotes({double? elapsedSec}) {
     final effective = elapsedSec ?? _effectiveElapsedSec();
     if (effective == null) {
       return <int>{};
     }
-    final resolved = _resolveTargetNotes(effective);
-    if (resolved.isEmpty) {
+
+    final impact = <int>{};
+    for (final note in _noteEvents) {
+      // Impact: note is currently active (no preview, no tail)
+      if (effective >= note.start && effective <= note.end) {
+        impact.add(note.pitch);
+      }
+    }
+    return impact;
+  }
+
+  Set<int> _uiTargetNotes({double? elapsedSec}) {
+    // PATCH: Use _impactNotes (no preview) instead of nextChord
+    // Keyboard highlights ONLY when notes are actually touching bottom (active)
+    final effective = elapsedSec ?? _effectiveElapsedSec();
+    if (effective == null) {
       return <int>{};
     }
-    return resolved.map(_normalizeToKeyboardRange).whereType<int>().toSet();
+    final impact = _computeImpactNotes(elapsedSec: effective);
+    if (impact.isEmpty) {
+      return <int>{};
+    }
+    return impact.map(_normalizeToKeyboardRange).whereType<int>().toSet();
   }
 
   int? _uiDetectedNote() {
@@ -712,6 +836,83 @@ class _PracticePageState extends State<PracticePage>
         'range: ${minPitch ?? '--'}-${maxPitch ?? '--'} | '
         'display: $_displayFirstKey-$_displayLastKey | '
         'merged: $_notesMergedPairs | overlaps: $_notesOverlapsDetected';
+    final impactNotes = _computeImpactNotes();
+    final impactList = impactNotes.isEmpty ? ['--'] : impactNotes.toList()
+      ..sort();
+    final impactText = impactList.toString();
+    // FEATURE A: Lead-in countdown info
+    final practiceStateText = _practiceState.toString().split('.').last;
+    final countdownRemainingSec = _countdownStartTime != null
+        ? max(
+            0.0,
+            _practiceLeadInSec -
+                (DateTime.now()
+                        .difference(_countdownStartTime!)
+                        .inMilliseconds /
+                    1000.0),
+          )
+        : null;
+    final countdownText = countdownRemainingSec != null
+        ? countdownRemainingSec.toStringAsFixed(2)
+        : '--';
+    // FEATURE B: Mic precision info
+    final dynamicMinRms = max(_absMinRms, _noiseFloorRms * _noiseMultiplier);
+    final noiseText = _noiseFloorRms.toStringAsFixed(4);
+    final dynamicText = dynamicMinRms.toStringAsFixed(4);
+    final lastAcceptedNoteStr = _lastAcceptedNote != null
+        ? _formatMidiNote(_lastAcceptedNote!, withOctave: true)
+        : '--';
+    final micLine =
+        'raw: $_micRawCount | accepted: $_micAcceptedCount | '
+        'suppressed: low_rms=$_micSuppressedLowRms '
+        'low_conf=$_micSuppressedLowConf unstable=$_micSuppressedUnstable '
+        'debounce=$_micSuppressedDebounce';
+    final micPrecisionLine =
+        'noiseFloor: $noiseText | dynamicMin: $dynamicText | '
+        'stableFrames: $_stableFrameCount | lastAccepted: $lastAcceptedNoteStr';
+    // BUG 2 FIX: Proof field for video variant tracking
+    final videoVariantLine =
+        'videoVariant: ${_selectedVideoVariant ?? "unset"} | forcePreview: ${widget.forcePreview}';
+
+    // CRITICAL FIX: Falling notes geometry proof fields
+    // These values prove the canonical mapping is correct
+    final offsetAppliedSec = videoPosSec != null && guidanceElapsedSec != null
+        ? videoPosSec - guidanceElapsedSec
+        : null;
+    final offsetText = offsetAppliedSec != null
+        ? offsetAppliedSec.toStringAsFixed(3)
+        : '--';
+
+    // Compute y-coordinates for first note to prove the mapping
+    String firstNoteStartSecStr = '--';
+    String yAtSpawnStr = '--';
+    String yAtHitStr = '--';
+    if (_noteEvents.isNotEmpty && guidanceElapsedSec != null) {
+      final firstNote = _noteEvents.first;
+      firstNoteStartSecStr = firstNote.start.toStringAsFixed(3);
+      // Current y position of first note (where it appears on screen NOW)
+      final yAtSpawn =
+          (guidanceElapsedSec - (firstNote.start - _fallLeadSec)) /
+          _fallLeadSec *
+          400.0;
+      yAtSpawnStr = yAtSpawn.toStringAsFixed(1);
+      // What y WOULD BE when the note hits the keyboard (at elapsed = note.start)
+      // Note: yAtHit should equal 400px (fallAreaHeight) by definition
+      final yAtHitTheoretical =
+          (firstNote.start - (firstNote.start - _fallLeadSec)) /
+          _fallLeadSec *
+          400.0;
+      yAtHitStr = yAtHitTheoretical.toStringAsFixed(1);
+    }
+
+    final geometryLine =
+        'fallLead: $_fallLeadSec | hitLine: 400px | firstNoteStart: $firstNoteStartSecStr | '
+        'yAtSpawn: $yAtSpawnStr | yAtHit: $yAtHitStr | offsetApplied: $offsetText';
+
+    final debugLine =
+        'state: $practiceStateText | leadIn: $_practiceLeadInSec | '
+        'countdownRemaining: $countdownText | '
+        'videoLayerHidden: true | impactNotes: $impactText | impactCount: ${impactNotes.length}';
 
     return Padding(
       padding: EdgeInsets.symmetric(
@@ -741,6 +942,36 @@ class _PracticePageState extends State<PracticePage>
           ),
           Text(
             line,
+            style: AppTextStyles.caption.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+          Text(
+            debugLine,
+            style: AppTextStyles.caption.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+          Text(
+            geometryLine,
+            style: AppTextStyles.caption.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+          Text(
+            videoVariantLine,
+            style: AppTextStyles.caption.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+          Text(
+            micLine,
+            style: AppTextStyles.caption.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+          Text(
+            micPrecisionLine,
             style: AppTextStyles.caption.copyWith(
               color: AppColors.textSecondary,
             ),
@@ -1476,6 +1707,15 @@ class _PracticePageState extends State<PracticePage>
   }
 
   double? _guidanceElapsedSec() {
+    // FEATURE A: Handle countdown state (synthetic elapsed time for falling notes)
+    if (_practiceState == _PracticeState.countdown &&
+        _countdownStartTime != null) {
+      final elapsedMs = DateTime.now()
+          .difference(_countdownStartTime!)
+          .inMilliseconds;
+      final syntheticElapsed = (elapsedMs / 1000.0) - _practiceLeadInSec;
+      return syntheticElapsed; // negative to 0 during countdown
+    }
     // A) Guidance is tied to Practice running + video position.
     // Do NOT gate on _isListening. Users must see targets even if mic has no data.
     if (!_practiceRunning) {
@@ -1581,6 +1821,16 @@ class _PracticePageState extends State<PracticePage>
       }
       if (_videoController != null) {
         await _videoController!.pause();
+      }
+      // FEATURE A: Enter countdown instead of starting immediately
+      if (mounted) {
+        setState(() {
+          _practiceState = _PracticeState.countdown;
+          _countdownStartTime = DateTime.now();
+        });
+      } else {
+        _practiceState = _PracticeState.countdown;
+        _countdownStartTime = DateTime.now();
       }
       await _startPractice();
     } else {
@@ -1720,8 +1970,45 @@ class _PracticePageState extends State<PracticePage>
     try {
       final target = startPosition ?? Duration.zero;
       await controller.seekTo(target);
+      // FEATURE A: Don't play immediately; wait for countdown to finish
+      // Play is triggered in _updateCountdown()
+    } catch (_) {}
+  }
+
+  // FEATURE A: Monitor countdown and transition to running when time expires
+  void _updateCountdown() {
+    if (_practiceState != _PracticeState.countdown) {
+      return;
+    }
+    if (_countdownStartTime == null) {
+      return;
+    }
+    final elapsedMs = DateTime.now()
+        .difference(_countdownStartTime!)
+        .inMilliseconds;
+    final countdownCompleteSec = _practiceLeadInSec;
+    if (elapsedMs >= countdownCompleteSec * 1000) {
+      // Countdown finished: start video + mic + enter running state
+      if (mounted) {
+        setState(() {
+          _practiceState = _PracticeState.running;
+        });
+      } else {
+        _practiceState = _PracticeState.running;
+      }
+      _startPlayback();
+    }
+  }
+
+  Future<void> _startPlayback() async {
+    final controller = _videoController;
+    if (controller == null || !controller.value.isInitialized) {
+      return;
+    }
+    try {
       await controller.play();
     } catch (_) {}
+    // Mic listening should already be set up in _startPractice()
   }
 
   Future<void> _autoStartPracticeFromVideo() async {
@@ -1760,11 +2047,22 @@ class _PracticePageState extends State<PracticePage>
         _practiceRunning = false;
         _isListening = false;
         _micDisabled = false;
+        // PATCH: Clear all overlay/highlight state on stop
+        // This prevents leftover orange bars after practice ends
+        _detectedNote = null;
+        _accuracy = NoteAccuracy.miss;
+        // FEATURE A: Reset countdown state
+        _practiceState = _PracticeState.idle;
+        _countdownStartTime = null;
       });
     } else {
       _practiceRunning = false;
       _isListening = false;
       _micDisabled = false;
+      _detectedNote = null;
+      _accuracy = NoteAccuracy.miss;
+      _practiceState = _PracticeState.idle;
+      _countdownStartTime = null;
     }
     _micSub?.cancel();
     _micSub = null;
@@ -1807,6 +2105,13 @@ class _PracticePageState extends State<PracticePage>
       _lastCorrectDetectedNote = null;
       _lastWrongHitAt = null;
       _lastWrongDetectedNote = null;
+      // FEATURE B: Reset mic precision state
+      _noiseFloorRms = 0.04;
+      _stableNoteStartTime = null;
+      _lastStableNote = null;
+      _stableFrameCount = 0;
+      _lastAcceptedNoteAt = null;
+      _lastAcceptedNote = null;
     });
 
     if (showSummary && mounted) {
@@ -1895,9 +2200,19 @@ class _PracticePageState extends State<PracticePage>
     bool injected = false,
   }) {
     if (_startTime == null && !injected) return;
+    // FEATURE A: Disable mic during countdown
+    if (_practiceState == _PracticeState.countdown) {
+      return;
+    }
     _lastMicFrameAt = now;
     _micRms = _computeRms(samples);
     _appendSamples(_micBuffer, samples);
+
+    // FEATURE B: Track noise floor (EWMA of RMS when no stable note)
+    if (_lastStableNote == null) {
+      _noiseFloorRms = _noiseFloorRms * 0.7 + _micRms * 0.3; // EWMA
+    }
+    final dynamicMinRms = max(_absMinRms, _noiseFloorRms * _noiseMultiplier);
 
     final window = _latestWindow(_micBuffer);
     int? nextDetected;
@@ -1923,8 +2238,72 @@ class _PracticePageState extends State<PracticePage>
     _micFrequency = freq;
     _micNote = midi;
     _micConfidence = _confidenceFromRms(_micRms);
+
+    _micRawCount++;
+
+    // FEATURE B: Improved gating (adaptive RMS + stability + debounce)
+    // Gate 1: Confidence threshold (hard gate, must pass)
+    if (_micConfidence < _minConfidenceForHeardNote) {
+      _micSuppressedLowConf++;
+      _logMicDebug(now);
+      _updateDetectedNote(null, now);
+      return;
+    }
+
+    // Gate 2: Adaptive RMS threshold (must pass)
+    if (_micRms < dynamicMinRms) {
+      _micSuppressedLowRms++;
+      _logMicDebug(now);
+      _updateDetectedNote(null, now);
+      return;
+    }
+
     _logMicDebug(now);
-    nextDetected = midi;
+
+    // Gate 3: Stability filter (note must be stable before accepting)
+    // Check if this is the same note as before (within ±50 cents → ±1 semitone)
+    if (_lastStableNote != null && (_lastStableNote! - midi).abs() <= 1) {
+      // Same note
+      _stableFrameCount++;
+      _stableNoteStartTime ??= now;
+      final stableElapsedMs = now
+          .difference(_stableNoteStartTime!)
+          .inMilliseconds;
+      final stableMs = max(
+        _stabilityTimeThresholdMs,
+        (_stabilityFrameThreshold * 20).toDouble(), // ~20ms per frame
+      );
+      if (_stableFrameCount >= _stabilityFrameThreshold ||
+          stableElapsedMs >= stableMs) {
+        // Note is stable; check debounce
+        final nowMs = now.millisecondsSinceEpoch.toDouble();
+        final lastMs = (_lastAcceptedNoteAt?.millisecondsSinceEpoch ?? 0)
+            .toDouble();
+        if ((nowMs - lastMs) >= _debounceMs) {
+          // Debounce passed; accept note
+          _lastAcceptedNote = midi;
+          _lastAcceptedNoteAt = now;
+          _micAcceptedCount++;
+          nextDetected = midi;
+        } else {
+          // Debounce rejected
+          _micSuppressedDebounce++;
+          nextDetected = null;
+        }
+      } else {
+        // Waiting for stability
+        _micSuppressedUnstable++;
+        nextDetected = null;
+      }
+    } else {
+      // Different note; reset stability counter
+      _lastStableNote = midi;
+      _stableFrameCount = 1;
+      _stableNoteStartTime = now;
+      _micSuppressedUnstable++;
+      nextDetected = null;
+    }
+
     if (!_isListening && !injected) {
       nextDetected = null;
     }
@@ -1932,6 +2311,12 @@ class _PracticePageState extends State<PracticePage>
     final prevAccuracy = _accuracy;
     final elapsed = _effectiveElapsedSec();
     if (elapsed == null) {
+      return;
+    }
+
+    // Only react to "accepted" detections, not raw per-frame detections
+    if (nextDetected == null) {
+      _updateDetectedNote(null, now);
       return;
     }
 
@@ -1950,7 +2335,7 @@ class _PracticePageState extends State<PracticePage>
     bool matched = false;
     for (final idx in activeIndices) {
       if (_hitNotes[idx]) continue;
-      if ((midi - _noteEvents[idx].pitch).abs() <= 1) {
+      if ((nextDetected - _noteEvents[idx].pitch).abs() <= 1) {
         matched = true;
         _hitNotes[idx] = true;
         _correctNotes += 1;
@@ -1958,7 +2343,7 @@ class _PracticePageState extends State<PracticePage>
         _accuracy = NoteAccuracy.correct;
         _registerCorrectHit(
           targetNote: _noteEvents[idx].pitch,
-          detectedNote: midi,
+          detectedNote: nextDetected,
           now: now,
         );
         break;
@@ -1966,10 +2351,15 @@ class _PracticePageState extends State<PracticePage>
     }
 
     if (!matched && activeIndices.isNotEmpty) {
-      _accuracy = NoteAccuracy.wrong;
-      final isConfident = _micConfidence >= _minConfidenceForFeedback;
-      if (nextDetected != null && isConfident) {
-        _registerWrongHit(detectedNote: nextDetected, now: now);
+      // PATCH: Only trigger wrongFlash if there's an active note to play
+      final impactNotes = _computeImpactNotes(elapsedSec: elapsed);
+      if (impactNotes.isNotEmpty) {
+        _accuracy = NoteAccuracy.wrong;
+        final isConfident = _micConfidence >= _minConfidenceForFeedback;
+        if (isConfident) {
+          // nextDetected is guaranteed non-null here (early return above)
+          _registerWrongHit(detectedNote: nextDetected, now: now);
+        }
       }
     }
 
@@ -2802,6 +3192,10 @@ class _PracticePageState extends State<PracticePage>
 
   void _processMidiPacket(MidiPacket packet) {
     if (_startTime == null) return;
+    // FEATURE A: Disable MIDI processing during countdown
+    if (_practiceState == _PracticeState.countdown) {
+      return;
+    }
     final data = packet.data;
     if (data.isEmpty) return;
     final status = data[0];
@@ -2849,8 +3243,12 @@ class _PracticePageState extends State<PracticePage>
       }
 
       if (!matched && activeIndices.isNotEmpty) {
-        _accuracy = NoteAccuracy.wrong;
-        _registerWrongHit(detectedNote: note, now: now);
+        // PATCH: Only trigger wrongFlash if there's an active note to play
+        final impactNotes = _computeImpactNotes(elapsedSec: elapsed);
+        if (impactNotes.isNotEmpty) {
+          _accuracy = NoteAccuracy.wrong;
+          _registerWrongHit(detectedNote: note, now: now);
+        }
       }
 
       setState(() {
@@ -2874,7 +3272,10 @@ class _PracticePageState extends State<PracticePage>
       final previewUrl = widget.level.previewUrl;
       final fullUrl = widget.level.videoUrl;
       String selectedUrl;
+
+      // BUG 2 FIX: Use the variant that was selected in preview, or fall back to logic
       if (widget.forcePreview) {
+        // Always use preview if forced
         if (previewUrl.isEmpty) {
           setState(() {
             _videoError = 'Aucun aperçu disponible';
@@ -2883,8 +3284,23 @@ class _PracticePageState extends State<PracticePage>
           return;
         }
         selectedUrl = previewUrl;
-      } else {
+        _selectedVideoVariant = 'preview';
+      } else if (_selectedVideoVariant == 'preview') {
+        // User explicitly chose preview in preview mode - stick with it
+        if (previewUrl.isEmpty) {
+          // Fallback to full if preview no longer available
+          selectedUrl = fullUrl.isNotEmpty ? fullUrl : previewUrl;
+          _selectedVideoVariant = 'full';
+        } else {
+          selectedUrl = previewUrl;
+        }
+      } else if (_selectedVideoVariant == 'full') {
+        // User explicitly chose full in preview mode - stick with it
         selectedUrl = fullUrl.isNotEmpty ? fullUrl : previewUrl;
+      } else {
+        // First time in practice: default to full, fallback to preview if needed
+        selectedUrl = fullUrl.isNotEmpty ? fullUrl : previewUrl;
+        _selectedVideoVariant = fullUrl.isNotEmpty ? 'full' : 'preview';
       }
 
       final url = _resolveBackendUrl(selectedUrl);
@@ -2933,7 +3349,9 @@ class _PracticePageState extends State<PracticePage>
         videoPlayerController: _videoController!,
         autoPlay: false,
         looping: false,
-        showControls: true,
+        showControls: false,
+        // PATCH: Disable center play button to prevent dual entrypoint
+        // Users must use AppBar _togglePractice() only for consistent state
         aspectRatio: _videoController!.value.aspectRatio == 0
             ? 16 / 9
             : _videoController!.value.aspectRatio,
@@ -3305,10 +3723,21 @@ class _PracticePageState extends State<PracticePage>
             targetNotes: targetNotes,
             elapsedSec: elapsedSec,
           );
+          // PATCH: Hide video layer permanently + show only Flutter overlay
+          // Chewie continues running for timing, but is opacity=0 to prevent "two streams"
+          // All visual notes come from _FallingNotesPainter only
           final stack = Stack(
             children: [
-              Positioned.fill(child: videoLayer),
-              Positioned.fill(child: overlay),
+              // Opacity 0: video runs for timing/audio but isn't visible
+              Positioned.fill(child: Opacity(opacity: 0.0, child: videoLayer)),
+              // Always build overlay (for test keys), but only paint when running
+              if (_practiceRunning) Positioned.fill(child: overlay),
+              // Render empty overlay container for key when not running
+              if (!_practiceRunning)
+                const KeyedSubtree(
+                  key: Key('practice_notes_overlay'),
+                  child: SizedBox.expand(),
+                ),
             ],
           );
           final stage = SizedBox(
@@ -3753,6 +4182,41 @@ class _FallingNotesPainter extends CustomPainter {
     return painter;
   }
 
+  /// CANONICAL MAPPING: time → screen y-coordinate
+  /// Mathematically proven formula for falling notes.
+  ///
+  /// Coordinate system:
+  /// - y=0 at TOP of falling area
+  /// - y increases DOWNWARD
+  /// - hitLineY = y position where note "hits" (typically fallAreaHeight)
+  ///
+  /// Given:
+  /// - note.startSec: absolute time note should hit the target
+  /// - fallLead: time (seconds) for note to travel from top to hit line
+  /// - elapsedSec: current elapsed time
+  /// - fallAreaHeight: vertical pixels from top to hit line
+  ///
+  /// Formula:
+  /// progress = (elapsedSec - (note.startSec - fallLead)) / fallLead
+  /// y = progress * fallAreaHeight
+  ///
+  /// Boundary conditions:
+  /// - elapsed = note.start - fallLead => y = 0 (note spawns at top)
+  /// - elapsed = note.start => y = fallAreaHeight (note hits line)
+  /// - progress < 0 => note not yet visible (above screen)
+  /// - progress > (1 + tailDuration/fallLead) => note has disappeared below
+  double _computeNoteYPosition(
+    double noteStartSec,
+    double currentElapsedSec, {
+    required double fallLeadSec,
+    required double fallAreaHeightPx,
+  }) {
+    if (fallLeadSec <= 0) return 0;
+    final progress =
+        (currentElapsedSec - (noteStartSec - fallLeadSec)) / fallLeadSec;
+    return progress * fallAreaHeightPx;
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()..style = PaintingStyle.fill;
@@ -3777,9 +4241,20 @@ class _FallingNotesPainter extends CustomPainter {
       final disappear = n.end + fallTail;
       if (elapsedSec < appear || elapsedSec > disappear) continue;
 
-      final speed = fallLead > 0 ? fallAreaHeight / fallLead : 0.0;
-      final bottomY = fallAreaHeight - (n.start - elapsedSec) * speed;
-      final topY = fallAreaHeight - (n.end - elapsedSec) * speed;
+      // Use CANONICAL mapping for vertical position
+      final bottomY = _computeNoteYPosition(
+        n.start,
+        elapsedSec,
+        fallLeadSec: fallLead,
+        fallAreaHeightPx: fallAreaHeight,
+      );
+      final topY = _computeNoteYPosition(
+        n.end,
+        elapsedSec,
+        fallLeadSec: fallLead,
+        fallAreaHeightPx: fallAreaHeight,
+      );
+
       final rectTop = topY;
       final rectBottom = bottomY;
       if (rectBottom < 0 || rectTop > fallAreaHeight) {

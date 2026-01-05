@@ -24,6 +24,13 @@ class ProcessNotifier extends StateNotifier<ProcessState> {
   bool _pollingInFlight = false;
   String? _activeJobId;
 
+  // BUG 1 FIX: Progress polling resilience
+  int _consecutiveProgressFailures = 0;
+  DateTime? _lastProgressOkAt;
+  String? _lastProgressError;
+  static const int _consecutiveFailureThreshold = 5;
+  static const Duration _progressErrorTimeWindow = Duration(seconds: 10);
+
   ProcessNotifier(this._dio) : super(const ProcessState());
 
   Map<int, LevelProgress> _buildProgressMap(List<JobLevelDto> levels) {
@@ -215,19 +222,11 @@ class ProcessNotifier extends StateNotifier<ProcessState> {
     bool withAudio = false,
     List<int> levels = const [1, 2, 3, 4],
   }) async {
-    await createJob(
-      audioFile: audioFile,
-      withAudio: withAudio,
-      levels: levels,
-    );
+    await createJob(audioFile: audioFile, withAudio: withAudio, levels: levels);
     if (state.jobId == null || state.error != null) {
       return;
     }
-    await startJob(
-      jobId: state.jobId!,
-      withAudio: withAudio,
-      levels: levels,
-    );
+    await startJob(jobId: state.jobId!, withAudio: withAudio, levels: levels);
   }
 
   /// Start generation for a job.
@@ -244,6 +243,10 @@ class ProcessNotifier extends StateNotifier<ProcessState> {
       return;
     }
     _isStarting = true;
+    // BUG 1 FIX: Reset progress tracking when starting a new job
+    _consecutiveProgressFailures = 0;
+    _lastProgressOkAt = null;
+    _lastProgressError = null;
     try {
       final formData = FormData.fromMap({
         'with_audio': withAudio,
@@ -284,6 +287,9 @@ class ProcessNotifier extends StateNotifier<ProcessState> {
       if (_activeJobId != jobId) {
         return;
       }
+      // BUG 1 FIX: Reset failure tracking on successful progress fetch
+      _lastProgressOkAt = DateTime.now();
+      _consecutiveProgressFailures = 0;
       state = _applyJobProgress(dto);
       final jobStatus = dto.status;
       if (jobStatus == 'complete' || jobStatus == 'error') {
@@ -291,9 +297,25 @@ class ProcessNotifier extends StateNotifier<ProcessState> {
         state = state.copyWith(isProcessing: false);
       }
     } on DioException catch (e) {
-      state = state.copyWith(error: _formatDioError(e));
+      _consecutiveProgressFailures++;
+      _lastProgressError = _formatDioError(e);
+
+      // BUG 1 FIX: Only set error if threshold exceeded AND no recent success
+      final timeSinceLastOk = _lastProgressOkAt != null
+          ? DateTime.now().difference(_lastProgressOkAt!)
+          : _progressErrorTimeWindow;
+      final shouldShowError =
+          _consecutiveProgressFailures >= _consecutiveFailureThreshold &&
+          timeSinceLastOk >= _progressErrorTimeWindow;
+
+      if (shouldShowError) {
+        state = state.copyWith(error: _lastProgressError);
+      }
+      // else: transient error, keep state.error null or previous value
     } catch (e) {
-      state = state.copyWith(error: 'Unexpected error: $e');
+      _consecutiveProgressFailures++;
+      _lastProgressError = 'Unexpected error: $e';
+      state = state.copyWith(error: _lastProgressError);
     }
   }
 
@@ -339,6 +361,9 @@ class ProcessNotifier extends StateNotifier<ProcessState> {
   void reset() {
     _stopPolling();
     _activeJobId = null;
+    _consecutiveProgressFailures = 0;
+    _lastProgressOkAt = null;
+    _lastProgressError = null;
     state = const ProcessState();
   }
 
