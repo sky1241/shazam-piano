@@ -24,6 +24,7 @@ dependencyResolutionManagement {
         gradlePluginPortal()
         mavenCentral()
         maven { url = uri("https://maven.google.com") }
+        maven { url = uri("https://storage.googleapis.com/download.flutter.io") }
     }
 }
 
