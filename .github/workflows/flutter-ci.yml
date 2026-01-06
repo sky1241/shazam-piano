@@ -83,6 +83,10 @@ jobs:
         rm -rf ~/.gradle/caches
         mkdir -p ~/.gradle
     
+    - name: Clean Flutter build
+      working-directory: ./app
+      run: flutter clean
+    
     - name: Install dependencies
       working-directory: ./app
       run: flutter pub get
