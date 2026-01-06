@@ -78,14 +78,19 @@ jobs:
         flutter-version: '3.38.5'
         channel: 'stable'
     
+    - name: Clean Gradle cache
+      run: |
+        rm -rf ~/.gradle/caches
+        mkdir -p ~/.gradle
+    
     - name: Configure Gradle with Alibaba mirror
       run: |
-        mkdir -p ~/.gradle
         cat > ~/.gradle/gradle.properties << 'EOF'
         org.gradle.jvmargs=-Xmx3072m -XX:MaxMetaspaceSize=512m -XX:ReservedCodeCacheSize=256m -XX:+HeapDumpOnOutOfMemoryError
         systemProp.http.nonProxyHosts=mirrors.aliyun.com
         org.gradle.internal.publish.checksums.insecure=true
         org.gradle.build.cache.rfcache.allow.insecure=true
+        org.gradle.daemon=false
         EOF
     
     - name: Install dependencies
