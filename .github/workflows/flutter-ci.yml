@@ -99,7 +99,9 @@ jobs:
     
     - name: Build APK
       working-directory: ./app
-      run: flutter build apk --debug --gradle-user-home=/home/runner/work/shazam-piano/shazam-piano/app/android
+      env:
+        GRADLE_USER_HOME: /home/runner/.gradle
+      run: flutter build apk --debug
     
     - name: Upload APK
       uses: actions/upload-artifact@v4
