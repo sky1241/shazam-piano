@@ -2,9 +2,9 @@ buildscript {
     ext.kotlin_version = '1.9.24'
     repositories {
         google()
-        maven { url 'https://mirrors.aliyun.com/maven/repository/mavencentral' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        maven { url 'https://maven.aliyun.com/repository/spring' }
         maven { url 'https://repo1.maven.org/maven2' }
-        mavenCentral()
     }
 
     dependencies {
@@ -18,9 +18,9 @@ buildscript {
 allprojects {
     repositories {
         google()
-        maven { url 'https://mirrors.aliyun.com/maven/repository/mavencentral' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        maven { url 'https://maven.aliyun.com/repository/spring' }
         maven { url 'https://repo1.maven.org/maven2' }
-        mavenCentral()
     }
 }
 

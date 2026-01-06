@@ -12,10 +12,10 @@ pluginManagement {
 
     repositories {
         google()
-        maven { url = uri("https://mirrors.aliyun.com/maven/repository/mavencentral") }
-        mavenCentral()
-        maven { url = uri("https://repo1.maven.org/maven2") }
         gradlePluginPortal()
+        maven { url = uri("https://maven.aliyun.com/repository/public") }
+        maven { url = uri("https://maven.aliyun.com/repository/spring") }
+        maven { url = uri("https://repo1.maven.org/maven2") }
     }
 }
 
