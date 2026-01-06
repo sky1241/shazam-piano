@@ -21,6 +21,7 @@ dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
     repositories {
         maven { url = uri("https://maven.aliyun.com/repository/public") }
+        maven { url = uri("https://storage.googleapis.com/download.dartlang.org/maven2") }
         google()
         mavenCentral()
     }
