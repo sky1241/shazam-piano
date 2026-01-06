@@ -18,11 +18,12 @@ pluginManagement {
 }
 
 dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
     repositories {
         google()
         gradlePluginPortal()
         mavenCentral()
+        maven { url = uri("https://maven.google.com") }
     }
 }
 
