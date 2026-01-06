@@ -83,30 +83,6 @@ jobs:
         rm -rf ~/.gradle/caches
         mkdir -p ~/.gradle
     
-    - name: Create init.gradle for all projects
-      run: |
-        cat > ~/.gradle/init.gradle << 'EOF'
-        allprojects {
-            repositories {
-                maven { url 'https://maven.aliyun.com/repository/public' }
-                maven { url 'https://maven.aliyun.com/repository/spring' }
-                google()
-                mavenLocal()
-            }
-        }
-        
-        settingsEvaluated { settings ->
-            settings.pluginManagement {
-                repositories {
-                    maven { url 'https://maven.aliyun.com/repository/public' }
-                    maven { url 'https://maven.aliyun.com/repository/spring' }
-                    google()
-                    gradlePluginPortal()
-                }
-            }
-        }
-        EOF
-    
     - name: Install dependencies
       working-directory: ./app
       run: flutter pub get
