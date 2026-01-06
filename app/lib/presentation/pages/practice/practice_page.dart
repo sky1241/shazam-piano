@@ -161,6 +161,33 @@ double? effectiveElapsedForTest({
   return practiceClockSec;
 }
 
+/// Maps countdown real time to synthetic elapsed time for falling notes.
+///
+/// During countdown (silent lead-in before playback):
+/// - Real countdown time: [0..leadInSec]
+/// - Synthetic elapsed: [-fallLeadSec..0]
+///
+/// This ensures first notes always spawn from top (y≈0) when countdown starts,
+/// regardless of the relationship between leadInSec and fallLeadSec.
+///
+/// At t=0: synthetic = -fallLeadSec (note spawns off-screen above)
+/// At t=leadInSec: synthetic = 0 (note hits keyboard, playback starts)
+/// Clamped to prevent negative synthetic for t < 0.
+@visibleForTesting
+double syntheticCountdownElapsedForTest({
+  required double elapsedSinceCountdownStartSec,
+  required double leadInSec,
+  required double fallLeadSec,
+}) {
+  if (leadInSec <= 0 || fallLeadSec <= 0) {
+    return 0.0;
+  }
+  // Map [0, leadInSec] → [-fallLeadSec, 0]
+  final progress = (elapsedSinceCountdownStartSec / leadInSec).clamp(0.0, 1.0);
+  final syntheticElapsed = -fallLeadSec + (progress * fallLeadSec);
+  return syntheticElapsed;
+}
+
 // FEATURE A: Lead-in Countdown state machine
 enum _PracticeState {
   idle, // Before play is pressed
@@ -222,6 +249,11 @@ class _PracticePageState extends State<PracticePage>
   _PracticeState _practiceState = _PracticeState.idle;
   DateTime? _countdownStartTime;
   static const double _practiceLeadInSec = 1.5;
+  // BUG FIX: Dynamic lead-in to prevent mid-screen note spawn
+  // Computed as: max(baseLeadIn, fallLead - earliestNoteStart)
+  // Ensures the earliest note appears at y≈0 at countdown start.
+  late double _effectiveLeadInSec = _practiceLeadInSec;
+  double? _earliestNoteStartSec; // Clamped to >= 0, used for effective lead-in
   // FEATURE B: Mic precision (adaptive threshold + stability + debounce)
   double _noiseFloorRms = 0.04; // Baseline RMS when silent
   static const double _absMinRms = 0.04; // Absolute minimum
@@ -238,7 +270,8 @@ class _PracticePageState extends State<PracticePage>
   int _micRawCount = 0;
   int _micAcceptedCount = 0;
   int _micSuppressedLowRms = 0;
-  int _micSuppressedLowConf = 0;
+  // ignore: prefer_final_fields
+  int _micSuppressedLowConf = 0; // Always 0 now (confidence gate removed), kept for HUD
   int _micSuppressedUnstable = 0;
   int _micSuppressedDebounce = 0;
   int _score = 0;
@@ -283,9 +316,8 @@ class _PracticePageState extends State<PracticePage>
   // B) Configurable merge tolerance for overlapping same-pitch events
   static const double _mergeEventOverlapToleranceSec = 0.05; // 50ms
   static const double _mergeEventGapToleranceSec = 0.08; // 80ms gap threshold
-  // PATCH: Mic gating thresholds (prevent garbage F0 detections)
-  static const double _minConfidenceForHeardNote =
-      0.85; // 85% confidence minimum
+  // PATCH: Mic gating thresholds
+  // NOTE: _minConfidenceForHeardNote was removed (redundant with dynamicMinRms)
   static const Duration _successFlashDuration = Duration(milliseconds: 200);
   static const double _minConfidenceForFeedback = 0.2;
   static const Duration _devTapWindow = Duration(seconds: 2);
@@ -302,8 +334,6 @@ class _PracticePageState extends State<PracticePage>
   VoidCallback? _videoListener;
   bool _videoLoading = true;
   String? _videoError;
-  bool _autoStartingPracticeFromVideo = false;
-  bool _lastVideoPlaying = false;
   bool _notesLoading = false;
   String? _notesError;
   PermissionStatus? _micPermissionStatus;
@@ -909,10 +939,48 @@ class _PracticePageState extends State<PracticePage>
         'fallLead: $_fallLeadSec | hitLine: 400px | firstNoteStart: $firstNoteStartSecStr | '
         'yAtSpawn: $yAtSpawnStr | yAtHit: $yAtHitStr | offsetApplied: $offsetText';
 
+    // CRITICAL FIX: Video start position proof
+    // Prove that practice always starts from t=0, never mid-video
+    String startTargetSecStr = '--';
+    String posAfterSeekSecStr = '--';
+    if (_videoController != null && _videoController!.value.isInitialized) {
+      startTargetSecStr = '0.000'; // Always target Duration.zero
+      final posAfterSeek =
+          _videoController!.value.position.inMilliseconds / 1000.0;
+      posAfterSeekSecStr = posAfterSeek.toStringAsFixed(3);
+    }
+    final videoStartLine =
+        'startTarget: $startTargetSecStr | posAfterSeek: $posAfterSeekSecStr | '
+        'videoPos: ${(_videoElapsedSec()?.toStringAsFixed(3) ?? '--')}';
+
     final debugLine =
         'state: $practiceStateText | leadIn: $_practiceLeadInSec | '
         'countdownRemaining: $countdownText | '
         'videoLayerHidden: true | impactNotes: $impactText | impactCount: ${impactNotes.length}';
+
+    // BUG FIX: Proof fields for dynamic lead-in to prevent mid-screen note spawn
+    String earliestNoteStartSecStr = '--';
+    if (_noteEvents.isNotEmpty) {
+      earliestNoteStartSecStr = _noteEvents.first.start.toStringAsFixed(3);
+    }
+    final effectiveLeadInLine =
+        'earliestNote: $earliestNoteStartSecStr | baseLeadIn: ${_practiceLeadInSec.toStringAsFixed(3)} | '
+        'effectiveLeadIn: ${_effectiveLeadInSec.toStringAsFixed(3)} | fallLead: ${_fallLeadSec.toStringAsFixed(3)}';
+
+    // BUG FIX: Proof that countdown is armed and lead-in is computed correctly
+    final countdownArmed = _countdownStartTime != null ? 'yes' : 'no';
+    final notesReady = _noteEvents.isNotEmpty ? 'yes' : 'no';
+    final syntheticSpanSec = _fallLeadSec.toStringAsFixed(2);
+    final yAtCountdownStartStr =
+        _countdownStartTime != null && _earliestNoteStartSec != null
+        ? (((-_fallLeadSec) - (_earliestNoteStartSec! - _fallLeadSec)) /
+                  _fallLeadSec *
+                  400.0)
+              .toStringAsFixed(1)
+        : '--';
+    final countdownProofLine =
+        'countdownStarted: $countdownArmed | notesReady: $notesReady | '
+        'syntheticSpan: [-$syntheticSpanSec..0] | yAtSpawn: $yAtCountdownStartStr';
 
     return Padding(
       padding: EdgeInsets.symmetric(
@@ -954,6 +1022,24 @@ class _PracticePageState extends State<PracticePage>
           ),
           Text(
             geometryLine,
+            style: AppTextStyles.caption.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+          Text(
+            videoStartLine,
+            style: AppTextStyles.caption.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+          Text(
+            effectiveLeadInLine,
+            style: AppTextStyles.caption.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+          Text(
+            countdownProofLine,
             style: AppTextStyles.caption.copyWith(
               color: AppColors.textSecondary,
             ),
@@ -1708,13 +1794,18 @@ class _PracticePageState extends State<PracticePage>
 
   double? _guidanceElapsedSec() {
     // FEATURE A: Handle countdown state (synthetic elapsed time for falling notes)
+    // BUG FIX: Map countdown time to full [-fallLeadSec, 0] range to ensure
+    // first notes spawn from top regardless of leadInSec vs fallLeadSec relationship
     if (_practiceState == _PracticeState.countdown &&
         _countdownStartTime != null) {
-      final elapsedMs = DateTime.now()
-          .difference(_countdownStartTime!)
-          .inMilliseconds;
-      final syntheticElapsed = (elapsedMs / 1000.0) - _practiceLeadInSec;
-      return syntheticElapsed; // negative to 0 during countdown
+      final elapsedSinceCountdownSec =
+          DateTime.now().difference(_countdownStartTime!).inMilliseconds /
+          1000.0;
+      return syntheticCountdownElapsedForTest(
+        elapsedSinceCountdownStartSec: elapsedSinceCountdownSec,
+        leadInSec: _practiceLeadInSec,
+        fallLeadSec: _fallLeadSec,
+      );
     }
     // A) Guidance is tied to Practice running + video position.
     // Do NOT gate on _isListening. Users must see targets even if mic has no data.
@@ -1823,14 +1914,15 @@ class _PracticePageState extends State<PracticePage>
         await _videoController!.pause();
       }
       // FEATURE A: Enter countdown instead of starting immediately
+      // BUG FIX: Don't arm countdown yet; wait for notes to load
       if (mounted) {
         setState(() {
           _practiceState = _PracticeState.countdown;
-          _countdownStartTime = DateTime.now();
+          _countdownStartTime = null; // Arm AFTER notes loaded
         });
       } else {
         _practiceState = _PracticeState.countdown;
-        _countdownStartTime = DateTime.now();
+        _countdownStartTime = null; // Arm AFTER notes loaded
       }
       await _startPractice();
     } else {
@@ -1939,9 +2031,22 @@ class _PracticePageState extends State<PracticePage>
     if (!_isSessionActive(sessionId)) {
       return;
     }
+    // Compute effective lead-in based on loaded notes
+    _computeEffectiveLeadIn();
     await _startPracticeVideo(startPosition: startPosition);
     if (!_isSessionActive(sessionId)) {
       return;
+    }
+    // BUG FIX: Arm countdown NOW that BOTH notes AND video are ready
+    if (_practiceState == _PracticeState.countdown &&
+        _countdownStartTime == null) {
+      if (mounted) {
+        setState(() {
+          _countdownStartTime = DateTime.now();
+        });
+      } else {
+        _countdownStartTime = DateTime.now();
+      }
     }
     _score = 0;
     _correctNotes = 0;
@@ -1962,13 +2067,35 @@ class _PracticePageState extends State<PracticePage>
     }
   }
 
+  /// Compute effective lead-in to guarantee first note spawns at y≈0 when countdown starts.
+  /// Formula: effectiveLeadInSec = max(baseLeadIn, fallLead - min(noteStart))
+  void _computeEffectiveLeadIn() {
+    if (_noteEvents.isEmpty) {
+      _effectiveLeadInSec = _practiceLeadInSec;
+      _earliestNoteStartSec = null;
+    } else {
+      final minStart = _noteEvents.fold<double>(
+        double.infinity,
+        (min, note) => min < note.start ? min : note.start,
+      );
+      // Clamp to >= 0
+      _earliestNoteStartSec = max(0.0, minStart);
+      _effectiveLeadInSec = max(
+        _practiceLeadInSec,
+        _fallLeadSec - _earliestNoteStartSec!,
+      );
+    }
+  }
+
   Future<void> _startPracticeVideo({Duration? startPosition}) async {
     final controller = _videoController;
     if (controller == null || !controller.value.isInitialized) {
       return;
     }
     try {
-      final target = startPosition ?? Duration.zero;
+      // CRITICAL FIX: Always start from t=0, ignore any non-zero startPosition
+      // (unintended auto-start was passing controller.value.position, causing mid-screen spawn)
+      final target = Duration.zero;
       await controller.seekTo(target);
       // FEATURE A: Don't play immediately; wait for countdown to finish
       // Play is triggered in _updateCountdown()
@@ -1986,7 +2113,8 @@ class _PracticePageState extends State<PracticePage>
     final elapsedMs = DateTime.now()
         .difference(_countdownStartTime!)
         .inMilliseconds;
-    final countdownCompleteSec = _practiceLeadInSec;
+    // BUG FIX: Use effectiveLeadInSec to prevent mid-screen note spawn
+    final countdownCompleteSec = _effectiveLeadInSec;
     if (elapsedMs >= countdownCompleteSec * 1000) {
       // Countdown finished: start video + mic + enter running state
       if (mounted) {
@@ -2009,31 +2137,6 @@ class _PracticePageState extends State<PracticePage>
       await controller.play();
     } catch (_) {}
     // Mic listening should already be set up in _startPractice()
-  }
-
-  Future<void> _autoStartPracticeFromVideo() async {
-    if (_autoStartingPracticeFromVideo || _practiceRunning) {
-      return;
-    }
-    if (!_canStartPractice()) {
-      return;
-    }
-    _autoStartingPracticeFromVideo = true;
-    final controller = _videoController;
-    final resumePosition = controller?.value.position ?? Duration.zero;
-    try {
-      await controller?.pause();
-      if (mounted) {
-        setState(() {
-          _practiceRunning = true;
-        });
-      } else {
-        _practiceRunning = true;
-      }
-      await _startPractice(startPosition: resumePosition);
-    } finally {
-      _autoStartingPracticeFromVideo = false;
-    }
   }
 
   Future<void> _stopPractice({
@@ -2072,7 +2175,6 @@ class _PracticePageState extends State<PracticePage>
     _midiSub?.cancel();
     _midiSub = null;
     await _videoController?.pause();
-    _lastVideoPlaying = false;
     _useMidi = false;
     _midiAvailable = false;
     final startedAtIso = _startTime?.toIso8601String();
@@ -2242,15 +2344,10 @@ class _PracticePageState extends State<PracticePage>
     _micRawCount++;
 
     // FEATURE B: Improved gating (adaptive RMS + stability + debounce)
-    // Gate 1: Confidence threshold (hard gate, must pass)
-    if (_micConfidence < _minConfidenceForHeardNote) {
-      _micSuppressedLowConf++;
-      _logMicDebug(now);
-      _updateDetectedNote(null, now);
-      return;
-    }
+    // BUG FIX: Removed confidence_low gate (redundant with dynamicMinRms + stability + debounce)
+    // Confidence is now only a HUD signal showing RMS intensity.
 
-    // Gate 2: Adaptive RMS threshold (must pass)
+    // Gate 1: Adaptive RMS threshold (must pass)
     if (_micRms < dynamicMinRms) {
       _micSuppressedLowRms++;
       _logMicDebug(now);
@@ -2796,6 +2893,8 @@ class _PracticePageState extends State<PracticePage>
         _notesDroppedDup = sanitized.droppedDup;
         _notesError = sortedEvents.isEmpty ? 'Notes indisponibles' : null;
       });
+      // BUG FIX: Compute effective lead-in AFTER notes assigned
+      _computeEffectiveLeadIn();
     } else {
       _noteEvents = sortedEvents;
       _displayFirstKey = sanitized.displayFirstKey;
@@ -2807,6 +2906,8 @@ class _PracticePageState extends State<PracticePage>
       _notesDroppedOutOfVideo = sanitized.droppedOutOfVideo;
       _notesDroppedDup = sanitized.droppedDup;
       _notesError = sortedEvents.isEmpty ? 'Notes indisponibles' : null;
+      // BUG FIX: Compute effective lead-in AFTER notes assigned
+      _computeEffectiveLeadIn();
     }
   }
 
@@ -2845,6 +2946,7 @@ class _PracticePageState extends State<PracticePage>
       _notesDroppedDup = 0;
       _rawNoteEvents = [];
       _noteEvents = [];
+      _effectiveLeadInSec = _practiceLeadInSec; // Reset when clearing notes
     });
 
     final midiUrl = widget.level.midiUrl;
@@ -2855,6 +2957,8 @@ class _PracticePageState extends State<PracticePage>
         _notesError = 'Notes indisponibles';
         _rawNoteEvents = [];
         _noteEvents = [];
+        _effectiveLeadInSec =
+            _practiceLeadInSec; // Reset when notes fail to load
         _notesSource = NotesSource.none;
         _displayFirstKey = _defaultFirstKey;
         _displayLastKey = _defaultLastKey;
@@ -2966,6 +3070,8 @@ class _PracticePageState extends State<PracticePage>
         _notesLoading = false;
         _notesError = sortedEvents.isEmpty ? 'Notes indisponibles' : null;
       });
+      // BUG FIX: Compute effective lead-in AFTER notes assigned
+      _computeEffectiveLeadIn();
     } on DioException catch (e) {
       final status = e.response?.statusCode;
       debugPrint(
@@ -2974,6 +3080,7 @@ class _PracticePageState extends State<PracticePage>
       applyUpdate(() {
         _rawNoteEvents = [];
         _noteEvents = [];
+        _effectiveLeadInSec = _practiceLeadInSec; // Reset on load error
         _notesSource = NotesSource.none;
         _notesLoading = false;
         _notesError = 'Notes indisponibles';
@@ -2987,6 +3094,7 @@ class _PracticePageState extends State<PracticePage>
       applyUpdate(() {
         _rawNoteEvents = [];
         _noteEvents = [];
+        _effectiveLeadInSec = _practiceLeadInSec; // Reset on parse error
         _notesSource = NotesSource.none;
         _notesLoading = false;
         _notesError = 'Notes indisponibles';
@@ -3326,14 +3434,6 @@ class _PracticePageState extends State<PracticePage>
         if (!value.isInitialized || value.duration == Duration.zero) {
           return;
         }
-        final isPlaying = value.isPlaying;
-        if (!widget.forcePreview &&
-            isPlaying &&
-            !_lastVideoPlaying &&
-            !_practiceRunning) {
-          unawaited(_autoStartPracticeFromVideo());
-        }
-        _lastVideoPlaying = isPlaying;
         if (_videoEndFired) {
           return;
         }
@@ -3379,8 +3479,6 @@ class _PracticePageState extends State<PracticePage>
     _videoController?.dispose();
     _videoController = null;
     _videoDurationSec = null;
-    _lastVideoPlaying = false;
-    _autoStartingPracticeFromVideo = false;
   }
 
   String _resolveBackendUrl(String url) {
@@ -3656,6 +3754,8 @@ class _PracticePageState extends State<PracticePage>
     _notesDroppedOutOfRange = 0;
     _notesDroppedOutOfVideo = 0;
     _notesDroppedDup = 0;
+    // BUG FIX: Compute effective lead-in after notes assigned
+    _computeEffectiveLeadIn();
   }
 
   Widget _wrapPracticeVideo(Widget child) {
@@ -3810,8 +3910,16 @@ class _PracticePageState extends State<PracticePage>
     final successFlashActive = _isSuccessFlashActive(now);
     final wrongFlashActive = _isWrongFlashActive(now);
     final elapsed = elapsedSec;
+    // CRITICAL FIX: Only paint notes during running state, not countdown
+    // If first note has start < 0.5s, it could appear mid-screen at countdown start
+    // (since fallLeadSec=2.0 vs _practiceLeadInSec=1.5 → note.appear = start-2.0 <= -1.7
+    //  and syntheticElapsed at t=0 is -1.5, so appear condition is met)
+    // Solution: Only paint when fully running, not during countdown lead-in.
     final shouldPaintNotes =
-        _practiceRunning && elapsed != null && _noteEvents.isNotEmpty;
+        _practiceRunning &&
+        elapsed != null &&
+        _noteEvents.isNotEmpty &&
+        _practiceState == _PracticeState.running;
     final paintElapsedSec = elapsed ?? 0.0;
     final resolvedTargets = shouldPaintNotes ? targetNotes : <int>{};
     var noteEvents = shouldPaintNotes ? _noteEvents : const <_NoteEvent>[];

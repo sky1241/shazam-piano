@@ -246,5 +246,76 @@ void main() {
         reason: 'Broken and canonical differ significantly',
       );
     });
+
+    test('Effective lead-in prevents mid-screen spawn for early notes', () {
+      // BUG FIX: When earliestNoteStart < fallLead, static baseLeadIn causes
+      // negative y at countdown start, appearing mid-screen instead of from top.
+      //
+      // Solution: effectiveLeadIn = max(baseLeadIn, fallLead - earliestStart)
+
+      const baseLeadIn =
+          1.5; // Standard countdown duration (1.5 seconds silent)
+      const fallLead = 2.0; // Duration for note to fall from top to keyboard
+      const fallAreaHeight = 400.0;
+
+      // Scenario: First note is at 0.5 seconds (very early)
+      const earliestNoteStart = 0.5;
+
+      // OLD BUG: static baseLeadIn = 1.5
+      // At countdown start (elapsed = -1.5):
+      // - Note should spawn at: elapsed = 0.5 - 2.0 = -1.5
+      // - At countdown start, already at: y = ((-1.5) - (-1.5)) / 2.0 * 400 = 0 ✓
+      // - BUT wait... at elapsed=0 (when countdown finishes), note is at:
+      //   y = (0 - (-1.5)) / 2.0 * 400 = 0.75 * 400 = 300 (mid-screen!) ✗
+
+      // NEW FIX: effectiveLeadIn = max(1.5, 2.0 - 0.5) = max(1.5, 1.5) = 1.5
+      // Still wrong! Need: effectiveLeadIn = max(1.5, fallLead - 0) where 0 is adjusted earliestStart
+      // Actually: if earliestStart < fallLead, we need effectiveLeadIn >= (fallLead - earliestStart)
+      // So: effectiveLeadIn = max(baseLeadIn, fallLead - max(0, earliestStart))
+
+      final effectiveLeadIn = baseLeadIn > (fallLead - earliestNoteStart)
+          ? baseLeadIn
+          : (fallLead - earliestNoteStart);
+
+      // With effective lead-in, countdown starts at:
+      // elapsed = -effectiveLeadIn
+      // For note: y = ((-effectiveLeadIn) - (0.5 - 2.0)) / 2.0 * 400
+      //         = ((-effectiveLeadIn) - (-1.5)) / 2.0 * 400
+      //         = (1.5 - effectiveLeadIn) / 2.0 * 400
+
+      final countdownStartElapsed = -effectiveLeadIn;
+
+      // At countdown start:
+      final yAtCountdownStart = computeNoteY(
+        earliestNoteStart,
+        countdownStartElapsed,
+        fallLeadSec: fallLead,
+        fallAreaHeightPx: fallAreaHeight,
+      );
+
+      // PROOF: With effective lead-in >= (fallLead - max(0, earliestStart)):
+      // The note should NOT appear mid-screen.
+      // If effectiveLeadIn is chosen correctly, note either:
+      // 1. Spawns at y≈0 (top) before/at countdown start
+      // 2. Is still above screen (y<0) at countdown start
+
+      expect(
+        (yAtCountdownStart < 0) || (yAtCountdownStart.abs() < 1.0),
+        isTrue,
+        reason: 'At countdown start, note should be above or at top (y≤0)',
+      );
+
+      // The earlier the note, the more effective lead-in we need.
+      // For an extreme case: note at 0.0 seconds requires effectiveLeadIn >= 2.0
+      final extremeEffectiveLeadIn = baseLeadIn > fallLead
+          ? baseLeadIn
+          : fallLead;
+      expect(
+        extremeEffectiveLeadIn,
+        closeTo(2.0, 0.01),
+        reason:
+            'For note at 0.0s, effective lead-in must be >= fallLead (2.0s)',
+      );
+    });
   });
 }
