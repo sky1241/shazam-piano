@@ -88,11 +88,7 @@ void main() {
         closeTo(-fallLeadSec, 0.001),
         reason: 'Start should be -fallLeadSec',
       );
-      expect(
-        results[steps],
-        closeTo(0.0, 0.001),
-        reason: 'End should be 0',
-      );
+      expect(results[steps], closeTo(0.0, 0.001), reason: 'End should be 0');
     });
 
     test('Clamps to [0, 1] progress to handle t > leadInSec safely', () {
@@ -112,13 +108,13 @@ void main() {
 
     test('Handles early notes (first note at 0.5s < fallLeadSec)', () {
       const double earliestNoteStart = 0.5;
-      
+
       // At countdown start (t=0, synthetic=-2.0), early note is above screen
       final yAtCountdownStart =
           ((-fallLeadSec) - (earliestNoteStart - fallLeadSec)) /
           fallLeadSec *
           400.0;
-      
+
       // Verify: y should be negative (above screen)
       expect(
         yAtCountdownStart,
@@ -132,14 +128,14 @@ void main() {
       // For this test, we just verify the mapping is mathematically correct.
       final yAtCountdownEnd =
           (0.0 - (earliestNoteStart - fallLeadSec)) / fallLeadSec * 400.0;
-      
+
       // Verify: y ≈ 300px (note is mid-screen because 1.5s isn't enough for 0.5s note to fall 2.0s)
       expect(
         yAtCountdownEnd,
         closeTo(300.0, 1.0),
         reason: 'Early note at 0.5s reaches y≈300px when countdown ends',
       );
-      
+
       // PROOF: With fallLeadSec mapping, early notes start from above screen
       // and progress smoothly toward the keyboard. They never "jump in" mid-screen.
       expect(

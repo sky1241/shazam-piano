@@ -240,6 +240,10 @@ class _PracticePageState extends State<PracticePage>
   }
 
   bool _practiceRunning = false;
+  bool _practiceStarting =
+      false; // Prevent race: don't show countdown until all ready
+  int _practiceSessionId =
+      0; // Increment on each new start; prevents stale callbacks
   bool _isListening = false;
   int? _detectedNote;
   NoteAccuracy _accuracy = NoteAccuracy.miss;
@@ -271,7 +275,8 @@ class _PracticePageState extends State<PracticePage>
   int _micAcceptedCount = 0;
   int _micSuppressedLowRms = 0;
   // ignore: prefer_final_fields
-  int _micSuppressedLowConf = 0; // Always 0 now (confidence gate removed), kept for HUD
+  int _micSuppressedLowConf =
+      0; // Always 0 now (confidence gate removed), kept for HUD
   int _micSuppressedUnstable = 0;
   int _micSuppressedDebounce = 0;
   int _score = 0;
@@ -285,7 +290,6 @@ class _PracticePageState extends State<PracticePage>
   List<_NoteEvent> _rawNoteEvents = [];
   List<_NoteEvent> _noteEvents = [];
   NotesSource _notesSource = NotesSource.none;
-  int _practiceSessionId = 0;
   int _notesRawCount = 0;
   int _notesDedupedCount = 0;
   int _notesFilteredCount = 0;
@@ -604,7 +608,9 @@ class _PracticePageState extends State<PracticePage>
   }) {
     final elapsedSec = _guidanceElapsedSec();
     final shouldPaintNotes =
-        _practiceRunning && elapsedSec != null && _noteEvents.isNotEmpty;
+        (_practiceRunning || _practiceState == _PracticeState.countdown) &&
+        elapsedSec != null &&
+        _noteEvents.isNotEmpty;
     final targetNotes = shouldPaintNotes
         ? _uiTargetNotes(elapsedSec: elapsedSec)
         : const <int>{};
@@ -631,6 +637,10 @@ class _PracticePageState extends State<PracticePage>
   }
 
   Widget _buildTopStatsLine() {
+    // Hide stats when in idle state (before play or after stop)
+    if (_practiceState == _PracticeState.idle) {
+      return SizedBox.shrink();
+    }
     final precisionValue = _totalNotes > 0
         ? '${(_correctNotes / _totalNotes * 100).toStringAsFixed(1)}%'
         : '0%';
@@ -982,6 +992,19 @@ class _PracticePageState extends State<PracticePage>
         'countdownStarted: $countdownArmed | notesReady: $notesReady | '
         'syntheticSpan: [-$syntheticSpanSec..0] | yAtSpawn: $yAtCountdownStartStr';
 
+    // BUG FIX: Proof of paint phase continuity (countdown→running transition)
+    final paintPhase = _practiceState == _PracticeState.countdown
+        ? 'countdown'
+        : 'running';
+    final stateCondition =
+        (_practiceRunning || _practiceState == _PracticeState.countdown);
+    final elapsedCondition = guidanceElapsedSec != null;
+    final notesCondition = _noteEvents.isNotEmpty;
+    final shouldPaintEval =
+        stateCondition && elapsedCondition && notesCondition;
+    final paintPhaseProofLine =
+        'paintPhase: $paintPhase | state=$stateCondition | elapsed=$elapsedCondition | notes=$notesCondition | shouldPaint: $shouldPaintEval | elapsedVal: ${guidanceElapsedSec?.toStringAsFixed(3) ?? "null"}';
+
     return Padding(
       padding: EdgeInsets.symmetric(
         horizontal: horizontalPadding,
@@ -1040,6 +1063,12 @@ class _PracticePageState extends State<PracticePage>
           ),
           Text(
             countdownProofLine,
+            style: AppTextStyles.caption.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+          Text(
+            paintPhaseProofLine,
             style: AppTextStyles.caption.copyWith(
               color: AppColors.textSecondary,
             ),
@@ -1803,7 +1832,7 @@ class _PracticePageState extends State<PracticePage>
           1000.0;
       return syntheticCountdownElapsedForTest(
         elapsedSinceCountdownStartSec: elapsedSinceCountdownSec,
-        leadInSec: _practiceLeadInSec,
+        leadInSec: _effectiveLeadInSec,
         fallLeadSec: _fallLeadSec,
       );
     }
@@ -1903,30 +1932,46 @@ class _PracticePageState extends State<PracticePage>
     }
 
     if (next) {
+      // Reset state from any previous run
+      await _resetPracticeSession();
+      ++_practiceSessionId; // New session: invalidate old callbacks
+
       if (mounted) {
         setState(() {
           _practiceRunning = true;
+          _practiceStarting = true; // Flag that startup is in progress
         });
       } else {
         _practiceRunning = true;
+        _practiceStarting = true;
       }
       if (_videoController != null) {
         await _videoController!.pause();
       }
-      // FEATURE A: Enter countdown instead of starting immediately
-      // BUG FIX: Don't arm countdown yet; wait for notes to load
-      if (mounted) {
-        setState(() {
-          _practiceState = _PracticeState.countdown;
-          _countdownStartTime = null; // Arm AFTER notes loaded
-        });
-      } else {
-        _practiceState = _PracticeState.countdown;
-        _countdownStartTime = null; // Arm AFTER notes loaded
-      }
+      // RACE FIX: Don't set countdown state here. Wait for notes/video to load in _startPractice()
+      // _togglePractice just signals start-in-progress; actual countdown state set after await
       await _startPractice();
     } else {
       await _stopPractice(showSummary: true, reason: 'user_stop');
+    }
+  }
+
+  /// Reset practice session completely for replay or stop
+  Future<void> _resetPracticeSession() async {
+    _practiceState = _PracticeState.idle;
+    _practiceRunning = false;
+    _practiceStarting = false;
+    _countdownStartTime = null;
+    _videoEndFired = false;
+    _score = 0;
+    _correctNotes = 0;
+    _totalNotes = 0;
+    _hitNotes = []; // Reassign instead of clear (was fixed-length list)
+    _lastCorrectNote = null;
+    _lastWrongDetectedNote = null;
+    if (_videoController != null && _videoController!.value.isInitialized) {
+      await _videoController!.pause();
+      await _videoController!.seekTo(Duration.zero);
     }
   }
 
@@ -1953,7 +1998,7 @@ class _PracticePageState extends State<PracticePage>
         _practiceRunning = true;
       }
     }
-    final sessionId = ++_practiceSessionId;
+    final sessionId = _practiceSessionId;
     _lastMicFrameAt = null;
     _micRms = 0.0;
     _micFrequency = null;
@@ -2037,15 +2082,19 @@ class _PracticePageState extends State<PracticePage>
     if (!_isSessionActive(sessionId)) {
       return;
     }
-    // BUG FIX: Arm countdown NOW that BOTH notes AND video are ready
-    if (_practiceState == _PracticeState.countdown &&
-        _countdownStartTime == null) {
+    // RACE FIX: Arm countdown NOW that BOTH notes AND video are ready
+    // Set state + timestamp TOGETHER to guarantee elapsedOk && notesOk both true for painter
+    if (_practiceStarting && _countdownStartTime == null) {
       if (mounted) {
         setState(() {
+          _practiceState = _PracticeState.countdown;
           _countdownStartTime = DateTime.now();
+          _practiceStarting = false; // Cleanup flag
         });
       } else {
+        _practiceState = _PracticeState.countdown;
         _countdownStartTime = DateTime.now();
+        _practiceStarting = false;
       }
     }
     _score = 0;
@@ -2143,7 +2192,6 @@ class _PracticePageState extends State<PracticePage>
     bool showSummary = false,
     String reason = 'user_stop',
   }) async {
-    _practiceSessionId += 1;
     _setStopReason(reason);
     if (mounted) {
       setState(() {
@@ -3830,10 +3878,13 @@ class _PracticePageState extends State<PracticePage>
             children: [
               // Opacity 0: video runs for timing/audio but isn't visible
               Positioned.fill(child: Opacity(opacity: 0.0, child: videoLayer)),
-              // Always build overlay (for test keys), but only paint when running
-              if (_practiceRunning) Positioned.fill(child: overlay),
-              // Render empty overlay container for key when not running
-              if (!_practiceRunning)
+              // Paint overlay during countdown + running (notes visible during lead-in)
+              if (_practiceRunning ||
+                  _practiceState == _PracticeState.countdown)
+                Positioned.fill(child: overlay),
+              // Render empty overlay container for key when not in countdown/running
+              if (!(_practiceRunning ||
+                  _practiceState == _PracticeState.countdown))
                 const KeyedSubtree(
                   key: Key('practice_notes_overlay'),
                   child: SizedBox.expand(),
