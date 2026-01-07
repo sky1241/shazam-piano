@@ -289,14 +289,7 @@ class _PracticePageState extends State<PracticePage>
   int? _lastAcceptedNote;
   static const double _debounceMs =
       80.0; // C8: reduced from 120 to reduce misses on fast notes
-  // D3: Hold/latch for detected note (keep valid ~200ms even if gates reject it)
-  int? _heldDetectedNote;
-  DateTime? _heldDetectedNoteStart;
-  static const double _detectionHoldMs = 200.0;
-  // D2: Track previously active expected notes to detect when they change
-  List<int> _lastActiveExpectedNotes = [];
   // M1-MICRO FIX: Ring buffer for pitch history (for historical matching)
-  static const int _maxPitchHistoryEvents = 100; // ~1.5s @ 23ms window
   final List<_PitchEvent> _pitchHistory = [];
   // Counters for debug
   int _micRawCount = 0;
@@ -368,7 +361,6 @@ class _PracticePageState extends State<PracticePage>
   // PATCH: Mic gating thresholds
   // NOTE: _minConfidenceForHeardNote was removed (redundant with dynamicMinRms)
   static const Duration _successFlashDuration = Duration(milliseconds: 200);
-  static const double _minConfidenceForFeedback = 0.2;
   static const Duration _devTapWindow = Duration(seconds: 2);
   static const int _devTapTarget = 5;
   static const double _videoCropFactor = 0.65;
@@ -1939,16 +1931,6 @@ class _PracticePageState extends State<PracticePage>
     return clock;
   }
 
-  // D1: Scoring-specific elapsed (same source as painter, but optionally offset-corrected)
-  // Used for HIT/MISS decision timing and micro event timestamping.
-  // Applies micro scoring offset for latency compensation.
-  double? _scoringElapsedSec() {
-    final baseElapsed = _guidanceElapsedSec();
-    if (baseElapsed == null) return null;
-    // Apply micro scoring offset (auto-calibrated to align micro detections with note windows)
-    return max(0.0, baseElapsed - _micScoringOffsetSec);
-  }
-
   double? _effectiveElapsedSec() {
     final practiceClockSec = _startTime != null ? _practiceClockSec() : null;
     return effectiveElapsedForTest(
@@ -2422,9 +2404,6 @@ class _PracticePageState extends State<PracticePage>
       _stableFrameCount = 0;
       _lastAcceptedNoteAt = null;
       _lastAcceptedNote = null;
-      // D3: Reset hold/latch on new session
-      _heldDetectedNote = null;
-      _heldDetectedNoteStart = null;
       // M1: Clear pitch history on new session
       _pitchHistory.clear();
       // D1, D3: Reset mic config logging and latency comp for new session
