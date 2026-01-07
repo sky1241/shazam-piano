@@ -6,23 +6,28 @@ import 'dart:typed_data';
 class PitchDetector {
   static const int sampleRate = 44100;
   static const int bufferSize = 2048;
-  static const double clarityThreshold = 0.9;
+  // Relaxed from 0.9 to 0.75 to reduce freq=null (better piano detection)
+  static const double clarityThreshold = 0.75;
 
   /// Detect pitch from audio samples
   /// Returns frequency in Hz, or null if no clear pitch
-  double? detectPitch(Float32List samples) {
+  /// [sampleRate] - Optional runtime sample rate (defaults to 44100)
+  double? detectPitch(Float32List samples, {int? sampleRate}) {
     if (samples.length < bufferSize) {
       return null;
     }
 
-    // Use MPM algorithm
-    final frequency = _mpmPitch(samples);
+    // Use MPM algorithm with runtime sample rate
+    final frequency = _mpmPitch(
+      samples,
+      sampleRate ?? PitchDetector.sampleRate,
+    );
 
     return frequency;
   }
 
   /// McLeod Pitch Method
-  double? _mpmPitch(Float32List samples) {
+  double? _mpmPitch(Float32List samples, int effectiveSampleRate) {
     // Step 1: Normalized Square Difference Function (NSDF)
     final nsdf = _normalizedSquareDifference(samples);
 
@@ -51,8 +56,8 @@ class PitchDetector {
     // Step 4: Parabolic interpolation for sub-sample accuracy
     final interpolated = _parabolicInterpolation(nsdf, bestPeak);
 
-    // Convert lag to frequency
-    final frequency = sampleRate / interpolated;
+    // Convert lag to frequency using runtime sample rate
+    final frequency = effectiveSampleRate / interpolated;
 
     // Filter unrealistic frequencies (piano range: 27.5 Hz - 4186 Hz)
     if (frequency < 20 || frequency > 5000) {
@@ -110,7 +115,8 @@ class PitchDetector {
         }
 
         // Is this a significant peak?
-        if (curMaxPos > 0 && nsdf[curMaxPos] > 0.8) {
+        // Relaxed from 0.8 to 0.65 for better piano harmonic detection
+        if (curMaxPos > 0 && nsdf[curMaxPos] > 0.65) {
           peaks.add(curMaxPos);
         }
       }

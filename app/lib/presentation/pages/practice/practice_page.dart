@@ -28,6 +28,7 @@ import '../../../domain/entities/level_result.dart';
 import '../../widgets/practice_keyboard.dart';
 import '../../widgets/banner_ad_placeholder.dart';
 import 'pitch_detector.dart';
+import 'mic_engine.dart' as mic;
 
 @visibleForTesting
 bool isVideoEnded(Duration position, Duration duration) {
@@ -314,6 +315,7 @@ class _PracticePageState extends State<PracticePage>
   final RecorderStream _recorder = RecorderStream();
   StreamSubscription<MidiPacket>? _midiSub;
   final _pitchDetector = PitchDetector();
+  mic.MicEngine? _micEngine;
   // D1-D3: Audio format & F0 validation
   static const double _minValidF0Hz = 50.0; // Reject sub-bass aberrations
   static const double _maxValidF0Hz =
@@ -322,6 +324,9 @@ class _PracticePageState extends State<PracticePage>
   // D1: Micro scoring offset (auto-calibrated via EMA on pitch_match confidence)
   double _micScoringOffsetSec =
       0.0; // Offset between micro elapsed and scoring elapsed
+  double?
+  _videoGuidanceOffsetSec; // Timebase continuity: lock clock→video offset
+  bool _videoGuidanceLocked = false; // Ensure offset locked only once
   bool _micConfigLogged = false; // Log MIC_CONFIG only once per session
   List<_NoteEvent> _rawNoteEvents = [];
   List<_NoteEvent> _noteEvents = [];
@@ -353,6 +358,8 @@ class _PracticePageState extends State<PracticePage>
   static const double _fallTailSec = 0.6;
   static const double _targetWindowTailSec =
       0.4; // C8: increased from 0.2 to reduce misses
+  static const double _targetWindowHeadSec =
+      0.05; // PATCH D1: Early note capture
   static const double _targetChordToleranceSec = 0.03;
   static const double _videoSyncOffsetSec = 0.0;
   // B) Configurable merge tolerance for overlapping same-pitch events
@@ -1906,12 +1913,30 @@ class _PracticePageState extends State<PracticePage>
     if (!_practiceRunning) {
       return null;
     }
+    // D1: Timebase continuity - lock clock→video offset ONCE
+    final clock = _practiceClockSec();
     final v = _videoElapsedSec();
-    if (v != null) {
-      return v;
+
+    if (v != null &&
+        _videoController != null &&
+        _videoController!.value.isInitialized &&
+        !_videoGuidanceLocked) {
+      // Lock offset at moment video becomes available
+      _videoGuidanceOffsetSec = clock - v;
+      _videoGuidanceLocked = true;
+      if (kDebugMode) {
+        debugPrint(
+          'GUIDANCE_LOCK sessionId=$_practiceSessionId clock=${clock.toStringAsFixed(3)}s '
+          'video=${v.toStringAsFixed(3)}s offset=${_videoGuidanceOffsetSec!.toStringAsFixed(3)}s',
+        );
+      }
     }
-    // Fallback to practice clock only if video not available
-    return _startTime != null ? _practiceClockSec() : null;
+
+    // Return video time + offset if available, else clock
+    if (v != null && _videoGuidanceOffsetSec != null) {
+      return max(0.0, v + _videoGuidanceOffsetSec!);
+    }
+    return clock;
   }
 
   // D1: Scoring-specific elapsed (same source as painter, but optionally offset-corrected)
@@ -2061,6 +2086,8 @@ class _PracticePageState extends State<PracticePage>
     _lastSanitizedDurationSec = null; // C7: Reset sanitize epsilon guard
     _lastCorrectNote = null;
     _lastWrongDetectedNote = null;
+    _videoGuidanceOffsetSec = null;
+    _videoGuidanceLocked = false;
     if (_videoController != null && _videoController!.value.isInitialized) {
       await _videoController!.pause();
       await _videoController!.seekTo(Duration.zero);
@@ -2107,6 +2134,29 @@ class _PracticePageState extends State<PracticePage>
     _lastMicRestartAt = null;
     _lastUiUpdateAt = null;
     _videoEndFired = false;
+
+    // Initialize MicEngine for robust scoring
+    _micEngine = mic.MicEngine(
+      noteEvents: _noteEvents
+          .map((n) => mic.NoteEvent(start: n.start, end: n.end, pitch: n.pitch))
+          .toList(),
+      hitNotes: _hitNotes,
+      detectPitch: (samples, sr) {
+        final float32Samples = Float32List.fromList(
+          samples.map((s) => s.toDouble()).toList(),
+        );
+        // Pass detected sample rate to pitch detector (fixes 44100 vs 35280 Hz mismatch)
+        final result = _pitchDetector.detectPitch(
+          float32Samples,
+          sampleRate: sr.round(),
+        );
+        return result ?? 0.0;
+      },
+      headWindowSec: _targetWindowHeadSec,
+      tailWindowSec: _targetWindowTailSec,
+      absMinRms: 0.0008,
+    );
+    _micEngine!.reset('$sessionId');
     _setMicDisabled(false);
     if (mounted) {
       setState(() {
@@ -2511,6 +2561,63 @@ class _PracticePageState extends State<PracticePage>
     _micRms = _computeRms(processSamples);
     _appendSamples(_micBuffer, processSamples);
 
+    // ═══════════════════════════════════════════════════════════════
+    // CRITICAL: MicEngine scoring BEFORE any early returns
+    // ═══════════════════════════════════════════════════════════════
+    // The MicEngine MUST receive ALL audio chunks to populate its event buffer.
+    // Old architecture had early returns (window==null, freq==null, RMS<threshold, etc.)
+    // that prevented MicEngine from ever being called → 0% HITs.
+    // New architecture: MicEngine processes FIRST, then HUD filters run (non-blocking).
+
+    final elapsed = _guidanceElapsedSec();
+    if (elapsed != null && _micEngine != null) {
+      final prevAccuracy = _accuracy;
+      final decisions = _micEngine!.onAudioChunk(
+        processSamples.map((d) => d.toInt()).toList(),
+        now,
+        elapsed,
+      );
+
+      // Apply decisions (HIT/MISS/wrongFlash)
+      for (final decision in decisions) {
+        switch (decision.type) {
+          case mic.DecisionType.hit:
+            _correctNotes += 1;
+            _score += 1;
+            _accuracy = NoteAccuracy.correct;
+            _registerCorrectHit(
+              targetNote: decision.expectedMidi!,
+              detectedNote: decision.detectedMidi!,
+              now: now,
+            );
+            break;
+
+          case mic.DecisionType.miss:
+            // Already logged by MicEngine, just mark accuracy
+            if (_accuracy != NoteAccuracy.correct) {
+              _accuracy = NoteAccuracy.wrong;
+            }
+            break;
+
+          case mic.DecisionType.wrongFlash:
+            _accuracy = NoteAccuracy.wrong;
+            _registerWrongHit(detectedNote: decision.detectedMidi!, now: now);
+            break;
+        }
+      }
+
+      // Update UI with MicEngine's held note (200ms hold)
+      final uiMidi = _micEngine!.uiDetectedMidi;
+      final accuracyChanged = prevAccuracy != _accuracy;
+      _updateDetectedNote(uiMidi, now, accuracyChanged: accuracyChanged);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // HUD-ONLY filters (do NOT block scoring, already done by MicEngine)
+    // ═══════════════════════════════════════════════════════════════
+    // These filters update HUD state (_micFrequency, _micNote, _micConfidence)
+    // and log debug metrics, but no longer prevent scoring via early returns.
+
     // FEATURE B: Track noise floor (EWMA of RMS when no stable note)
     if (_lastStableNote == null) {
       _noiseFloorRms = _noiseFloorRms * 0.7 + _micRms * 0.3; // EWMA
@@ -2518,34 +2625,33 @@ class _PracticePageState extends State<PracticePage>
     final dynamicMinRms = max(_absMinRms, _noiseFloorRms * _noiseMultiplier);
 
     final window = _latestWindow(_micBuffer);
-    int? nextDetected;
     if (window == null) {
+      // HUD-only: clear display state, but scoring already done by MicEngine
       _micFrequency = null;
       _micNote = null;
       _micConfidence = 0.0;
       _logMicDebug(now);
-      _updateDetectedNote(null, now);
-      return;
+      return; // No pitch to display, but MicEngine already processed audio
     }
 
     final freq = _pitchDetector.detectPitch(window);
     if (freq == null) {
+      // HUD-only: clear display state
       _micFrequency = null;
       _micNote = null;
       _micConfidence = 0.0;
       _logMicDebug(now);
-      _updateDetectedNote(null, now);
-      return;
+      return; // No pitch to display, scoring already done
     }
 
     // D2: Reject aberrant F0 frequencies (< 50 Hz or > 2000 Hz)
     if (freq < _minValidF0Hz || freq > _maxValidF0Hz) {
+      // HUD-only: clear display state
       _micFrequency = null;
       _micNote = null;
       _micConfidence = 0.0;
       _logMicDebug(now);
-      _updateDetectedNote(null, now);
-      return;
+      return; // Aberrant freq, scoring already done
     }
 
     final midi = _pitchDetector.frequencyToMidiNote(freq);
@@ -2559,18 +2665,17 @@ class _PracticePageState extends State<PracticePage>
     // BUG FIX: Removed confidence_low gate (redundant with dynamicMinRms + stability + debounce)
     // Confidence is now only a HUD signal showing RMS intensity.
 
-    // Gate 1: Adaptive RMS threshold (must pass)
+    // Gate 1: Adaptive RMS threshold (HUD-only, not blocking)
     if (_micRms < dynamicMinRms) {
       _micSuppressedLowRms++;
       _logMicDebug(now);
-      _updateDetectedNote(null, now);
-      return;
+      return; // Low RMS, don't spam HUD updates, scoring already done
     }
 
     _logMicDebug(now);
 
-    // Gate 3: Stability filter (note must be stable before accepting)
-    // Check if this is the same note as before (within ±50 cents → ±1 semitone)
+    // Gate 3: Stability filter (HUD stats only, not used for scoring)
+    // Keep counters for debug logs, but no longer blocks scoring
     if (_lastStableNote != null && (_lastStableNote! - midi).abs() <= 1) {
       // Same note
       _stableFrameCount++;
@@ -2584,216 +2689,32 @@ class _PracticePageState extends State<PracticePage>
       );
       if (_stableFrameCount >= _stabilityFrameThreshold ||
           stableElapsedMs >= stableMs) {
-        // Note is stable; check debounce
+        // Note is stable (for stats)
         final nowMs = now.millisecondsSinceEpoch.toDouble();
         final lastMs = (_lastAcceptedNoteAt?.millisecondsSinceEpoch ?? 0)
             .toDouble();
         if ((nowMs - lastMs) >= _debounceMs) {
-          // Debounce passed; accept note
+          // Debounce passed (for stats)
           _lastAcceptedNote = midi;
           _lastAcceptedNoteAt = now;
           _micAcceptedCount++;
-          nextDetected = midi;
         } else {
-          // Debounce rejected
+          // Debounce rejected (for stats)
           _micSuppressedDebounce++;
-          nextDetected = null;
         }
       } else {
-        // Waiting for stability
+        // Waiting for stability (for stats)
         _micSuppressedUnstable++;
-        nextDetected = null;
       }
     } else {
-      // Different note; reset stability counter
+      // Different note; reset stability counter (for stats)
       _lastStableNote = midi;
       _stableFrameCount = 1;
       _stableNoteStartTime = now;
       _micSuppressedUnstable++;
-      nextDetected = null;
     }
 
-    if (!_isListening && !injected) {
-      nextDetected = null;
-    }
-
-    final prevAccuracy = _accuracy;
-    // D1: Use scoring-specific elapsed (unified timebase with painter + offset compensation)
-    final elapsed = _scoringElapsedSec();
-    if (elapsed == null) {
-      return;
-    }
-
-    // M1-MICRO FIX: Record detection in pitch history (for historical matching)
-    // Store ALL detections, even if gates will reject them
-    // D3: Apply latency compensation to elapsed time
-    final elapsedCompensated = max(0.0, elapsed - _micLatencyCompSec);
-    _pitchHistory.add(
-      _PitchEvent(
-        elapsedSec: elapsedCompensated,
-        midi: midi,
-        f0: freq,
-        confidence: _micConfidence,
-        rms: _micRms,
-      ),
-    );
-    if (_pitchHistory.length > _maxPitchHistoryEvents) {
-      _pitchHistory.removeAt(0);
-    }
-
-    // D3: If we have a detection, start/refresh hold. If hold is expired, clear it.
-    if (nextDetected != null) {
-      _heldDetectedNote = nextDetected;
-      _heldDetectedNoteStart = now;
-    } else if (_heldDetectedNote != null && _heldDetectedNoteStart != null) {
-      final holdElapsedMs = now
-          .difference(_heldDetectedNoteStart!)
-          .inMilliseconds;
-      if (holdElapsedMs > _detectionHoldMs) {
-        _heldDetectedNote = null;
-        _heldDetectedNoteStart = null;
-      } else {
-        // Hold still valid; use held note
-        nextDetected = _heldDetectedNote;
-      }
-    }
-
-    // Only react to "accepted" detections, not raw per-frame detections
-    if (nextDetected == null) {
-      _updateDetectedNote(null, now);
-      return;
-    }
-
-    // Find active expected notes
-    final activeIndices = <int>[];
-    final newActiveNotes = <int>[];
-    for (var i = 0; i < _noteEvents.length; i++) {
-      final n = _noteEvents[i];
-      if (elapsed >= n.start && elapsed <= n.end + _targetWindowTailSec) {
-        activeIndices.add(i);
-        newActiveNotes.add(n.pitch);
-      }
-      if (elapsed > n.end + _targetWindowTailSec && !_hitNotes[i]) {
-        _hitNotes[i] = true; // mark as processed
-      }
-    }
-
-    // D2: Reset stability if active expected notes changed
-    // Prevents old note from being "sticky" when new note is expected
-    if (_lastActiveExpectedNotes != newActiveNotes) {
-      _lastStableNote = null;
-      _stableFrameCount = 0;
-      _stableNoteStartTime = null;
-      _lastActiveExpectedNotes = newActiveNotes;
-      if (kDebugMode && newActiveNotes.isNotEmpty) {
-        debugPrint(
-          'MICRO_RESET sessionId=$_practiceSessionId expectedNotes=${newActiveNotes.join(",")}',
-        );
-      }
-    }
-
-    bool matched = false;
-    for (final idx in activeIndices) {
-      if (_hitNotes[idx]) continue;
-      final note = _noteEvents[idx];
-      final expectedMidi = note.pitch;
-
-      // M1-MICRO FIX: Search pitch history for best match in note window
-      // Tolerance: ±1 semitone direct, OR within ±12 (harmonic correction)
-      _PitchEvent? bestEvent;
-      int? bestTestMidi;
-      double bestDistance = double.infinity;
-
-      for (final event in _pitchHistory) {
-        if (event.elapsedSec < note.start ||
-            event.elapsedSec > note.end + _targetWindowTailSec) {
-          continue;
-        }
-
-        // Test direct midi
-        final distDirect = (event.midi - expectedMidi).abs().toDouble();
-        if (distDirect < bestDistance) {
-          bestDistance = distDirect;
-          bestEvent = event;
-          bestTestMidi = event.midi;
-        }
-
-        // Test harmonic correction: midi ±12
-        for (final shift in [-12, 12]) {
-          final testMidi = event.midi + shift;
-          final distHarmonic = (testMidi - expectedMidi).abs().toDouble();
-          if (distHarmonic < bestDistance) {
-            bestDistance = distHarmonic;
-            bestEvent = event;
-            bestTestMidi = testMidi;
-          }
-        }
-      }
-
-      if (bestEvent != null && bestDistance <= 1.0) {
-        matched = true;
-        _hitNotes[idx] = true;
-        _correctNotes += 1;
-        _score += 1;
-        _accuracy = NoteAccuracy.correct;
-        // D1: Auto-calibrate micro scoring offset via EMA on high-confidence direct matches
-        if (bestEvent.confidence >= 0.7 && bestTestMidi == bestEvent.midi) {
-          final rawDtSec = bestEvent.elapsedSec - note.start;
-          // EMA: offset = offset * 0.8 + dt * 0.2
-          _micScoringOffsetSec = (_micScoringOffsetSec * 0.8 + rawDtSec * 0.2)
-              .clamp(0.0, 0.8);
-          if (kDebugMode) {
-            debugPrint(
-              'MICRO_CALIBRATE sessionId=$_practiceSessionId '
-              'offset=${_micScoringOffsetSec.toStringAsFixed(3)}s dt=${rawDtSec.toStringAsFixed(3)}s',
-            );
-          }
-        }
-        // D2: Distinguish direct match vs octave match in log
-        if (kDebugMode) {
-          final isDirectMatch = bestTestMidi == bestEvent.midi;
-          final reason = isDirectMatch ? 'pitch_match' : 'pitch_match_octave';
-          debugPrint(
-            'HIT_DECISION sessionId=$_practiceSessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
-            'expectedMidi=$expectedMidi bestMidi=$bestTestMidi f0=${bestEvent.f0.toStringAsFixed(1)} '
-            'conf=${bestEvent.confidence.toStringAsFixed(2)} dt=${(bestEvent.elapsedSec - note.start).toStringAsFixed(3)} '
-            'reason=$reason',
-          );
-        }
-      } else {
-        // D3: Log MISS with diagnostic info for debugging
-        if (kDebugMode && bestEvent != null) {
-          debugPrint(
-            'HIT_DECISION sessionId=$_practiceSessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
-            'expectedMidi=$expectedMidi bestMidi=$bestTestMidi f0=${bestEvent.f0.toStringAsFixed(1)} '
-            'distance=${bestDistance.toStringAsFixed(2)}sem conf=${bestEvent.confidence.toStringAsFixed(2)} '
-            'rms=${bestEvent.rms.toStringAsFixed(3)} reason=pitch_mismatch',
-          );
-        } else if (kDebugMode) {
-          // No candidate: either pitchHistory empty or out of window
-          debugPrint(
-            'HIT_DECISION sessionId=$_practiceSessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
-            'expectedMidi=$expectedMidi numHistoryEvents=${_pitchHistory.length} reason=no_candidate',
-          );
-        }
-      }
-    }
-
-    if (!matched && activeIndices.isNotEmpty) {
-      // PATCH: Only trigger wrongFlash if there's an active note to play
-      final impactNotes = _computeImpactNotes(elapsedSec: elapsed);
-      if (impactNotes.isNotEmpty) {
-        _accuracy = NoteAccuracy.wrong;
-        final isConfident = _micConfidence >= _minConfidenceForFeedback;
-        if (isConfident) {
-          // nextDetected is guaranteed non-null here (early return above)
-          _registerWrongHit(detectedNote: nextDetected, now: now);
-        }
-      }
-    }
-
-    final accuracyChanged = prevAccuracy != _accuracy;
-    _updateDetectedNote(nextDetected, now, accuracyChanged: accuracyChanged);
+    // End of _processSamples (HUD state updated, scoring already done by MicEngine)
   }
 
   void _updateDetectedNote(
