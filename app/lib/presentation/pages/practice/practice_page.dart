@@ -292,6 +292,8 @@ class _PracticePageState extends State<PracticePage>
   int? _heldDetectedNote;
   DateTime? _heldDetectedNoteStart;
   static const double _detectionHoldMs = 200.0;
+  // D2: Track previously active expected notes to detect when they change
+  List<int> _lastActiveExpectedNotes = [];
   // M1-MICRO FIX: Ring buffer for pitch history (for historical matching)
   static const int _maxPitchHistoryEvents = 100; // ~1.5s @ 23ms window
   final List<_PitchEvent> _pitchHistory = [];
@@ -317,6 +319,9 @@ class _PracticePageState extends State<PracticePage>
   static const double _maxValidF0Hz =
       2000.0; // Upper limit (piano typically < 1400 Hz)
   double _micLatencyCompSec = 0.0; // Compensation for buffer latency
+  // D1: Micro scoring offset (auto-calibrated via EMA on pitch_match confidence)
+  double _micScoringOffsetSec =
+      0.0; // Offset between micro elapsed and scoring elapsed
   bool _micConfigLogged = false; // Log MIC_CONFIG only once per session
   List<_NoteEvent> _rawNoteEvents = [];
   List<_NoteEvent> _noteEvents = [];
@@ -365,6 +370,8 @@ class _PracticePageState extends State<PracticePage>
   double _lastLayoutMaxWidth = 0.0;
   static const int _micMaxBufferSamples = PitchDetector.bufferSize * 4;
   final List<double> _micBuffer = <double>[];
+  int?
+  _detectedChannelCount; // D1-R1: Track if we detected stereo (null = not yet determined)
   VideoPlayerController? _videoController;
   double? _videoDurationSec;
   double? _stableVideoDurationSec; // C6: Non-decreasing duration per session
@@ -1560,12 +1567,13 @@ class _PracticePageState extends State<PracticePage>
     try {
       await _recorder.initialize(sampleRate: PitchDetector.sampleRate);
       await _recorder.start();
-      // D1: Log MIC_CONFIG once per session (after recorder initialized)
+      // D1+D3: Log MIC_FORMAT once per session (audio setup diagnostic)
       if (!_micConfigLogged && kDebugMode) {
         _micConfigLogged = true;
         debugPrint(
-          'MIC_CONFIG sessionId=$_practiceSessionId sampleRate=${PitchDetector.sampleRate} '
-          'source=recorder',
+          'MIC_FORMAT sessionId=$_practiceSessionId sr=${PitchDetector.sampleRate} '
+          'bufferMs=${(PitchDetector.bufferSize * 1000 ~/ PitchDetector.sampleRate)} '
+          'offset=${_micScoringOffsetSec.toStringAsFixed(3)}s',
         );
       }
       // D3: Default latency compensation (~100ms for buffer latency)
@@ -1906,6 +1914,16 @@ class _PracticePageState extends State<PracticePage>
     return _startTime != null ? _practiceClockSec() : null;
   }
 
+  // D1: Scoring-specific elapsed (same source as painter, but optionally offset-corrected)
+  // Used for HIT/MISS decision timing and micro event timestamping.
+  // Applies micro scoring offset for latency compensation.
+  double? _scoringElapsedSec() {
+    final baseElapsed = _guidanceElapsedSec();
+    if (baseElapsed == null) return null;
+    // Apply micro scoring offset (auto-calibrated to align micro detections with note windows)
+    return max(0.0, baseElapsed - _micScoringOffsetSec);
+  }
+
   double? _effectiveElapsedSec() {
     final practiceClockSec = _startTime != null ? _practiceClockSec() : null;
     return effectiveElapsedForTest(
@@ -2078,6 +2096,8 @@ class _PracticePageState extends State<PracticePage>
     _micFrequency = null;
     _micNote = null;
     _micConfidence = 0.0;
+    _detectedChannelCount =
+        null; // D1-R1: Reset channel detection for new session
     _lastMicLogAt = null;
     _lastMidiFrameAt = null;
     _lastMidiNote = null;
@@ -2337,6 +2357,7 @@ class _PracticePageState extends State<PracticePage>
       _micFrequency = null;
       _micNote = null;
       _micConfidence = 0.0;
+      _micScoringOffsetSec = 0.0; // D1: Reset offset for new session
       _lastMidiFrameAt = null;
       _lastMidiNote = null;
       _lastCorrectHitAt = null;
@@ -2457,13 +2478,38 @@ class _PracticePageState extends State<PracticePage>
       return;
     }
     if (_startTime == null && !injected) return;
-    // FEATURE A: Disable mic during countdown
+    // D1: Disable mic during countdown (anti-pollution: avoid capturing app's reference note)
+    // and clear pitch history to prevent carryover from previous expected notes
     if (_practiceState == _PracticeState.countdown) {
+      _pitchHistory.clear();
       return;
     }
     _lastMicFrameAt = now;
-    _micRms = _computeRms(samples);
-    _appendSamples(_micBuffer, samples);
+    // D1-R1: Detect stereo and downmix to mono if needed
+    // Heuristic: if buffer accumulates faster than expected for mono, likely stereo interleaved
+    var processSamples = samples;
+    if (_detectedChannelCount == null && samples.isNotEmpty) {
+      // Expected mono rate: 44100 samples/sec ≈ 882 per 20ms window
+      // If buffer grows 2x faster ⇒ likely stereo (2 channels)
+      final expectedMonoSamplesPerFrame = 44100 ~/ 50; // ~882 per 20ms
+      final isStereoLikely =
+          _micBuffer.length > expectedMonoSamplesPerFrame * 2 &&
+          samples.length > 100;
+      if (isStereoLikely) {
+        processSamples = _downmixStereoToMono(samples);
+        _detectedChannelCount = 2;
+        if (kDebugMode) {
+          debugPrint(
+            'AUDIO_STEREO_DETECTED sessionId=$_practiceSessionId '
+            'downmixing to mono (L+R)/2',
+          );
+        }
+      } else {
+        _detectedChannelCount = 1;
+      }
+    }
+    _micRms = _computeRms(processSamples);
+    _appendSamples(_micBuffer, processSamples);
 
     // FEATURE B: Track noise floor (EWMA of RMS when no stable note)
     if (_lastStableNote == null) {
@@ -2572,7 +2618,8 @@ class _PracticePageState extends State<PracticePage>
     }
 
     final prevAccuracy = _accuracy;
-    final elapsed = _effectiveElapsedSec();
+    // D1: Use scoring-specific elapsed (unified timebase with painter + offset compensation)
+    final elapsed = _scoringElapsedSec();
     if (elapsed == null) {
       return;
     }
@@ -2619,13 +2666,29 @@ class _PracticePageState extends State<PracticePage>
 
     // Find active expected notes
     final activeIndices = <int>[];
+    final newActiveNotes = <int>[];
     for (var i = 0; i < _noteEvents.length; i++) {
       final n = _noteEvents[i];
       if (elapsed >= n.start && elapsed <= n.end + _targetWindowTailSec) {
         activeIndices.add(i);
+        newActiveNotes.add(n.pitch);
       }
       if (elapsed > n.end + _targetWindowTailSec && !_hitNotes[i]) {
         _hitNotes[i] = true; // mark as processed
+      }
+    }
+
+    // D2: Reset stability if active expected notes changed
+    // Prevents old note from being "sticky" when new note is expected
+    if (_lastActiveExpectedNotes != newActiveNotes) {
+      _lastStableNote = null;
+      _stableFrameCount = 0;
+      _stableNoteStartTime = null;
+      _lastActiveExpectedNotes = newActiveNotes;
+      if (kDebugMode && newActiveNotes.isNotEmpty) {
+        debugPrint(
+          'MICRO_RESET sessionId=$_practiceSessionId expectedNotes=${newActiveNotes.join(",")}',
+        );
       }
     }
 
@@ -2673,27 +2736,44 @@ class _PracticePageState extends State<PracticePage>
         _correctNotes += 1;
         _score += 1;
         _accuracy = NoteAccuracy.correct;
-        // M1: Log HIT with best candidate found
+        // D1: Auto-calibrate micro scoring offset via EMA on high-confidence direct matches
+        if (bestEvent.confidence >= 0.7 && bestTestMidi == bestEvent.midi) {
+          final rawDtSec = bestEvent.elapsedSec - note.start;
+          // EMA: offset = offset * 0.8 + dt * 0.2
+          _micScoringOffsetSec = (_micScoringOffsetSec * 0.8 + rawDtSec * 0.2)
+              .clamp(0.0, 0.8);
+          if (kDebugMode) {
+            debugPrint(
+              'MICRO_CALIBRATE sessionId=$_practiceSessionId '
+              'offset=${_micScoringOffsetSec.toStringAsFixed(3)}s dt=${rawDtSec.toStringAsFixed(3)}s',
+            );
+          }
+        }
+        // D2: Distinguish direct match vs octave match in log
         if (kDebugMode) {
+          final isDirectMatch = bestTestMidi == bestEvent.midi;
+          final reason = isDirectMatch ? 'pitch_match' : 'pitch_match_octave';
           debugPrint(
             'HIT_DECISION sessionId=$_practiceSessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
             'expectedMidi=$expectedMidi bestMidi=$bestTestMidi f0=${bestEvent.f0.toStringAsFixed(1)} '
             'conf=${bestEvent.confidence.toStringAsFixed(2)} dt=${(bestEvent.elapsedSec - note.start).toStringAsFixed(3)} '
-            'reason=pitch_match',
+            'reason=$reason',
           );
         }
       } else {
-        // M1: Log MISS with best candidate (if any)
+        // D3: Log MISS with diagnostic info for debugging
         if (kDebugMode && bestEvent != null) {
           debugPrint(
             'HIT_DECISION sessionId=$_practiceSessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
-            'expectedMidi=$expectedMidi bestMidi=$bestTestMidi distance=${bestDistance.toStringAsFixed(2)}sem '
-            'conf=${bestEvent.confidence.toStringAsFixed(2)} reason=pitch_mismatch',
+            'expectedMidi=$expectedMidi bestMidi=$bestTestMidi f0=${bestEvent.f0.toStringAsFixed(1)} '
+            'distance=${bestDistance.toStringAsFixed(2)}sem conf=${bestEvent.confidence.toStringAsFixed(2)} '
+            'rms=${bestEvent.rms.toStringAsFixed(3)} reason=pitch_mismatch',
           );
         } else if (kDebugMode) {
+          // No candidate: either pitchHistory empty or out of window
           debugPrint(
             'HIT_DECISION sessionId=$_practiceSessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
-            'expectedMidi=$expectedMidi reason=no_candidate',
+            'expectedMidi=$expectedMidi numHistoryEvents=${_pitchHistory.length} reason=no_candidate',
           );
         }
       }
@@ -2776,6 +2856,7 @@ class _PracticePageState extends State<PracticePage>
     final samples = <double>[];
     if (looksLikeBytes) {
       final evenLength = chunk.length - (chunk.length % 2);
+      // D1: Convert bytes to int16 samples
       for (var i = 0; i < evenLength; i += 2) {
         final lo = chunk[i];
         final hi = chunk[i + 1];
@@ -2788,6 +2869,8 @@ class _PracticePageState extends State<PracticePage>
       return samples;
     }
 
+    // D1: If input is Int16List (could be stereo), treat as raw int16 values
+    // and downmix to mono if needed (take every sample, assuming they're already interleaved properly)
     for (final value in chunk) {
       if (value < -32768 || value > 32767) {
         continue;
@@ -2795,6 +2878,19 @@ class _PracticePageState extends State<PracticePage>
       samples.add(value / 32768.0);
     }
     return samples;
+  }
+
+  // D1: Downmix stereo interleaved samples to mono
+  List<double> _downmixStereoToMono(List<double> samples) {
+    if (samples.length < 2) return samples;
+    final mono = <double>[];
+    // Assume stereo interleaved: L,R,L,R,...
+    for (var i = 0; i < samples.length; i += 2) {
+      final left = samples[i];
+      final right = (i + 1 < samples.length) ? samples[i + 1] : left;
+      mono.add((left + right) / 2.0); // Average L+R
+    }
+    return mono;
   }
 
   void _appendSamples(List<double> buffer, List<double> samples) {
