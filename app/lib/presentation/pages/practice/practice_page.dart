@@ -211,6 +211,23 @@ class PracticePage extends StatefulWidget {
   State<PracticePage> createState() => _PracticePageState();
 }
 
+/// M1-MICRO FIX: Event in pitch history for historical matching
+class _PitchEvent {
+  final double elapsedSec;
+  final int midi;
+  final double f0;
+  final double confidence;
+  final double rms;
+
+  _PitchEvent({
+    required this.elapsedSec,
+    required this.midi,
+    required this.f0,
+    required this.confidence,
+    required this.rms,
+  });
+}
+
 class _PracticePageState extends State<PracticePage>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   bool get _isTestEnv =>
@@ -275,6 +292,9 @@ class _PracticePageState extends State<PracticePage>
   int? _heldDetectedNote;
   DateTime? _heldDetectedNoteStart;
   static const double _detectionHoldMs = 200.0;
+  // M1-MICRO FIX: Ring buffer for pitch history (for historical matching)
+  static const int _maxPitchHistoryEvents = 100; // ~1.5s @ 23ms window
+  final List<_PitchEvent> _pitchHistory = [];
   // Counters for debug
   int _micRawCount = 0;
   int _micAcceptedCount = 0;
@@ -292,6 +312,12 @@ class _PracticePageState extends State<PracticePage>
   final RecorderStream _recorder = RecorderStream();
   StreamSubscription<MidiPacket>? _midiSub;
   final _pitchDetector = PitchDetector();
+  // D1-D3: Audio format & F0 validation
+  static const double _minValidF0Hz = 50.0; // Reject sub-bass aberrations
+  static const double _maxValidF0Hz =
+      2000.0; // Upper limit (piano typically < 1400 Hz)
+  double _micLatencyCompSec = 0.0; // Compensation for buffer latency
+  bool _micConfigLogged = false; // Log MIC_CONFIG only once per session
   List<_NoteEvent> _rawNoteEvents = [];
   List<_NoteEvent> _noteEvents = [];
   NotesSource _notesSource = NotesSource.none;
@@ -1526,6 +1552,7 @@ class _PracticePageState extends State<PracticePage>
   Future<void> _startMicStream() async {
     _micSub?.cancel();
     _micSub = null;
+    _micConfigLogged = false; // Reset config logging for new session
     try {
       await _recorder.stop();
     } catch (_) {}
@@ -1533,6 +1560,21 @@ class _PracticePageState extends State<PracticePage>
     try {
       await _recorder.initialize(sampleRate: PitchDetector.sampleRate);
       await _recorder.start();
+      // D1: Log MIC_CONFIG once per session (after recorder initialized)
+      if (!_micConfigLogged && kDebugMode) {
+        _micConfigLogged = true;
+        debugPrint(
+          'MIC_CONFIG sessionId=$_practiceSessionId sampleRate=${PitchDetector.sampleRate} '
+          'source=recorder',
+        );
+      }
+      // D3: Default latency compensation (~100ms for buffer latency)
+      _micLatencyCompSec = 0.10;
+      if (kDebugMode) {
+        debugPrint(
+          'MIC_LATENCY_COMP sessionId=$_practiceSessionId compSec=${_micLatencyCompSec.toStringAsFixed(3)}',
+        );
+      }
       _micSub = _recorder.audioStream.listen(
         _processAudioChunk,
         onError: (error, _) {
@@ -2312,6 +2354,11 @@ class _PracticePageState extends State<PracticePage>
       // D3: Reset hold/latch on new session
       _heldDetectedNote = null;
       _heldDetectedNoteStart = null;
+      // M1: Clear pitch history on new session
+      _pitchHistory.clear();
+      // D1, D3: Reset mic config logging and latency comp for new session
+      _micConfigLogged = false;
+      _micLatencyCompSec = 0.0;
     });
 
     if (showSummary && mounted) {
@@ -2444,6 +2491,17 @@ class _PracticePageState extends State<PracticePage>
       _updateDetectedNote(null, now);
       return;
     }
+
+    // D2: Reject aberrant F0 frequencies (< 50 Hz or > 2000 Hz)
+    if (freq < _minValidF0Hz || freq > _maxValidF0Hz) {
+      _micFrequency = null;
+      _micNote = null;
+      _micConfidence = 0.0;
+      _logMicDebug(now);
+      _updateDetectedNote(null, now);
+      return;
+    }
+
     final midi = _pitchDetector.frequencyToMidiNote(freq);
     _micFrequency = freq;
     _micNote = midi;
@@ -2519,6 +2577,23 @@ class _PracticePageState extends State<PracticePage>
       return;
     }
 
+    // M1-MICRO FIX: Record detection in pitch history (for historical matching)
+    // Store ALL detections, even if gates will reject them
+    // D3: Apply latency compensation to elapsed time
+    final elapsedCompensated = max(0.0, elapsed - _micLatencyCompSec);
+    _pitchHistory.add(
+      _PitchEvent(
+        elapsedSec: elapsedCompensated,
+        midi: midi,
+        f0: freq,
+        confidence: _micConfidence,
+        rms: _micRms,
+      ),
+    );
+    if (_pitchHistory.length > _maxPitchHistoryEvents) {
+      _pitchHistory.removeAt(0);
+    }
+
     // D3: If we have a detection, start/refresh hold. If hold is expired, clear it.
     if (nextDetected != null) {
       _heldDetectedNote = nextDetected;
@@ -2557,45 +2632,71 @@ class _PracticePageState extends State<PracticePage>
     bool matched = false;
     for (final idx in activeIndices) {
       if (_hitNotes[idx]) continue;
-      if ((nextDetected - _noteEvents[idx].pitch).abs() <= 1) {
+      final note = _noteEvents[idx];
+      final expectedMidi = note.pitch;
+
+      // M1-MICRO FIX: Search pitch history for best match in note window
+      // Tolerance: ±1 semitone direct, OR within ±12 (harmonic correction)
+      _PitchEvent? bestEvent;
+      int? bestTestMidi;
+      double bestDistance = double.infinity;
+
+      for (final event in _pitchHistory) {
+        if (event.elapsedSec < note.start ||
+            event.elapsedSec > note.end + _targetWindowTailSec) {
+          continue;
+        }
+
+        // Test direct midi
+        final distDirect = (event.midi - expectedMidi).abs().toDouble();
+        if (distDirect < bestDistance) {
+          bestDistance = distDirect;
+          bestEvent = event;
+          bestTestMidi = event.midi;
+        }
+
+        // Test harmonic correction: midi ±12
+        for (final shift in [-12, 12]) {
+          final testMidi = event.midi + shift;
+          final distHarmonic = (testMidi - expectedMidi).abs().toDouble();
+          if (distHarmonic < bestDistance) {
+            bestDistance = distHarmonic;
+            bestEvent = event;
+            bestTestMidi = testMidi;
+          }
+        }
+      }
+
+      if (bestEvent != null && bestDistance <= 1.0) {
         matched = true;
         _hitNotes[idx] = true;
         _correctNotes += 1;
         _score += 1;
         _accuracy = NoteAccuracy.correct;
-        // C8: Log HIT decision with reason
+        // M1: Log HIT with best candidate found
         if (kDebugMode) {
-          final note = _noteEvents[idx];
           debugPrint(
-            'HIT_DECISION sessionId=$_practiceSessionId elapsed=${elapsed.toStringAsFixed(3)} '
-            'expectedMidi=${note.pitch} detectedMidi=$nextDetected '
-            'dt=${(elapsed - note.start).toStringAsFixed(3)} tail=$_targetWindowTailSec '
+            'HIT_DECISION sessionId=$_practiceSessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
+            'expectedMidi=$expectedMidi bestMidi=$bestTestMidi f0=${bestEvent.f0.toStringAsFixed(1)} '
+            'conf=${bestEvent.confidence.toStringAsFixed(2)} dt=${(bestEvent.elapsedSec - note.start).toStringAsFixed(3)} '
             'reason=pitch_match',
           );
         }
       } else {
-        // C8: Log MISS decision with reason
-        if (kDebugMode) {
-          final note = _noteEvents[idx];
-          final semidiff = (nextDetected - note.pitch).abs();
-          if (semidiff > 1) {
-            debugPrint(
-              'HIT_DECISION sessionId=$_practiceSessionId elapsed=${elapsed.toStringAsFixed(3)} '
-              'expectedMidi=${note.pitch} detectedMidi=$nextDetected '
-              'dt=${(elapsed - note.start).toStringAsFixed(3)} tail=$_targetWindowTailSec '
-              'reason=pitch_mismatch_${semidiff}sem',
-            );
-          }
+        // M1: Log MISS with best candidate (if any)
+        if (kDebugMode && bestEvent != null) {
+          debugPrint(
+            'HIT_DECISION sessionId=$_practiceSessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
+            'expectedMidi=$expectedMidi bestMidi=$bestTestMidi distance=${bestDistance.toStringAsFixed(2)}sem '
+            'conf=${bestEvent.confidence.toStringAsFixed(2)} reason=pitch_mismatch',
+          );
+        } else if (kDebugMode) {
+          debugPrint(
+            'HIT_DECISION sessionId=$_practiceSessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
+            'expectedMidi=$expectedMidi reason=no_candidate',
+          );
         }
       }
-    }
-
-    if (!matched && activeIndices.isNotEmpty && kDebugMode) {
-      // Log missed window (no detection at all during active window)
-      debugPrint(
-        'HIT_DECISION sessionId=$_practiceSessionId elapsed=${elapsed.toStringAsFixed(3)} '
-        'reason=no_detection activeNotes=${activeIndices.length}',
-      );
     }
 
     if (!matched && activeIndices.isNotEmpty) {
