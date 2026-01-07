@@ -253,10 +253,10 @@ class _PracticePageState extends State<PracticePage>
   _PracticeState _practiceState = _PracticeState.idle;
   DateTime? _countdownStartTime;
   static const double _practiceLeadInSec = 1.5;
-  // BUG FIX: Dynamic lead-in to prevent mid-screen note spawn
-  // Computed as: max(baseLeadIn, fallLead - earliestNoteStart)
-  // Ensures the earliest note appears at y≈0 at countdown start.
-  late double _effectiveLeadInSec = _practiceLeadInSec;
+  // C8: PATCH VISUAL - ensure leadInSec >= fallLeadSec to prevent chute compression
+  // If leadInSec < fallLeadSec, synthetic elapsed maps [0..leadInSec] → [-fallLeadSec..0]
+  // which is faster than realtime, causing notes to spawn low and fall compressed.
+  late double _effectiveLeadInSec = max(_practiceLeadInSec, _fallLeadSec);
   double? _earliestNoteStartSec; // Clamped to >= 0, used for effective lead-in
   // FEATURE B: Mic precision (adaptive threshold + stability + debounce)
   double _noiseFloorRms = 0.04; // Baseline RMS when silent
@@ -269,7 +269,12 @@ class _PracticePageState extends State<PracticePage>
   int _stableFrameCount = 0;
   DateTime? _lastAcceptedNoteAt;
   int? _lastAcceptedNote;
-  static const double _debounceMs = 120.0; // Suppress events within 120ms
+  static const double _debounceMs =
+      80.0; // C8: reduced from 120 to reduce misses on fast notes
+  // D3: Hold/latch for detected note (keep valid ~200ms even if gates reject it)
+  int? _heldDetectedNote;
+  DateTime? _heldDetectedNoteStart;
+  static const double _detectionHoldMs = 200.0;
   // Counters for debug
   int _micRawCount = 0;
   int _micAcceptedCount = 0;
@@ -307,6 +312,7 @@ class _PracticePageState extends State<PracticePage>
   int _painterInstanceId = 0;
   double _latencyMs = 0;
   final AudioPlayer _beepPlayer = AudioPlayer();
+  bool _notesSourceLocked = false; // C2: Prevent mid-session source switch
   static const double _fallbackLatencyMs =
       100.0; // Default offset if calibration fails
   bool _useMidi = false;
@@ -314,7 +320,8 @@ class _PracticePageState extends State<PracticePage>
   late final Ticker _ticker;
   static const double _fallLeadSec = 2.0;
   static const double _fallTailSec = 0.6;
-  static const double _targetWindowTailSec = 0.2;
+  static const double _targetWindowTailSec =
+      0.4; // C8: increased from 0.2 to reduce misses
   static const double _targetChordToleranceSec = 0.03;
   static const double _videoSyncOffsetSec = 0.0;
   // B) Configurable merge tolerance for overlapping same-pitch events
@@ -334,12 +341,20 @@ class _PracticePageState extends State<PracticePage>
   final List<double> _micBuffer = <double>[];
   VideoPlayerController? _videoController;
   double? _videoDurationSec;
+  double? _stableVideoDurationSec; // C6: Non-decreasing duration per session
   ChewieController? _chewieController;
   VoidCallback? _videoListener;
   bool _videoLoading = true;
   String? _videoError;
   bool _notesLoading = false;
   String? _notesError;
+  int? _notesLoadingSessionId; // C4: Guard double load by sessionId
+  int?
+  _notesLoadedSessionId; // C4: Guard already loaded (prevent sequential reload)
+  double?
+  _lastSanitizedDurationSec; // C7: Guard idempotent sanitize (epsilon 0.05)
+  int?
+  _durationLockedSessionId; // D2: Lock stable duration once per sessionId (prevent flip)
   PermissionStatus? _micPermissionStatus;
   bool _showMicPermissionFallback = false;
   bool _micDisabled = false;
@@ -1860,14 +1875,25 @@ class _PracticePageState extends State<PracticePage>
   }
 
   double? _effectiveVideoDurationSec() {
+    // C6: Stabilize duration (never decrease within session)
     if (_videoDurationSec != null && _videoDurationSec! > 0) {
-      return _videoDurationSec;
+      final candidate = _videoDurationSec!;
+      _stableVideoDurationSec = max(_stableVideoDurationSec ?? 0, candidate);
+      // D2: Lock duration to current sessionId (prevent fallback override in same session)
+      _durationLockedSessionId = _practiceSessionId;
+      return _stableVideoDurationSec;
     }
-    final levelDuration = widget.level.durationSec;
-    if (levelDuration != null && levelDuration > 0) {
-      return levelDuration;
+    // Fallback: metadata only if we haven't established a real duration yet
+    // AND we're not in a session where we already locked a duration
+    if (_stableVideoDurationSec == null &&
+        _durationLockedSessionId != _practiceSessionId) {
+      final levelDuration = widget.level.durationSec;
+      if (levelDuration != null && levelDuration > 0) {
+        _stableVideoDurationSec = levelDuration;
+        return _stableVideoDurationSec;
+      }
     }
-    return null;
+    return _stableVideoDurationSec;
   }
 
   double _minDurationSecForTempo(int? tempoBpm) {
@@ -1967,6 +1993,12 @@ class _PracticePageState extends State<PracticePage>
     _correctNotes = 0;
     _totalNotes = 0;
     _hitNotes = []; // Reassign instead of clear (was fixed-length list)
+    _notesSourceLocked = false; // C2: Reset source lock for next session
+    _notesLoadingSessionId = null; // C4: Reset load guard for next session
+    _notesLoadedSessionId = null; // C4: Reset loaded flag for next session
+    _stableVideoDurationSec =
+        null; // C6: Reset stable duration for next session
+    _lastSanitizedDurationSec = null; // C7: Reset sanitize epsilon guard
     _lastCorrectNote = null;
     _lastWrongDetectedNote = null;
     if (_videoController != null && _videoController!.value.isInitialized) {
@@ -2096,6 +2128,17 @@ class _PracticePageState extends State<PracticePage>
         _countdownStartTime = DateTime.now();
         _practiceStarting = false;
       }
+      // C8: Log countdown timing to verify no chute compression
+      if (kDebugMode) {
+        final leadIn = _effectiveLeadInSec;
+        final fallLead = _fallLeadSec;
+        final firstStart = _earliestNoteStartSec ?? 0;
+        debugPrint(
+          'Countdown C8: leadInSec=$leadIn fallLeadSec=$fallLead '
+          'ratio=${(leadIn / fallLead).toStringAsFixed(2)} '
+          'earliestNoteStart=$firstStart synthAt_t0=-$fallLead synthAt_tEnd=0',
+        );
+      }
     }
     _score = 0;
     _correctNotes = 0;
@@ -2107,7 +2150,12 @@ class _PracticePageState extends State<PracticePage>
     _lastWrongHitAt = null;
     _lastWrongDetectedNote = null;
     _startTime = DateTime.now();
-    _micBuffer.clear();
+    if (_micBuffer.isNotEmpty) {
+      _micBuffer.removeRange(
+        0,
+        _micBuffer.length,
+      ); // C5: Safe clear on final list
+    }
 
     if (_useMidi) {
       // Already listening via MIDI subscription
@@ -2117,7 +2165,8 @@ class _PracticePageState extends State<PracticePage>
   }
 
   /// Compute effective lead-in to guarantee first note spawns at y≈0 when countdown starts.
-  /// Formula: effectiveLeadInSec = max(baseLeadIn, fallLead - min(noteStart))
+  /// D1 FIX: Ensure countdown ratio = 1.0 (no velocity compression).
+  /// Formula: effectiveLeadInSec = max(baseLeadIn, fallLead) to prevent chute compression.
   void _computeEffectiveLeadIn() {
     if (_noteEvents.isEmpty) {
       _effectiveLeadInSec = _practiceLeadInSec;
@@ -2129,10 +2178,8 @@ class _PracticePageState extends State<PracticePage>
       );
       // Clamp to >= 0
       _earliestNoteStartSec = max(0.0, minStart);
-      _effectiveLeadInSec = max(
-        _practiceLeadInSec,
-        _fallLeadSec - _earliestNoteStartSec!,
-      );
+      // D1: Ensure countdown ratio = 1.0 (no velocity > 1.0 compression)
+      _effectiveLeadInSec = max(_practiceLeadInSec, _fallLeadSec);
     }
   }
 
@@ -2262,6 +2309,9 @@ class _PracticePageState extends State<PracticePage>
       _stableFrameCount = 0;
       _lastAcceptedNoteAt = null;
       _lastAcceptedNote = null;
+      // D3: Reset hold/latch on new session
+      _heldDetectedNote = null;
+      _heldDetectedNoteStart = null;
     });
 
     if (showSummary && mounted) {
@@ -2339,16 +2389,26 @@ class _PracticePageState extends State<PracticePage>
 
   Future<void> _processAudioChunk(List<int> chunk) async {
     if (_startTime == null) return;
+    // C3: Session gate - capture sessionId to prevent obsolete callbacks
+    final localSessionId = _practiceSessionId;
+    if (!_isSessionActive(localSessionId)) {
+      return;
+    }
     final samples = _convertChunkToSamples(chunk);
     if (samples.isEmpty) return;
-    _processSamples(samples, now: DateTime.now());
+    _processSamples(samples, now: DateTime.now(), sessionId: localSessionId);
   }
 
   void _processSamples(
     List<double> samples, {
     required DateTime now,
     bool injected = false,
+    int? sessionId,
   }) {
+    // C3: Session gate - skip if sessionId mismatch (stale callback)
+    if (sessionId != null && !_isSessionActive(sessionId)) {
+      return;
+    }
     if (_startTime == null && !injected) return;
     // FEATURE A: Disable mic during countdown
     if (_practiceState == _PracticeState.countdown) {
@@ -2459,6 +2519,23 @@ class _PracticePageState extends State<PracticePage>
       return;
     }
 
+    // D3: If we have a detection, start/refresh hold. If hold is expired, clear it.
+    if (nextDetected != null) {
+      _heldDetectedNote = nextDetected;
+      _heldDetectedNoteStart = now;
+    } else if (_heldDetectedNote != null && _heldDetectedNoteStart != null) {
+      final holdElapsedMs = now
+          .difference(_heldDetectedNoteStart!)
+          .inMilliseconds;
+      if (holdElapsedMs > _detectionHoldMs) {
+        _heldDetectedNote = null;
+        _heldDetectedNoteStart = null;
+      } else {
+        // Hold still valid; use held note
+        nextDetected = _heldDetectedNote;
+      }
+    }
+
     // Only react to "accepted" detections, not raw per-frame detections
     if (nextDetected == null) {
       _updateDetectedNote(null, now);
@@ -2486,13 +2563,39 @@ class _PracticePageState extends State<PracticePage>
         _correctNotes += 1;
         _score += 1;
         _accuracy = NoteAccuracy.correct;
-        _registerCorrectHit(
-          targetNote: _noteEvents[idx].pitch,
-          detectedNote: nextDetected,
-          now: now,
-        );
-        break;
+        // C8: Log HIT decision with reason
+        if (kDebugMode) {
+          final note = _noteEvents[idx];
+          debugPrint(
+            'HIT_DECISION sessionId=$_practiceSessionId elapsed=${elapsed.toStringAsFixed(3)} '
+            'expectedMidi=${note.pitch} detectedMidi=$nextDetected '
+            'dt=${(elapsed - note.start).toStringAsFixed(3)} tail=$_targetWindowTailSec '
+            'reason=pitch_match',
+          );
+        }
+      } else {
+        // C8: Log MISS decision with reason
+        if (kDebugMode) {
+          final note = _noteEvents[idx];
+          final semidiff = (nextDetected - note.pitch).abs();
+          if (semidiff > 1) {
+            debugPrint(
+              'HIT_DECISION sessionId=$_practiceSessionId elapsed=${elapsed.toStringAsFixed(3)} '
+              'expectedMidi=${note.pitch} detectedMidi=$nextDetected '
+              'dt=${(elapsed - note.start).toStringAsFixed(3)} tail=$_targetWindowTailSec '
+              'reason=pitch_mismatch_${semidiff}sem',
+            );
+          }
+        }
       }
+    }
+
+    if (!matched && activeIndices.isNotEmpty && kDebugMode) {
+      // Log missed window (no detection at all during active window)
+      debugPrint(
+        'HIT_DECISION sessionId=$_practiceSessionId elapsed=${elapsed.toStringAsFixed(3)} '
+        'reason=no_detection activeNotes=${activeIndices.length}',
+      );
     }
 
     if (!matched && activeIndices.isNotEmpty) {
@@ -2844,24 +2947,8 @@ class _PracticePageState extends State<PracticePage>
           ? '-'
           : videoDurationSec.toStringAsFixed(2);
       debugPrint(
-        'Practice notes sanitized: kept=${mergedNoteEvents.length} '
-        'minPitch=${minPitch ?? '-'} maxPitch=${maxPitch ?? '-'} '
-        'displayFirstKey=$clampedFirstKey displayLastKey=$clampedLastKey '
-        'videoDurationSec=$videoLabel '
-        'droppedInvalidPitch=$droppedInvalidPitch '
-        'droppedInvalidTime=$droppedInvalidTiming '
-        'droppedTooShort=$droppedTooShort '
-        'droppedTooLong=$droppedTooLong '
-        'droppedDup=$droppedDup '
-        'droppedOutOfVideo=$droppedOutOfVideo '
-        'clampedToVideo=$clampedToVideo '
-        'droppedOutOfRange=$droppedOutOfRange',
+        'Practice notes sanitized using stableDurationSec=$videoLabel',
       );
-      if (longNoteSamples.isNotEmpty) {
-        debugPrint(
-          'Practice notes long samples: ${longNoteSamples.join(' | ')}',
-        );
-      }
     }
 
     return _SanitizedNotes(
@@ -2896,6 +2983,13 @@ class _PracticePageState extends State<PracticePage>
 
   void _resanitizeNoteEventsForVideoDuration() {
     if (_rawNoteEvents.isEmpty || _notesLoading || _practiceRunning) {
+      return;
+    }
+    // C7: Guard idempotent sanitize: skip if no stable duration or same as last (epsilon 0.05)
+    final dur = _stableVideoDurationSec;
+    if (dur == null) return;
+    if (_lastSanitizedDurationSec != null &&
+        (dur - _lastSanitizedDurationSec!).abs() < 0.05) {
       return;
     }
     final tempoBpm = widget.level.tempoGuess;
@@ -2940,6 +3034,8 @@ class _PracticePageState extends State<PracticePage>
         _notesDroppedOutOfVideo = sanitized.droppedOutOfVideo;
         _notesDroppedDup = sanitized.droppedDup;
         _notesError = sortedEvents.isEmpty ? 'Notes indisponibles' : null;
+        _lastSanitizedDurationSec =
+            dur; // C7: Mark sanitization as done for this duration
       });
       // BUG FIX: Compute effective lead-in AFTER notes assigned
       _computeEffectiveLeadIn();
@@ -2954,6 +3050,8 @@ class _PracticePageState extends State<PracticePage>
       _notesDroppedOutOfVideo = sanitized.droppedOutOfVideo;
       _notesDroppedDup = sanitized.droppedDup;
       _notesError = sortedEvents.isEmpty ? 'Notes indisponibles' : null;
+      _lastSanitizedDurationSec =
+          dur; // C7: Mark sanitization as done for this duration
       // BUG FIX: Compute effective lead-in AFTER notes assigned
       _computeEffectiveLeadIn();
     }
@@ -2971,6 +3069,26 @@ class _PracticePageState extends State<PracticePage>
   }
 
   Future<void> _loadNoteEvents({required int sessionId}) async {
+    // C4: Guard already loaded - skip if notes already loaded for this session
+    if (_notesLoadedSessionId == sessionId && _noteEvents.isNotEmpty) {
+      if (kDebugMode) {
+        debugPrint(
+          'Practice notes: already loaded for session=$sessionId; skip sequential reload',
+        );
+      }
+      return;
+    }
+
+    // C4: Guard double load - skip if same load already in progress
+    if (_notesLoadingSessionId == sessionId && _notesLoading) {
+      if (kDebugMode) {
+        debugPrint(
+          'Practice notes: skipping duplicate load for session=$sessionId',
+        );
+      }
+      return;
+    }
+    _notesLoadingSessionId = sessionId; // Mark this session's load as inflight
     void applyUpdate(VoidCallback update) {
       if (!_isSessionActive(sessionId)) {
         return;
@@ -3048,15 +3166,16 @@ class _PracticePageState extends State<PracticePage>
       NotesSource source;
       final List<_NoteEvent> rawEvents;
 
-      if (hasExpected) {
+      if (hasExpected && !_notesSourceLocked) {
         // Use expected JSON exclusively
         source = NotesSource.json;
         rawEvents = expectedNotes;
+        _notesSourceLocked = true; // C2: Lock source, prevent MIDI fallback
         if (kDebugMode) {
           debugPrint('Practice notes: using expected_json source, $jobId');
         }
-      } else {
-        // Fallback to MIDI only (explicit)
+      } else if (!_notesSourceLocked) {
+        // Fallback to MIDI only if NOT locked (explicit one-time)
         source = NotesSource.midi;
         if (kDebugMode) {
           debugPrint('Practice notes: fallback to MIDI notes url=$url');
@@ -3066,6 +3185,14 @@ class _PracticePageState extends State<PracticePage>
           final data = _decodeNotesPayload(resp.data);
           return _parseNoteEvents(data['notes']);
         }();
+        _notesSourceLocked = true; // C2: Lock source after first attempt
+      } else {
+        // Source already locked in previous session; use cached source
+        source = _notesSource;
+        rawEvents = [];
+        if (kDebugMode) {
+          debugPrint('Practice notes: source locked, skipping load');
+        }
       }
       if (!_isSessionActive(sessionId)) {
         return;
@@ -3106,6 +3233,8 @@ class _PracticePageState extends State<PracticePage>
 
       applyUpdate(() {
         _noteEvents = sortedEvents;
+        _notesLoadedSessionId =
+            sessionId; // C4: Mark session as successfully loaded
         _displayFirstKey = clampedFirstKey;
         _displayLastKey = clampedLastKey;
         _notesSource = source;
@@ -3118,6 +3247,12 @@ class _PracticePageState extends State<PracticePage>
         _notesLoading = false;
         _notesError = sortedEvents.isEmpty ? 'Notes indisponibles' : null;
       });
+      // C4: Log success exactly once per session
+      if (kDebugMode) {
+        debugPrint(
+          'Practice notes: loaded session=$sessionId count=${sortedEvents.length} source=${source.name}',
+        );
+      }
       // BUG FIX: Compute effective lead-in AFTER notes assigned
       _computeEffectiveLeadIn();
     } on DioException catch (e) {
@@ -4392,8 +4527,20 @@ class _FallingNotesPainter extends CustomPainter {
       }
     }
 
+    // CULLING: only draw notes within active window
+    // pastGraceSec: notes older than this are culled (prevents "pin" at bottom)
+    // futureHeadSec: notes further than this can be ignored (optimization)
+    const double pastGraceSec = 0.35;
+    const double futureHeadSec = 0.5;
+    final windowStart = elapsedSec - pastGraceSec;
+    final windowEnd = elapsedSec + (fallLead + futureHeadSec);
+
     for (final n in noteEvents) {
       if (n.pitch < firstKey || n.pitch > lastKey) {
+        continue;
+      }
+      // STRICT CULLING: skip notes entirely outside active window
+      if (n.end < windowStart || n.start > windowEnd) {
         continue;
       }
       final appear = n.start - fallLead;
