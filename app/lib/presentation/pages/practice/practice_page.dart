@@ -2998,12 +2998,8 @@ class _PracticePageState extends State<PracticePage>
   }) {
     var droppedInvalidTiming = 0;
     var droppedInvalidPitch = 0;
-    var droppedTooShort = 0;
-    var droppedTooLong = 0;
     var droppedDup = 0;
-    var droppedOutOfRange = 0;
     var droppedOutOfVideo = 0;
-    var clampedToVideo = 0;
     int? minPitch;
     int? maxPitch;
     final durationFilteredEvents = <_NoteEvent>[];
@@ -3041,7 +3037,6 @@ class _PracticePageState extends State<PracticePage>
         }
         if (end > videoDurationSec) {
           end = videoDurationSec;
-          clampedToVideo += 1;
         }
       }
 
@@ -3051,11 +3046,9 @@ class _PracticePageState extends State<PracticePage>
         continue;
       }
       if (duration < minDurationSec) {
-        droppedTooShort += 1;
         continue;
       }
       if (duration > maxDurationSec) {
-        droppedTooLong += 1;
         if (longNoteSamples.length < 3) {
           longNoteSamples.add(
             'pitch=${note.pitch} start=${start.toStringAsFixed(2)} '
@@ -3127,7 +3120,6 @@ class _PracticePageState extends State<PracticePage>
     final noteEvents = <_NoteEvent>[];
     for (final note in dedupedEvents) {
       if (note.pitch < clampedFirstKey || note.pitch > clampedLastKey) {
-        droppedOutOfRange += 1;
         continue;
       }
       noteEvents.add(note);
