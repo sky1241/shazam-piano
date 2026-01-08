@@ -388,8 +388,8 @@ def process_audio_to_midi(
     if clean:
         midi = clean_midi(midi, min_note_duration_ms)
     
-    # Extend MIDI to minimum 16 seconds (for video requirements)
-    MIN_MIDI_DURATION = 16.0
+    # Extend MIDI to minimum duration (for video requirements)
+    MIN_MIDI_DURATION = 10.0  # SYNC with config.FULL_VIDEO_MAX_DURATION_SEC = 10s
     current_duration = max([n.end for n in midi.instruments[0].notes]) if midi.instruments[0].notes else 0
     if current_duration < MIN_MIDI_DURATION:
         # Add silence to reach 16 seconds

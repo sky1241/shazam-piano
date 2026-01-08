@@ -520,17 +520,20 @@ def create_video_from_frames(
     return output_path
 
 
-def create_preview_video(full_video_path: Path, duration_sec: int = 16) -> Path:
+def create_preview_video(full_video_path: Path, duration_sec: int = None) -> Path:
     """
     Create preview (truncated) version of video
     
     Args:
         full_video_path: Path to full video
-        duration_sec: Preview duration in seconds
+        duration_sec: Preview duration in seconds (default from settings)
         
     Returns:
         Path to preview video
     """
+    if duration_sec is None:
+        duration_sec = settings.PREVIEW_DURATION_SEC  # SYNC: use config value
+    
     preview_path = full_video_path.with_name(
         full_video_path.stem + "_preview" + full_video_path.suffix
     )

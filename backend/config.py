@@ -55,10 +55,10 @@ class Settings(BaseSettings):
     VIDEO_HEIGHT: int = 480  # 16:9 plein ecran - réduit pour tests rapides
     VIDEO_FPS: int = 24  # réduit pour tests rapides
     VIDEO_TIME_OFFSET_MS: int = -60  # global timing offset (ms), negative to advance (helps sync bars with audio)
-    VIDEO_PREROLL_SEC: float = 1.5  # add lead-in so bars start falling before first notes
+    VIDEO_PREROLL_SEC: float = 2.0  # SYNC with Flutter _fallLeadSec = 2.0s
     PREVIEW_DURATION_SEC: int = 10
     FULL_VIDEO_MAX_DURATION_SEC: int | None = 10  # limite toutes les videos a 16s
-    VIDEO_LOOKAHEAD_SEC: float = 2.2  # 2.2s lookahead pour meilleure visibilité
+    VIDEO_LOOKAHEAD_SEC: float = 2.0  # SYNC with Flutter _fallLeadSec = 2.0s (falling bars lookahead)
     VIDEO_FALLING_SPEED_PX_PER_SEC: int = 300
     VIDEO_FALLING_AREA_HEIGHT: int = 500
     VIDEO_BAR_START_Y_OFFSET: int = 0  # Barres commencent en haut

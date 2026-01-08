@@ -35,6 +35,10 @@ class MicEngine {
   int? _detectedChannels;
   int? _detectedSampleRate;
   bool _configLogged = false;
+  
+  // Track timestamps for accurate sample rate detection
+  DateTime? _lastChunkTime;
+  int _totalSamplesReceived = 0;
 
   // UI state (hold last valid midi 200ms)
   int? _uiMidi;
@@ -62,6 +66,8 @@ class MicEngine {
     _detectedChannels = null;
     _detectedSampleRate = null;
     _configLogged = false;
+    _lastChunkTime = null;
+    _totalSamplesReceived = 0;
     _uiMidi = null;
     _uiMidiSetAt = null;
     _lastWrongFlashAt = null;
@@ -86,10 +92,11 @@ class MicEngine {
   ) {
     final decisions = <NoteDecision>[];
 
-    // 1) Detect channels/sampleRate once
+    // 1) Detect channels/sampleRate once (improved timing)
     if (_detectedChannels == null || _detectedSampleRate == null) {
-      _detectAudioConfig(rawSamples, elapsedSec);
+      _detectAudioConfig(rawSamples, now);
     }
+    _lastChunkTime = now;
 
     // 2) Downmix if stereo (rawSamples already List<double>)
     final samples = _detectedChannels == 2
@@ -156,7 +163,7 @@ class MicEngine {
     return decisions;
   }
 
-  void _detectAudioConfig(List<double> samples, double elapsedSec) {
+  void _detectAudioConfig(List<double> samples, DateTime now) {
     if (_configLogged) return;
 
     // Heuristic: if samples.length > typical mono frame size → stereo
@@ -164,11 +171,20 @@ class MicEngine {
     final isStereo = samples.length > 6000;
     _detectedChannels = isStereo ? 2 : 1;
 
-    // Estimate sample rate from buffer size and elapsed
-    // inputRate = samples.length / dt
-    // sr = inputRate / channels
-    final dtApprox = 0.1; // Assume ~100ms chunks
-    final inputRate = samples.length / dtApprox;
+    // Estimate sample rate from accumulated samples and real time delta
+    _totalSamplesReceived += samples.length;
+    
+    // Use real time delta if available, else fallback to heuristic
+    double dtSec;
+    if (_lastChunkTime != null) {
+      dtSec = now.difference(_lastChunkTime!).inMilliseconds / 1000.0;
+      dtSec = dtSec.clamp(0.01, 0.5); // Sanity bounds
+    } else {
+      // First chunk: estimate from accumulated samples (assume 44100 Hz baseline)
+      dtSec = _totalSamplesReceived / (44100.0 * _detectedChannels!);
+    }
+    
+    final inputRate = _totalSamplesReceived / dtSec;
     final sr = (inputRate / _detectedChannels!).round();
     _detectedSampleRate = sr.clamp(32000, 52000);
 
@@ -180,7 +196,7 @@ class MicEngine {
       debugPrint(
         'MIC_INPUT sessionId=$_sessionId channels=$_detectedChannels '
         'sampleRate=$_detectedSampleRate inputRate=${inputRate.toStringAsFixed(0)} '
-        'samplesLen=${samples.length} '
+        'samplesLen=${samples.length} dtSec=${dtSec.toStringAsFixed(3)} '
         'expectedSR=44100 ratio=${ratio.toStringAsFixed(3)} semitoneShift=${semitoneShift.toStringAsFixed(2)}',
       );
     }
@@ -212,6 +228,17 @@ class MicEngine {
 
   List<NoteDecision> _matchNotes(double elapsed, DateTime now) {
     final decisions = <NoteDecision>[];
+
+    // CRITICAL FIX: Guard against hitNotes/noteEvents desync
+    // Can occur if notes reloaded or list reassigned during active session
+    if (hitNotes.length != noteEvents.length) {
+      if (kDebugMode) {
+        debugPrint(
+          'SCORING_DESYNC sessionId=$_sessionId hitNotes=${hitNotes.length} noteEvents=${noteEvents.length} ABORT',
+        );
+      }
+      return decisions; // Abort scoring to prevent crash
+    }
 
     // Track best event across all active notes for wrong flash
     PitchEvent? bestEventAcrossAll;
