@@ -207,6 +207,60 @@ if (kDebugMode && _micFrameCount % 50 == 0) {
 
 ---
 
+### ⚠️ Bug #R5 — Effective LeadIn Incorrect (ROOT CAUSE NOTES MID-SCREEN)  
+**Status**: CORRIGÉ (À VALIDER RUNTIME)  
+**Commit**: [NOUVEAU - pas encore committé]  
+**Symptôme**: Notes apparaissent MID-SCREEN malgré R1-R4 fixés  
+**Root Cause RÉEL**:  
+- `_effectiveLeadInSec` assigné à **1.5s** au lieu de **2.0s** dans 5 endroits
+- Countdown dure 1.5s MAIS notes ont besoin 2.0s pour tomber du haut  
+- Résultat : velocity = 2.0/1.5 = **1.33x trop rapide** → notes apparaissent 33% trop bas (mid-screen)
+
+**Endroits Buggés**:
+1. `_computeEffectiveLeadIn()` L2271 : `if (_noteEvents.isEmpty)` assignait 1.5s ❌
+2. `_loadNoteEvents()` L3233 : reset notes cleared avec 1.5s ❌
+3. `_loadNoteEvents()` L3244 : jobId null assignait 1.5s ❌  
+4. `_loadNoteEvents()` L3384 : DioException assignait 1.5s ❌
+5. `_loadNoteEvents()` L3400 : catch general assignait 1.5s ❌
+
+**Fixes Appliqués**:
+```dart
+// AVANT (5 endroits) :
+_effectiveLeadInSec = _practiceLeadInSec; // ❌ 1.5s → countdown trop court
+
+// APRÈS :
+_effectiveLeadInSec = max(_practiceLeadInSec, _fallLeadSec); // ✅ 2.0s → countdown correct
+```
+
+**Fichiers** : `practice_page.dart` lignes 2271, 3233, 3244, 3384, 3400
+
+**Impact** :
+- Countdown TOUJOURS dure 2.0s (pas 1.5s)
+- Notes tombent velocity = 1.0x (pas 1.33x)
+- Notes spawn Y = 0 (haut écran) pendant countdown
+- Notes atteignent clavier exactement à t=0 (fin countdown)
+
+**Logs Debug Ajoutés** :
+```dart
+// L2282 : Verification effectiveLeadIn après calcul
+debugPrint('EFFECTIVE_LEADIN computed=2.000s (practiceLeadIn=1.5 fallLead=2.0)');
+
+// L2317 : Verification transition countdown→running avec elapsed
+debugPrint('COUNTDOWN_FINISH elapsedMs=2000 countdownCompleteSec=2.0 finalElapsed=0.000 -> RUNNING');
+
+// L2570 : Verification première frame running (clock doit démarrer 0)
+debugPrint('FIRST_FRAME_RUNNING elapsed=0.000s clock=0.000s');
+```
+
+**Validation Runtime Requise** :
+1. Log `EFFECTIVE_LEADIN computed=2.000s` DOIT apparaître au start practice
+2. Log `COUNTDOWN_FINISH ... countdownCompleteSec=2.0` DOIT apparaître après 2s
+3. Notes DOIVENT apparaître en HAUT écran (y=0) au démarrage countdown
+4. Notes DOIVENT tomber vitesse 1.0x (pas accéléré)
+5. Notes DOIVENT atteindre clavier exactement quand audio démarre
+
+---
+
 ## ❌ BUGS RUNTIME ACTIFS (AUCUN)  
 **Symptôme**: Notes apparaissent mid-screen, pas de chute du haut  
 **Logs attendus**: `guidanceElapsed=-2.0` durant countdown  
