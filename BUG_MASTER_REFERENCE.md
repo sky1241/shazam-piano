@@ -157,10 +157,57 @@ Lis BUG_MASTER_REFERENCE.md section "HISTORIQUE BUGS" pour contexte complet.
 
 ---
 
-## ❌ BUGS RUNTIME ACTIFS (À CORRIGER)
+## ✅ BUGS RUNTIME CORRIGÉS (Commit 2026-01-08 23h50)
 
-### ❌ Bug #R1 — Notes Ne Tombent Pas
-**Status**: ACTIF  
+### ✅ Bug #R1 — Notes Ne Tombent Pas  
+**Status**: CORRIGÉ  
+**Fix**: Ligne 4636 practice_page.dart — culling autorise `elapsed < 0` countdown  
+**Code**:
+```dart
+if (elapsedSec > disappear && elapsedSec > 0) continue; // Skip only if past AND not countdown
+```
+**Impact**: Notes spawn y<0 offscreen top, tombent vers clavier pendant countdown
+
+---
+
+### ✅ Bug #R2 — Score Reste 0%  
+**Status**: CORRIGÉ  
+**Fix**: Ligne 2578 practice_page.dart — `_updateDetectedNote()` appelé après HIT  
+**Code**:
+```dart
+case mic.DecisionType.hit:
+  _correctNotes += 1;
+  _score += 1;
+  _registerCorrectHit(...);
+  _updateDetectedNote(decision.detectedMidi, now, accuracyChanged: true); // FIX
+```
+**Impact**: `_detectedNote` mis à jour → clavier reçoit MIDI détecté → s'allume
+
+---
+
+### ✅ Bug #R3 — Clavier Mort (Pas de Vert/Rouge)  
+**Status**: CORRIGÉ  
+**Fix**: Lignes 2578 + 2591 practice_page.dart — update après HIT + WRONG  
+**Impact**: 
+- HIT → `_detectedNote` = detectedMidi → clavier PRIMARY + successFlash VERT
+- WRONG → `_detectedNote` = detectedMidi → clavier PRIMARY + wrongFlash ROUGE
+
+---
+
+### ✅ Bug #R4 — Log Debug Countdown  
+**Status**: AJOUTÉ  
+**Fix**: Ligne 2561 practice_page.dart — log `GUIDANCE_TIME` toutes les 50 frames  
+**Code**:
+```dart
+if (kDebugMode && _micFrameCount % 50 == 0) {
+  debugPrint('GUIDANCE_TIME elapsed=${elapsed.toStringAsFixed(3)}s state=$_practiceState');
+}
+```
+**Impact**: Visibilité countdown→running transition dans logs
+
+---
+
+## ❌ BUGS RUNTIME ACTIFS (AUCUN)  
 **Symptôme**: Notes apparaissent mid-screen, pas de chute du haut  
 **Logs attendus**: `guidanceElapsed=-2.0` durant countdown  
 **Logs actuels**: Inconnu (pas de test runtime fait)  
