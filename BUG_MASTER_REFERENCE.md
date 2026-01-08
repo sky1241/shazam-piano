@@ -513,4 +513,22 @@ git push
 
 ---
 
+---
+
+## 📚 FICHIERS COMPLÉMENTAIRES
+
+### ANALYSE_STRUCTURELLE_BUGS.md
+**Contenu**: Analyse profonde POURQUOI on tourne en rond
+- 6 patterns bugs récurrents (architecture, references, timing, etc.)
+- 6 bugs potentiels critiques à investiguer
+- Recommendations refactor (audio pipeline, shared config, etc.)
+- **Prompt Codex optimisé** pour analyse systématique (8 axes)
+
+**Utilisation**: 
+1. Lire pour comprendre ROOT CAUSES structurelles
+2. Copier prompt Codex pour analyse automatique
+3. Implémenter recommendations (priorité HAUTE)
+
+---
+
 **FIN BUG_MASTER_REFERENCE.md**
