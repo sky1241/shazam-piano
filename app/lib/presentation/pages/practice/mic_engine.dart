@@ -43,6 +43,10 @@ class MicEngine {
   // Wrong flash throttle
   DateTime? _lastWrongFlashAt;
 
+  // Stability tracking: pitchClass → consecutive count
+  final Map<int, int> _pitchClassStability = {};
+  int? _lastDetectedPitchClass;
+
   /// Current UI detected MIDI (held 200ms)
   int? get uiDetectedMidi {
     if (_uiMidi != null && _uiMidiSetAt != null) {
@@ -61,6 +65,8 @@ class MicEngine {
     _uiMidi = null;
     _uiMidiSetAt = null;
     _lastWrongFlashAt = null;
+    _pitchClassStability.clear();
+    _lastDetectedPitchClass = null;
 
     if (kDebugMode) {
       debugPrint(
@@ -104,6 +110,17 @@ class MicEngine {
     final midi = _freqToMidi(freq);
     final conf = (rms / 0.05).clamp(0.0, 1.0); // Normalize RMS to confidence
 
+    // Track pitch class stability (consecutive detections)
+    final pitchClass = midi % 12;
+    if (_lastDetectedPitchClass == pitchClass) {
+      _pitchClassStability[pitchClass] =
+          (_pitchClassStability[pitchClass] ?? 0) + 1;
+    } else {
+      _pitchClassStability.clear();
+      _pitchClassStability[pitchClass] = 1;
+      _lastDetectedPitchClass = pitchClass;
+    }
+
     // 5) Anti-spam: skip if same midi within debounce window
     if (_events.isNotEmpty) {
       final last = _events.last;
@@ -113,7 +130,8 @@ class MicEngine {
       }
     }
 
-    // 6) Store event
+    // 6) Store event (avec stabilityFrames)
+    final stabilityFrames = _pitchClassStability[pitchClass] ?? 1;
     _events.add(
       PitchEvent(
         tSec: elapsedSec,
@@ -121,6 +139,7 @@ class MicEngine {
         freq: freq,
         conf: conf,
         rms: rms,
+        stabilityFrames: stabilityFrames,
       ),
     );
 
@@ -225,14 +244,43 @@ class MicEngine {
       // Check if note is active
       if (elapsed < windowStart) continue;
 
-      // Find best match in event buffer
+      // Find best match in event buffer with DETAILED REJECT LOGGING
       PitchEvent? bestEvent;
       int? bestTestMidi;
       double bestDistance = double.infinity;
+      String? rejectReason; // Track why events were rejected
+
+      final expectedPitchClass = note.pitch % 12;
 
       for (final event in _events) {
-        if (event.tSec < windowStart || event.tSec > windowEnd) continue;
+        // Reject: out of time window
+        if (event.tSec < windowStart || event.tSec > windowEnd) {
+          if (kDebugMode && rejectReason == null) {
+            rejectReason = 'out_of_window';
+          }
+          continue;
+        }
 
+        // Reject: low stability (< 2 frames)
+        if (event.stabilityFrames < 2) {
+          if (kDebugMode && rejectReason == null) {
+            rejectReason = 'low_stability_frames=${event.stabilityFrames}';
+          }
+          continue;
+        }
+
+        final detectedPitchClass = event.midi % 12;
+
+        // Reject: pitch class mismatch
+        if (detectedPitchClass != expectedPitchClass) {
+          if (kDebugMode && rejectReason == null) {
+            rejectReason =
+                'pitch_class_mismatch_expected=$expectedPitchClass-detected=$detectedPitchClass';
+          }
+          continue;
+        }
+
+        // Now we have pitch class match, find closest octave
         // Test direct midi
         final distDirect = (event.midi - note.pitch).abs().toDouble();
         if (distDirect < bestDistance) {
@@ -241,14 +289,14 @@ class MicEngine {
           bestTestMidi = event.midi;
         }
 
-        // Test octave correction: ±12 semitones BUT bring back to expected octave
-        for (final shift in [-12, 12]) {
+        // Test octave shifts: ±12, ±24 semitones
+        for (final shift in [-24, -12, 12, 24]) {
           final testMidi = event.midi + shift;
           final distOctave = (testMidi - note.pitch).abs().toDouble();
           if (distOctave < bestDistance) {
             bestDistance = distOctave;
             bestEvent = event;
-            bestTestMidi = testMidi; // Corrected midi
+            bestTestMidi = testMidi;
           }
         }
       }
@@ -261,8 +309,8 @@ class MicEngine {
         bestMidiAcrossAll = bestTestMidi;
       }
 
-      // Check HIT
-      if (bestEvent != null && bestDistance <= 1.0) {
+      // Check HIT with more tolerant distance (≤2 semitones instead of 1)
+      if (bestEvent != null && bestDistance <= 2.0) {
         hitNotes[idx] = true;
         decisions.add(
           NoteDecision(
@@ -277,13 +325,31 @@ class MicEngine {
         );
 
         if (kDebugMode) {
-          final isOctave = (bestTestMidi! - bestEvent.midi).abs() == 12;
-          final reason = isOctave ? 'pitch_match_octave' : 'pitch_match';
+          final octaveShift = ((bestTestMidi! - bestEvent.midi) / 12).abs();
+          final reason = octaveShift >= 1
+              ? 'pitch_match_octave_shift=${octaveShift.toInt()}'
+              : 'pitch_match_direct';
           debugPrint(
             'HIT_DECISION sessionId=$_sessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
-            'expectedMidi=${note.pitch} detectedMidi=$bestTestMidi freq=${bestEvent.freq.toStringAsFixed(1)} '
-            'conf=${bestEvent.conf.toStringAsFixed(2)} dt=${(bestEvent.tSec - note.start).toStringAsFixed(3)}s '
+            'expectedMidi=${note.pitch} expectedPC=$expectedPitchClass detectedMidi=$bestTestMidi '
+            'detectedRaw=${bestEvent.midi} freq=${bestEvent.freq.toStringAsFixed(1)} '
+            'conf=${bestEvent.conf.toStringAsFixed(2)} stability=${bestEvent.stabilityFrames} '
+            'distance=${bestDistance.toStringAsFixed(1)} dt=${(bestEvent.tSec - note.start).toStringAsFixed(3)}s '
             'window=[${windowStart.toStringAsFixed(3)}..${windowEnd.toStringAsFixed(3)}] result=HIT reason=$reason',
+          );
+        }
+      } else {
+        // LOG REJECT with detailed reason
+        if (kDebugMode) {
+          final finalReason = bestEvent == null
+              ? (rejectReason ?? 'no_events_in_buffer')
+              : 'distance_too_large=${bestDistance.toStringAsFixed(1)}_threshold=2.0';
+          debugPrint(
+            'HIT_DECISION sessionId=$_sessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
+            'expectedMidi=${note.pitch} expectedPC=$expectedPitchClass '
+            'window=[${windowStart.toStringAsFixed(3)}..${windowEnd.toStringAsFixed(3)}] '
+            'result=REJECT reason=$finalReason '
+            'bestEvent=${bestEvent != null ? "midi=${bestEvent.midi} freq=${bestEvent.freq.toStringAsFixed(1)} conf=${bestEvent.conf.toStringAsFixed(2)} stability=${bestEvent.stabilityFrames}" : "null"}',
           );
         }
       }
@@ -332,12 +398,14 @@ class PitchEvent {
     required this.freq,
     required this.conf,
     required this.rms,
+    required this.stabilityFrames,
   });
   final double tSec;
   final int midi;
   final double freq;
   final double conf;
   final double rms;
+  final int stabilityFrames;
 }
 
 enum DecisionType { hit, miss, wrongFlash }
