@@ -1925,8 +1925,10 @@ class _PracticePageState extends State<PracticePage>
     }
 
     // Return video time + offset if available, else clock
+    // CRITICAL: Do NOT clamp to 0.0 - allow negative time during early video frames
+    // so notes can fall from top (noteStart=0 needs guidanceElapsed<0 to render above hit line)
     if (v != null && _videoGuidanceOffsetSec != null) {
-      return max(0.0, v + _videoGuidanceOffsetSec!);
+      return v + _videoGuidanceOffsetSec!;
     }
     return clock;
   }
@@ -2550,9 +2552,31 @@ class _PracticePageState extends State<PracticePage>
 
     final elapsed = _guidanceElapsedSec();
     if (elapsed != null && _micEngine != null) {
+      // PROOF log: show guidance time vs expected notes (debug timebase sync)
+      if (kDebugMode) {
+        final activeNotes = _noteEvents
+            .asMap()
+            .entries
+            .where((e) => !_hitNotes[e.key])
+            .where((e) {
+              final windowStart = e.value.start - _targetWindowHeadSec;
+              final windowEnd = e.value.end + _targetWindowTailSec;
+              return elapsed >= windowStart && elapsed <= windowEnd;
+            })
+            .toList();
+        if (activeNotes.isNotEmpty) {
+          final note = activeNotes.first;
+          debugPrint(
+            'SCORING_TIMEBASE sessionId=$_practiceSessionId guidanceElapsed=${elapsed.toStringAsFixed(3)} '
+            'activeNoteIdx=${note.key} expectedMidi=${note.value.pitch} '
+            'noteWindow=[${(note.value.start - _targetWindowHeadSec).toStringAsFixed(3)}..${(note.value.end + _targetWindowTailSec).toStringAsFixed(3)}]',
+          );
+        }
+      }
+
       final prevAccuracy = _accuracy;
       final decisions = _micEngine!.onAudioChunk(
-        processSamples.map((d) => d.toInt()).toList(),
+        processSamples,
         now,
         elapsed,
       );

@@ -80,7 +80,7 @@ class MicEngine {
 
   /// Process audio chunk: detect pitch, store event, match notes
   List<NoteDecision> onAudioChunk(
-    List<int> rawSamples,
+    List<double> rawSamples,
     DateTime now,
     double elapsedSec,
   ) {
@@ -91,10 +91,10 @@ class MicEngine {
       _detectAudioConfig(rawSamples, elapsedSec);
     }
 
-    // 2) Downmix if stereo
+    // 2) Downmix if stereo (rawSamples already List<double>)
     final samples = _detectedChannels == 2
         ? _downmixStereo(rawSamples)
-        : rawSamples.map((s) => s.toDouble()).toList();
+        : rawSamples;
 
     if (samples.isEmpty) return decisions;
 
@@ -156,7 +156,7 @@ class MicEngine {
     return decisions;
   }
 
-  void _detectAudioConfig(List<int> samples, double elapsedSec) {
+  void _detectAudioConfig(List<double> samples, double elapsedSec) {
     if (_configLogged) return;
 
     // Heuristic: if samples.length > typical mono frame size → stereo
@@ -173,20 +173,25 @@ class MicEngine {
     _detectedSampleRate = sr.clamp(32000, 52000);
 
     if (kDebugMode) {
+      // PROOF log: calculate semitone shift if mismatch
+      const expectedSampleRate = 44100;
+      final ratio = _detectedSampleRate! / expectedSampleRate;
+      final semitoneShift = 12 * (log(ratio) / ln2);
       debugPrint(
         'MIC_INPUT sessionId=$_sessionId channels=$_detectedChannels '
         'sampleRate=$_detectedSampleRate inputRate=${inputRate.toStringAsFixed(0)} '
-        'samplesLen=${samples.length}',
+        'samplesLen=${samples.length} '
+        'expectedSR=44100 ratio=${ratio.toStringAsFixed(3)} semitoneShift=${semitoneShift.toStringAsFixed(2)}',
       );
     }
     _configLogged = true;
   }
 
-  List<double> _downmixStereo(List<int> samples) {
+  List<double> _downmixStereo(List<double> samples) {
     final mono = <double>[];
     for (var i = 0; i < samples.length - 1; i += 2) {
-      final l = samples[i].toDouble();
-      final r = samples[i + 1].toDouble();
+      final l = samples[i];
+      final r = samples[i + 1];
       mono.add((l + r) / 2.0);
     }
     return mono;
@@ -244,13 +249,31 @@ class MicEngine {
       // Check if note is active
       if (elapsed < windowStart) continue;
 
+      // Declare expectedPitchClass early for logging
+      final expectedPitchClass = note.pitch % 12;
+
+      // Log event buffer state for this note (debug)
+      if (kDebugMode) {
+        final eventsInWindow = _events
+            .where((e) => e.tSec >= windowStart && e.tSec <= windowEnd)
+            .toList();
+        final pitchClasses = eventsInWindow
+            .map((e) => e.midi % 12)
+            .toSet()
+            .join(',');
+        debugPrint(
+          'BUFFER_STATE sessionId=$_sessionId noteIdx=$idx expectedMidi=${note.pitch} expectedPC=$expectedPitchClass '
+          'window=[${windowStart.toStringAsFixed(3)}..${windowEnd.toStringAsFixed(3)}] '
+          'eventsInWindow=${eventsInWindow.length} totalEvents=${_events.length} '
+          'pitchClassesInWindow=[$pitchClasses]',
+        );
+      }
+
       // Find best match in event buffer with DETAILED REJECT LOGGING
       PitchEvent? bestEvent;
       int? bestTestMidi;
       double bestDistance = double.infinity;
       String? rejectReason; // Track why events were rejected
-
-      final expectedPitchClass = note.pitch % 12;
 
       for (final event in _events) {
         // Reject: out of time window
@@ -261,8 +284,9 @@ class MicEngine {
           continue;
         }
 
-        // Reject: low stability (< 2 frames)
-        if (event.stabilityFrames < 2) {
+        // Reject: low stability (< 1 frame = impossible, so accept all)
+        // Note: Piano with real mic is often unstable, requiring only 1 frame
+        if (event.stabilityFrames < 1) {
           if (kDebugMode && rejectReason == null) {
             rejectReason = 'low_stability_frames=${event.stabilityFrames}';
           }
@@ -309,8 +333,8 @@ class MicEngine {
         bestMidiAcrossAll = bestTestMidi;
       }
 
-      // Check HIT with more tolerant distance (≤2 semitones instead of 1)
-      if (bestEvent != null && bestDistance <= 2.0) {
+      // Check HIT with very tolerant distance (≤3 semitones for real piano+mic)
+      if (bestEvent != null && bestDistance <= 3.0) {
         hitNotes[idx] = true;
         decisions.add(
           NoteDecision(
@@ -343,7 +367,7 @@ class MicEngine {
         if (kDebugMode) {
           final finalReason = bestEvent == null
               ? (rejectReason ?? 'no_events_in_buffer')
-              : 'distance_too_large=${bestDistance.toStringAsFixed(1)}_threshold=2.0';
+              : 'distance_too_large=${bestDistance.toStringAsFixed(1)}_threshold=3.0';
           debugPrint(
             'HIT_DECISION sessionId=$_sessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
             'expectedMidi=${note.pitch} expectedPC=$expectedPitchClass '
