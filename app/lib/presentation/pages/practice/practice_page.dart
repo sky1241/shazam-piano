@@ -2575,11 +2575,7 @@ class _PracticePageState extends State<PracticePage>
       }
 
       final prevAccuracy = _accuracy;
-      final decisions = _micEngine!.onAudioChunk(
-        processSamples,
-        now,
-        elapsed,
-      );
+      final decisions = _micEngine!.onAudioChunk(processSamples, now, elapsed);
 
       // Apply decisions (HIT/MISS/wrongFlash)
       for (final decision in decisions) {
