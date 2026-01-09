@@ -274,7 +274,7 @@ class _PracticePageState extends State<PracticePage>
   // C8: PATCH VISUAL - ensure leadInSec >= fallLeadSec to prevent chute compression
   // If leadInSec < fallLeadSec, synthetic elapsed maps [0..leadInSec] → [-fallLeadSec..0]
   // which is faster than realtime, causing notes to spawn low and fall compressed.
-  late double _effectiveLeadInSec = max(_practiceLeadInSec, _fallLeadSec);
+  late double _effectiveLeadInSec = max(_practiceLeadInSec, _fallLeadSec) + 1.0;
   double? _earliestNoteStartSec; // Clamped to >= 0, used for effective lead-in
   // FEATURE B: Mic precision (adaptive threshold + stability + debounce)
   double _noiseFloorRms = 0.04; // Baseline RMS when silent
@@ -2275,7 +2275,7 @@ class _PracticePageState extends State<PracticePage>
       // Clamp to >= 0
       _earliestNoteStartSec = max(0.0, minStart);
       // D1: Ensure countdown ratio = 1.0 (no velocity > 1.0 compression)
-      _effectiveLeadInSec = max(_practiceLeadInSec, _fallLeadSec);
+      _effectiveLeadInSec = max(_practiceLeadInSec, _fallLeadSec) + 1.0;
     }
   }
 
