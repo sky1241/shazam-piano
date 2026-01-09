@@ -2265,7 +2265,7 @@ class _PracticePageState extends State<PracticePage>
   /// Formula: effectiveLeadInSec = max(baseLeadIn, fallLead) to prevent chute compression.
   void _computeEffectiveLeadIn() {
     if (_noteEvents.isEmpty) {
-      _effectiveLeadInSec = _practiceLeadInSec;
+      _effectiveLeadInSec = max(_practiceLeadInSec, _fallLeadSec) + 1.0;
       _earliestNoteStartSec = null;
     } else {
       final minStart = _noteEvents.fold<double>(
@@ -3221,7 +3221,7 @@ class _PracticePageState extends State<PracticePage>
       _notesDroppedDup = 0;
       _rawNoteEvents = [];
       _noteEvents = [];
-      _effectiveLeadInSec = _practiceLeadInSec; // Reset when clearing notes
+      _effectiveLeadInSec = max(_practiceLeadInSec, _fallLeadSec) + 1.0; // Reset when clearing notes
     });
 
     final midiUrl = widget.level.midiUrl;
@@ -3372,7 +3372,7 @@ class _PracticePageState extends State<PracticePage>
       applyUpdate(() {
         _rawNoteEvents = [];
         _noteEvents = [];
-        _effectiveLeadInSec = _practiceLeadInSec; // Reset on load error
+        _effectiveLeadInSec = max(_practiceLeadInSec, _fallLeadSec) + 1.0; // Reset on load error
         _notesSource = NotesSource.none;
         _notesLoading = false;
         _notesError = 'Notes indisponibles';
@@ -3386,7 +3386,7 @@ class _PracticePageState extends State<PracticePage>
       applyUpdate(() {
         _rawNoteEvents = [];
         _noteEvents = [];
-        _effectiveLeadInSec = _practiceLeadInSec; // Reset on parse error
+        _effectiveLeadInSec = max(_practiceLeadInSec, _fallLeadSec) + 1.0; // Reset on parse error
         _notesSource = NotesSource.none;
         _notesLoading = false;
         _notesError = 'Notes indisponibles';
