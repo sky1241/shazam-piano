@@ -8,6 +8,11 @@ class PitchDetector {
   static const int bufferSize = 2048;
   // Relaxed from 0.9 to 0.75 to reduce freq=null (better piano detection)
   static const double clarityThreshold = 0.75;
+  static const double minUsefulHz = 50.0;
+  // FIX PASS1: Max tau for piano range (A0 = 27.5Hz => tau ~1603)
+  // Piano lowest note: A0 (27.5Hz) => maxTau = 44100/27.5 = 1603
+  // Add 10% margin => 1763
+  static const int maxTauPiano = 1763;
 
   /// Detect pitch from audio samples
   /// Returns frequency in Hz, or null if no clear pitch
@@ -29,7 +34,7 @@ class PitchDetector {
   /// McLeod Pitch Method
   double? _mpmPitch(Float32List samples, int effectiveSampleRate) {
     // Step 1: Normalized Square Difference Function (NSDF)
-    final nsdf = _normalizedSquareDifference(samples);
+    final nsdf = _normalizedSquareDifference(samples, effectiveSampleRate);
 
     // Step 2: Peak picking
     final peaks = _pickPeaks(nsdf);
@@ -68,12 +73,19 @@ class PitchDetector {
   }
 
   /// Normalized Square Difference Function
-  List<double> _normalizedSquareDifference(Float32List samples) {
+  List<double> _normalizedSquareDifference(
+    Float32List samples,
+    int effectiveSampleRate,
+  ) {
     final n = samples.length;
-    final nsdf = List<double>.filled(n, 0);
+    // FIX PASS1: Bound NSDF loop to maxTauPiano instead of full n
+    // Reduces O(n²) ops from ~4M to ~1.5M per chunk (60% reduction)
+    final maxTauByFreq = ((effectiveSampleRate / minUsefulHz) * 1.1).floor();
+    final maxTau = min(n, min(maxTauPiano, maxTauByFreq));
+    final nsdf = List<double>.filled(maxTau, 0);
 
     // Autocorrelation
-    for (int tau = 0; tau < n; tau++) {
+    for (int tau = 0; tau < maxTau; tau++) {
       double acf = 0;
       double divisorM = 0;
 

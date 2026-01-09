@@ -16,6 +16,9 @@ class MicEngine {
     this.eventDebounceSec = 0.05,
     this.wrongFlashCooldownSec = 0.15,
     this.uiHoldMs = 200,
+    this.pitchWindowSize = 2048,
+    this.minPitchIntervalMs = 40,
+    this.verboseDebug = false,
   });
 
   final List<NoteEvent> noteEvents;
@@ -29,16 +32,32 @@ class MicEngine {
   final double eventDebounceSec;
   final double wrongFlashCooldownSec;
   final int uiHoldMs;
+  final int pitchWindowSize;
+  final int minPitchIntervalMs;
+  final bool verboseDebug;
 
   String? _sessionId;
   final List<PitchEvent> _events = [];
-  int? _detectedChannels;
-  int? _detectedSampleRate;
+  int _detectedChannels = 1;
+  int _detectedSampleRate = 44100;
   bool _configLogged = false;
-  
-  // Track timestamps for accurate sample rate detection
+
   DateTime? _lastChunkTime;
-  int _totalSamplesReceived = 0;
+  double? _sampleRateEmaHz;
+  DateTime? _lastPitchAt;
+
+  final List<double> _sampleBuffer = <double>[];
+  Float32List? _pitchWindow;
+
+  double? _lastFreqHz;
+  double? _lastRms;
+  double? _lastConfidence;
+  int? _lastMidi;
+
+  double? get lastFreqHz => _lastFreqHz;
+  double? get lastRms => _lastRms;
+  double? get lastConfidence => _lastConfidence;
+  int? get lastMidi => _lastMidi;
 
   // UI state (hold last valid midi 200ms)
   int? _uiMidi;
@@ -63,11 +82,18 @@ class MicEngine {
   void reset(String sessionId) {
     _sessionId = sessionId;
     _events.clear();
-    _detectedChannels = null;
-    _detectedSampleRate = null;
+    _detectedChannels = 1;
+    _detectedSampleRate = 44100;
     _configLogged = false;
     _lastChunkTime = null;
-    _totalSamplesReceived = 0;
+    _sampleRateEmaHz = null;
+    _lastPitchAt = null;
+    _sampleBuffer.clear();
+    _pitchWindow = null;
+    _lastFreqHz = null;
+    _lastRms = null;
+    _lastConfidence = null;
+    _lastMidi = null;
     _uiMidi = null;
     _uiMidiSetAt = null;
     _lastWrongFlashAt = null;
@@ -90,108 +116,140 @@ class MicEngine {
     DateTime now,
     double elapsedSec,
   ) {
-    final decisions = <NoteDecision>[];
+    // Update audio config (sampleRate/channels) using real callback cadence.
+    _detectAudioConfig(rawSamples, now);
 
-    // 1) Detect channels/sampleRate once (improved timing)
-    if (_detectedChannels == null || _detectedSampleRate == null) {
-      _detectAudioConfig(rawSamples, now);
-    }
-    _lastChunkTime = now;
-
-    // 2) Downmix if stereo (rawSamples already List<double>)
+    // Downmix if stereo interleaved.
     final samples = _detectedChannels == 2
         ? _downmixStereo(rawSamples)
         : rawSamples;
 
-    if (samples.isEmpty) return decisions;
-
-    // 3) Detect pitch
-    final freq = detectPitch(samples, _detectedSampleRate!.toDouble());
-
-    // 4) Gate: freq range + RMS
-    if (freq < 50.0 || freq > 2000.0) return decisions;
-
-    final rms = _computeRms(samples);
-    if (rms < absMinRms) return decisions;
-
-    final midi = _freqToMidi(freq);
-    final conf = (rms / 0.05).clamp(0.0, 1.0); // Normalize RMS to confidence
-
-    // Track pitch class stability (consecutive detections)
-    final pitchClass = midi % 12;
-    if (_lastDetectedPitchClass == pitchClass) {
-      _pitchClassStability[pitchClass] =
-          (_pitchClassStability[pitchClass] ?? 0) + 1;
-    } else {
-      _pitchClassStability.clear();
-      _pitchClassStability[pitchClass] = 1;
-      _lastDetectedPitchClass = pitchClass;
-    }
-
-    // 5) Anti-spam: skip if same midi within debounce window
-    if (_events.isNotEmpty) {
-      final last = _events.last;
-      if ((elapsedSec - last.tSec).abs() < eventDebounceSec &&
-          last.midi == midi) {
-        return decisions;
+    // Keep a fixed-size rolling window for pitch detection (MPM requires bufferSize).
+    if (samples.isNotEmpty) {
+      _sampleBuffer.addAll(samples);
+      if (_sampleBuffer.length > pitchWindowSize) {
+        _sampleBuffer.removeRange(0, _sampleBuffer.length - pitchWindowSize);
       }
     }
 
-    // 6) Store event (avec stabilityFrames)
-    final stabilityFrames = _pitchClassStability[pitchClass] ?? 1;
-    _events.add(
-      PitchEvent(
-        tSec: elapsedSec,
-        midi: midi,
-        freq: freq,
-        conf: conf,
-        rms: rms,
-        stabilityFrames: stabilityFrames,
-      ),
-    );
+    final decisions = <NoteDecision>[];
 
-    // Prune old events (keep 2.0s)
+    final rms = samples.isEmpty ? 0.0 : _computeRms(samples);
+    _lastRms = rms;
+
+    final canComputePitch =
+        pitchWindowSize > 0 &&
+        _sampleBuffer.length >= pitchWindowSize &&
+        rms >= absMinRms &&
+        (_lastPitchAt == null ||
+            now.difference(_lastPitchAt!).inMilliseconds >= minPitchIntervalMs);
+
+    if (canComputePitch) {
+      _lastPitchAt = now;
+      final window = _pitchWindow ??= Float32List(pitchWindowSize);
+      final start = _sampleBuffer.length - pitchWindowSize;
+      for (var i = 0; i < pitchWindowSize; i++) {
+        window[i] = _sampleBuffer[start + i];
+      }
+
+      final freq = detectPitch(window, _detectedSampleRate.toDouble());
+      if (freq > 0 && freq >= 50.0 && freq <= 2000.0) {
+        final midi = _freqToMidi(freq);
+        final conf = (rms / 0.05).clamp(0.0, 1.0);
+
+        _lastFreqHz = freq;
+        _lastConfidence = conf;
+        _lastMidi = midi;
+
+        // Track pitch class stability (consecutive detections)
+        final pitchClass = midi % 12;
+        if (_lastDetectedPitchClass == pitchClass) {
+          _pitchClassStability[pitchClass] =
+              (_pitchClassStability[pitchClass] ?? 0) + 1;
+        } else {
+          _pitchClassStability.clear();
+          _pitchClassStability[pitchClass] = 1;
+          _lastDetectedPitchClass = pitchClass;
+        }
+
+        // Anti-spam: skip if same midi within debounce window
+        if (_events.isNotEmpty) {
+          final last = _events.last;
+          if ((elapsedSec - last.tSec).abs() < eventDebounceSec &&
+              last.midi == midi) {
+            _events.removeWhere((e) => elapsedSec - e.tSec > 2.0);
+            decisions.addAll(_matchNotes(elapsedSec, now));
+            _lastChunkTime = now;
+            return decisions;
+          }
+        }
+
+        final stabilityFrames = _pitchClassStability[pitchClass] ?? 1;
+        _events.add(
+          PitchEvent(
+            tSec: elapsedSec,
+            midi: midi,
+            freq: freq,
+            conf: conf,
+            rms: rms,
+            stabilityFrames: stabilityFrames,
+          ),
+        );
+
+        // UI state (hold last valid midi 200ms)
+        _uiMidi = midi;
+        _uiMidiSetAt = now;
+      }
+    }
+
+    // Prune old events (keep 2.0s), then match notes even if no new pitch event
+    // so MISS decisions still fire when the user stays silent.
     _events.removeWhere((e) => elapsedSec - e.tSec > 2.0);
-
-    // 7) Update UI midi (hold 200ms)
-    _uiMidi = midi;
-    _uiMidiSetAt = now;
-
-    // 8) Match notes
     decisions.addAll(_matchNotes(elapsedSec, now));
 
+    _lastChunkTime = now;
     return decisions;
   }
 
   void _detectAudioConfig(List<double> samples, DateTime now) {
-    if (_configLogged) return;
+    // Keep updating the estimate; _configLogged only gates one-time logging.
 
     // Heuristic: if samples.length > typical mono frame size → stereo
     // Typical: 44100Hz × 0.1s = 4410 samples mono, 8820 stereo
-    final isStereo = samples.length > 6000;
-    _detectedChannels = isStereo ? 2 : 1;
-
-    // Estimate sample rate from accumulated samples and real time delta
-    _totalSamplesReceived += samples.length;
-    
-    // Use real time delta if available, else fallback to heuristic
-    double dtSec;
-    if (_lastChunkTime != null) {
-      dtSec = now.difference(_lastChunkTime!).inMilliseconds / 1000.0;
-      dtSec = dtSec.clamp(0.01, 0.5); // Sanity bounds
-    } else {
-      // First chunk: estimate from accumulated samples (assume 44100 Hz baseline)
-      dtSec = _totalSamplesReceived / (44100.0 * _detectedChannels!);
+    if (_lastChunkTime == null) {
+      return;
     }
-    
-    final inputRate = _totalSamplesReceived / dtSec;
-    final sr = (inputRate / _detectedChannels!).round();
-    _detectedSampleRate = sr.clamp(32000, 52000);
 
-    if (kDebugMode) {
+    final dtUs = now.difference(_lastChunkTime!).inMicroseconds;
+    if (dtUs <= 0) {
+      return;
+    }
+
+    final dtSec = dtUs / 1000000.0;
+    if (dtSec < 0.008 || dtSec > 0.2) {
+      return;
+    }
+    final inputRate = samples.length / dtSec;
+
+    // Infer stereo when total input rate is roughly 2x a plausible mono SR.
+    // Threshold chosen to avoid false positives from scheduling jitter.
+    final channels = inputRate >= 60000 ? 2 : 1;
+    if (channels != _detectedChannels) {
+      _sampleBuffer.clear();
+      _pitchWindow = null;
+    }
+    _detectedChannels = channels;
+
+    final srInstant = inputRate / channels;
+    _sampleRateEmaHz = _sampleRateEmaHz == null
+        ? srInstant
+        : (_sampleRateEmaHz! * 0.9 + srInstant * 0.1);
+    _detectedSampleRate = _sampleRateEmaHz!.round().clamp(32000, 52000);
+
+    if (!_configLogged && kDebugMode) {
       // PROOF log: calculate semitone shift if mismatch
       const expectedSampleRate = 44100;
-      final ratio = _detectedSampleRate! / expectedSampleRate;
+      final ratio = _detectedSampleRate / expectedSampleRate;
       final semitoneShift = 12 * (log(ratio) / ln2);
       debugPrint(
         'MIC_INPUT sessionId=$_sessionId channels=$_detectedChannels '
@@ -199,8 +257,8 @@ class MicEngine {
         'samplesLen=${samples.length} dtSec=${dtSec.toStringAsFixed(3)} '
         'expectedSR=44100 ratio=${ratio.toStringAsFixed(3)} semitoneShift=${semitoneShift.toStringAsFixed(2)}',
       );
+      _configLogged = true;
     }
-    _configLogged = true;
   }
 
   List<double> _downmixStereo(List<double> samples) {
@@ -232,7 +290,7 @@ class MicEngine {
     // CRITICAL FIX: Guard against hitNotes/noteEvents desync
     // Can occur if notes reloaded or list reassigned during active session
     if (hitNotes.length != noteEvents.length) {
-      if (kDebugMode) {
+      if (verboseDebug && kDebugMode) {
         debugPrint(
           'SCORING_DESYNC sessionId=$_sessionId hitNotes=${hitNotes.length} noteEvents=${noteEvents.length} ABORT',
         );
@@ -305,7 +363,7 @@ class MicEngine {
       for (final event in _events) {
         // Reject: out of time window
         if (event.tSec < windowStart || event.tSec > windowEnd) {
-          if (kDebugMode && rejectReason == null) {
+          if (verboseDebug && kDebugMode && rejectReason == null) {
             rejectReason = 'out_of_window';
           }
           continue;
@@ -314,7 +372,7 @@ class MicEngine {
         // Reject: low stability (< 1 frame = impossible, so accept all)
         // Note: Piano with real mic is often unstable, requiring only 1 frame
         if (event.stabilityFrames < 1) {
-          if (kDebugMode && rejectReason == null) {
+          if (verboseDebug && kDebugMode && rejectReason == null) {
             rejectReason = 'low_stability_frames=${event.stabilityFrames}';
           }
           continue;
@@ -324,7 +382,7 @@ class MicEngine {
 
         // Reject: pitch class mismatch
         if (detectedPitchClass != expectedPitchClass) {
-          if (kDebugMode && rejectReason == null) {
+          if (verboseDebug && kDebugMode && rejectReason == null) {
             rejectReason =
                 'pitch_class_mismatch_expected=$expectedPitchClass-detected=$detectedPitchClass';
           }
