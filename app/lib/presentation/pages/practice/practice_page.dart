@@ -4544,8 +4544,15 @@ class _FallingNotesPainter extends CustomPainter {
         debugPrint('[PAINTER] Note midi=${n.pitch} start=${n.start} end=${n.end}: topY=$topY bottomY=$bottomY (elapsed=$elapsedSec fallLead=$fallLead height=$fallAreaHeight)');
       }
 
-      final rectTop = topY;
-      final rectBottom = bottomY;
+      // FIX FINAL V4: Check if note rectangle CROSSES keyboard line (visual intersection)
+      // BUG WAS: targetNotes contains all pitches → colored ALL notes with same pitch
+      // SOLUTION: Check if rectangle [topY, bottomY] intersects keyboard zone
+      final hitZonePixels = 50.0;
+      final keyboardY = fallAreaHeight;
+      final rectTop = min(topY, bottomY);
+      final rectBot = max(topY, bottomY);
+      final rectBottom = bottomY; // Keep for legacy compatibility
+      
       // Cull notes completely outside visible area (allows spawnY < 0 offscreen)
       if (rectBottom < 0 || rectTop > fallAreaHeight) {
         continue;
@@ -4562,18 +4569,6 @@ class _FallingNotesPainter extends CustomPainter {
       if (x + width < 0 || x > size.width) {
         continue;
       }
-
-      // FIX FINAL V2: Check if note rectangle CROSSES keyboard line (visual intersection)
-      // BUG WAS: targetNotes contains all pitches → colored ALL notes with same pitch
-      // ATTEMPT 1 FAILED: elapsedSec >= n.start (fails during countdown when elapsed negative)
-      // ATTEMPT 2 FAILED: Time window ±0.5s (doesn't match _computeImpactNotes duration logic)
-      // ATTEMPT 3 FAILED: Check bottomY only (misses long notes crossing keyboard)
-      // SOLUTION: Check if rectangle [topY, bottomY] intersects keyboard zone
-      // Long notes: topY=200px, bottomY=600px → crosses keyboard@400px ✓
-      final hitZonePixels = 50.0; // Visual tolerance around keyboard line
-      final keyboardY = fallAreaHeight;
-      final rectTop = min(topY, bottomY);
-      final rectBot = max(topY, bottomY);
       final isCrossingKeyboard = (rectTop <= keyboardY + hitZonePixels) && 
                                   (rectBot >= keyboardY - hitZonePixels);
       final isTarget = isCrossingKeyboard && targetNotes.contains(n.pitch);
