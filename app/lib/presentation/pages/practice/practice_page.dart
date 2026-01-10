@@ -166,26 +166,29 @@ double? effectiveElapsedForTest({
 ///
 /// During countdown (silent lead-in before playback):
 /// - Real countdown time: [0..leadInSec]
-/// - Synthetic elapsed: [-fallLeadSec..0]
+/// - Synthetic elapsed: [-leadInSec..0]
 ///
-/// This ensures first notes always spawn from top (y≈0) when countdown starts,
-/// regardless of the relationship between leadInSec and fallLeadSec.
+/// This ensures first notes always spawn from top (y≈0) when countdown starts.
+/// The mapping creates a 1:1 ratio (ratio=1.0) between countdown duration and
+/// synthetic elapsed progression, preventing velocity compression.
 ///
-/// At t=0: synthetic = -fallLeadSec (note spawns off-screen above)
+/// At t=0: synthetic = -leadInSec (notes spawn at top, y≈0)
 /// At t=leadInSec: synthetic = 0 (note hits keyboard, playback starts)
 /// Clamped to prevent negative synthetic for t < 0.
+/// FIXED VERSION - No fallLeadSec parameter
 @visibleForTesting
 double syntheticCountdownElapsedForTest({
   required double elapsedSinceCountdownStartSec,
   required double leadInSec,
-  required double fallLeadSec,
 }) {
-  if (leadInSec <= 0 || fallLeadSec <= 0) {
+  if (leadInSec <= 0) {
     return 0.0;
   }
-  // Map [0, leadInSec] → [-fallLeadSec, 0]
+  // FIX D2: Map [0, leadInSec] → [-leadInSec, 0] to ensure ratio=1.0
+  // Notes must fall during the ENTIRE countdown duration
+  // This prevents velocity compression and ensures notes spawn at top
   final progress = (elapsedSinceCountdownStartSec / leadInSec).clamp(0.0, 1.0);
-  final syntheticElapsed = -fallLeadSec + (progress * fallLeadSec);
+  final syntheticElapsed = -leadInSec + (progress * leadInSec);
   return syntheticElapsed;
 }
 
@@ -210,23 +213,6 @@ class PracticePage extends StatefulWidget {
 
   @override
   State<PracticePage> createState() => _PracticePageState();
-}
-
-/// M1-MICRO FIX: Event in pitch history for historical matching
-class _PitchEvent {
-  final double elapsedSec;
-  final int midi;
-  final double f0;
-  final double confidence;
-  final double rms;
-
-  _PitchEvent({
-    required this.elapsedSec,
-    required this.midi,
-    required this.f0,
-    required this.confidence,
-    required this.rms,
-  });
 }
 
 class _PracticePageState extends State<PracticePage>
@@ -263,6 +249,7 @@ class _PracticePageState extends State<PracticePage>
   int _practiceSessionId =
       0; // Increment on each new start; prevents stale callbacks
   bool _isListening = false;
+  bool _isCalibrating = false; // FIX BUG CRITIQUE #2: Track active calibration beep
   int? _detectedNote;
   NoteAccuracy _accuracy = NoteAccuracy.miss;
   // PATCH: Shows only notes currently touching keyboard (no preview)
@@ -271,35 +258,22 @@ class _PracticePageState extends State<PracticePage>
   _PracticeState _practiceState = _PracticeState.idle;
   DateTime? _countdownStartTime;
   static const double _practiceLeadInSec = 1.5;
-  // C8: PATCH VISUAL - ensure leadInSec >= fallLeadSec to prevent chute compression
-  // If leadInSec < fallLeadSec, synthetic elapsed maps [0..leadInSec] → [-fallLeadSec..0]
-  // which is faster than realtime, causing notes to spawn low and fall compressed.
+  // C8+FIX: Add buffer to prevent notes spawning mid-screen at countdown→running transition
+  // Notes spawn at t=-fallLeadSec during countdown and fall to hit line at t=0
+  // +1.0 sec buffer ensures notes are well above screen when running state starts
+  // Without buffer: If countdown ends exactly at fallLeadSec, first running frame may
+  // show notes already past spawn point, causing "notes appear at bottom" bug
+
+  // FIX BUG 1: Helper to check if layout is stable (200ms after countdown start)
+  // Increased from 100ms to 200ms to prevent preview flash during first frames
+  // CRITICAL: Return false if countdown hasn't started yet to prevent preview during loading
+  bool _isLayoutStable() {
+    if (_countdownStartTime == null) return false; // Countdown not started = NOT stable
+    return DateTime.now().difference(_countdownStartTime!).inMilliseconds >= 200;
+  }
   late double _effectiveLeadInSec = max(_practiceLeadInSec, _fallLeadSec) + 1.0;
   double? _earliestNoteStartSec; // Clamped to >= 0, used for effective lead-in
-  // FEATURE B: Mic precision (adaptive threshold + stability + debounce)
-  double _noiseFloorRms = 0.04; // Baseline RMS when silent
-  static const double _absMinRms = 0.04; // Absolute minimum
-  static const double _noiseMultiplier = 3.0; // dynamicMinRms = noiseFloor * 3
-  static const int _stabilityFrameThreshold = 3; // Frames to accept stable note
-  static const double _stabilityTimeThresholdMs = 80.0; // OR 80ms
-  DateTime? _stableNoteStartTime;
-  int? _lastStableNote;
-  int _stableFrameCount = 0;
-  DateTime? _lastAcceptedNoteAt;
-  int? _lastAcceptedNote;
-  static const double _debounceMs =
-      80.0; // C8: reduced from 120 to reduce misses on fast notes
-  // M1-MICRO FIX: Ring buffer for pitch history (for historical matching)
-  final List<_PitchEvent> _pitchHistory = [];
-  // Counters for debug
-  int _micRawCount = 0;
-  int _micAcceptedCount = 0;
-  int _micSuppressedLowRms = 0;
-  // ignore: prefer_final_fields
-  int _micSuppressedLowConf =
-      0; // Always 0 now (confidence gate removed), kept for HUD
-  int _micSuppressedUnstable = 0;
-  int _micSuppressedDebounce = 0;
+
   int _score = 0;
   int _totalNotes = 0;
   int _correctNotes = 0;
@@ -309,17 +283,11 @@ class _PracticePageState extends State<PracticePage>
   StreamSubscription<MidiPacket>? _midiSub;
   final _pitchDetector = PitchDetector();
   mic.MicEngine? _micEngine;
-  // D1-D3: Audio format & F0 validation
-  static const double _minValidF0Hz = 50.0; // Reject sub-bass aberrations
-  static const double _maxValidF0Hz =
-      2000.0; // Upper limit (piano typically < 1400 Hz)
   double _micLatencyCompSec = 0.0; // Compensation for buffer latency
   // D1: Micro scoring offset (auto-calibrated via EMA on pitch_match confidence)
   double _micScoringOffsetSec =
       0.0; // Offset between micro elapsed and scoring elapsed
-  double?
-  _videoGuidanceOffsetSec; // Timebase continuity: lock clock→video offset
-  bool _videoGuidanceLocked = false; // Ensure offset locked only once
+  // Timebase continuity variables removed (clock-based simplified)
   bool _micConfigLogged = false; // Log MIC_CONFIG only once per session
   List<_NoteEvent> _rawNoteEvents = [];
   List<_NoteEvent> _noteEvents = [];
@@ -334,11 +302,12 @@ class _PracticePageState extends State<PracticePage>
   int _notesDroppedInvalidTime = 0;
   int _notesMergedPairs = 0;
   int _notesOverlapsDetected = 0;
-  List<bool> _hitNotes = [];
+  final List<bool> _hitNotes = [];
   // Debug tracking (C4: Prove/stop duplicate overlays)
   int _overlayBuildCount = 0;
   int _listenerAttachCount = 0;
   int _painterInstanceId = 0;
+  int _spawnLogCount = 0; // D2: Track SPAWN logs (reset per session)
   double _latencyMs = 0;
   final AudioPlayer _beepPlayer = AudioPlayer();
   bool _notesSourceLocked = false; // C2: Prevent mid-session source switch
@@ -354,7 +323,7 @@ class _PracticePageState extends State<PracticePage>
   static const double _targetWindowHeadSec =
       0.05; // PATCH D1: Early note capture
   static const double _targetChordToleranceSec = 0.03;
-  static const double _videoSyncOffsetSec = 0.0;
+  static const double _videoSyncOffsetSec = -0.06; // SYNC with Backend VIDEO_TIME_OFFSET_MS = -60ms
   // B) Configurable merge tolerance for overlapping same-pitch events
   static const double _mergeEventOverlapToleranceSec = 0.05; // 50ms
   static const double _mergeEventGapToleranceSec = 0.08; // 80ms gap threshold
@@ -367,10 +336,6 @@ class _PracticePageState extends State<PracticePage>
   final ScrollController _keyboardScrollController = ScrollController();
   double _keyboardScrollOffset = 0.0;
   double _lastLayoutMaxWidth = 0.0;
-  static const int _micMaxBufferSamples = PitchDetector.bufferSize * 4;
-  final List<double> _micBuffer = <double>[];
-  int?
-  _detectedChannelCount; // D1-R1: Track if we detected stereo (null = not yet determined)
   VideoPlayerController? _videoController;
   double? _videoDurationSec;
   double? _stableVideoDurationSec; // C6: Non-decreasing duration per session
@@ -381,10 +346,9 @@ class _PracticePageState extends State<PracticePage>
   bool _notesLoading = false;
   String? _notesError;
   int? _notesLoadingSessionId; // C4: Guard double load by sessionId
-  int?
-  _notesLoadedSessionId; // C4: Guard already loaded (prevent sequential reload)
-  double?
-  _lastSanitizedDurationSec; // C7: Guard idempotent sanitize (epsilon 0.05)
+  int? _notesLoadedSessionId; // C4: Guard already loaded (prevent sequential reload)
+  double? _lastSanitizedDurationSec; // C7: Guard idempotent sanitize (epsilon 0.05)
+  int _videoInitToken = 0; // Token guard for video init
   int?
   _durationLockedSessionId; // D2: Lock stable duration once per sessionId (prevent flip)
   PermissionStatus? _micPermissionStatus;
@@ -404,6 +368,7 @@ class _PracticePageState extends State<PracticePage>
   DateTime? _lastMicRestartAt;
   DateTime? _lastUiUpdateAt;
   bool _videoEndFired = false;
+  DateTime? _lastVideoEndAt; // FIX BUG 4: Track when video ended to prevent instant replay
   bool _devHudEnabled = false;
   bool _overlayBuiltInBuild = false;
   bool _showKeyboardGuides = false;
@@ -417,9 +382,8 @@ class _PracticePageState extends State<PracticePage>
   DateTime? _devTapStartAt;
   DateTime? _lastCorrectHitAt;
   int? _lastCorrectNote;
-  int? _lastCorrectDetectedNote;
   DateTime? _lastWrongHitAt;
-  int? _lastWrongDetectedNote;
+  int? _lastWrongNote;
 
   // Default keyboard range (A#1 to C7 = 63 keys).
   static const int _defaultFirstKey = 34; // A#1
@@ -524,7 +488,14 @@ class _PracticePageState extends State<PracticePage>
             ),
         ],
       ),
-      bottomNavigationBar: const BannerAdPlaceholder(),
+      // FIX BUG 3: Replace banner with transparent spacer during practice/countdown
+      // to prevent AdWorker blocking main thread while maintaining stable layout height
+      bottomNavigationBar: (_practiceRunning || _practiceState == _PracticeState.countdown)
+          ? const SizedBox(
+              height: 50.0, // Match AdSize.banner.height to preserve layout
+              child: SizedBox.shrink(), // FIX BUG CRITIQUE #3: Zero-cost const widget
+            )
+          : const BannerAdPlaceholder(),
       body: LayoutBuilder(
         builder: (context, constraints) {
           final maxWidth = constraints.maxWidth;
@@ -545,8 +516,9 @@ class _PracticePageState extends State<PracticePage>
               ),
               _buildMicDebugHud(horizontalPadding: horizontalPadding),
               const SizedBox(height: AppConstants.spacing16),
-              if (!_practiceRunning)
-                // PATCH: Centered Play CTA overlay (only when NOT running)
+              if (!_practiceRunning && _practiceState == _PracticeState.idle)
+                // PATCH: Centered Play CTA overlay (only when NOT running AND idle)
+                // FIX: Also check _practiceState to prevent double rendering during countdown
                 Expanded(
                   child: Stack(
                     children: [
@@ -654,10 +626,15 @@ class _PracticePageState extends State<PracticePage>
     required double horizontalPadding,
   }) {
     final elapsedSec = _guidanceElapsedSec();
+    // FIX: Also check _practiceState to prevent painting during transition frames
+    // This ensures notes are only painted during countdown or running, not during idle
+    // FIX BUG 4: Wait for layout to stabilize before painting notes
     final shouldPaintNotes =
         (_practiceRunning || _practiceState == _PracticeState.countdown) &&
+        _practiceState != _PracticeState.idle &&
         elapsedSec != null &&
-        _noteEvents.isNotEmpty;
+        _noteEvents.isNotEmpty &&
+        _isLayoutStable();
     final targetNotes = shouldPaintNotes
         ? _uiTargetNotes(elapsedSec: elapsedSec)
         : const <int>{};
@@ -929,10 +906,11 @@ class _PracticePageState extends State<PracticePage>
     final impactText = impactList.toString();
     // FEATURE A: Lead-in countdown info
     final practiceStateText = _practiceState.toString().split('.').last;
+    // BUG FIX #9: Use _effectiveLeadInSec (3.0s) instead of _practiceLeadInSec (1.5s)
     final countdownRemainingSec = _countdownStartTime != null
         ? max(
             0.0,
-            _practiceLeadInSec -
+            _effectiveLeadInSec -
                 (DateTime.now()
                         .difference(_countdownStartTime!)
                         .inMilliseconds /
@@ -942,21 +920,6 @@ class _PracticePageState extends State<PracticePage>
     final countdownText = countdownRemainingSec != null
         ? countdownRemainingSec.toStringAsFixed(2)
         : '--';
-    // FEATURE B: Mic precision info
-    final dynamicMinRms = max(_absMinRms, _noiseFloorRms * _noiseMultiplier);
-    final noiseText = _noiseFloorRms.toStringAsFixed(4);
-    final dynamicText = dynamicMinRms.toStringAsFixed(4);
-    final lastAcceptedNoteStr = _lastAcceptedNote != null
-        ? _formatMidiNote(_lastAcceptedNote!, withOctave: true)
-        : '--';
-    final micLine =
-        'raw: $_micRawCount | accepted: $_micAcceptedCount | '
-        'suppressed: low_rms=$_micSuppressedLowRms '
-        'low_conf=$_micSuppressedLowConf unstable=$_micSuppressedUnstable '
-        'debounce=$_micSuppressedDebounce';
-    final micPrecisionLine =
-        'noiseFloor: $noiseText | dynamicMin: $dynamicText | '
-        'stableFrames: $_stableFrameCount | lastAccepted: $lastAcceptedNoteStr';
     // BUG 2 FIX: Proof field for video variant tracking
     final videoVariantLine =
         'videoVariant: ${_selectedVideoVariant ?? "unset"} | forcePreview: ${widget.forcePreview}';
@@ -977,17 +940,21 @@ class _PracticePageState extends State<PracticePage>
     if (_noteEvents.isNotEmpty && guidanceElapsedSec != null) {
       final firstNote = _noteEvents.first;
       firstNoteStartSecStr = firstNote.start.toStringAsFixed(3);
+      // D2 FIX: Use effectiveLeadInSec during countdown for accurate Y calculation
+      final fallLeadForCalc = _practiceState == _PracticeState.countdown 
+          ? _effectiveLeadInSec 
+          : _fallLeadSec;
       // Current y position of first note (where it appears on screen NOW)
       final yAtSpawn =
-          (guidanceElapsedSec - (firstNote.start - _fallLeadSec)) /
-          _fallLeadSec *
+          (guidanceElapsedSec - (firstNote.start - fallLeadForCalc)) /
+          fallLeadForCalc *
           400.0;
       yAtSpawnStr = yAtSpawn.toStringAsFixed(1);
       // What y WOULD BE when the note hits the keyboard (at elapsed = note.start)
       // Note: yAtHit should equal 400px (fallAreaHeight) by definition
       final yAtHitTheoretical =
-          (firstNote.start - (firstNote.start - _fallLeadSec)) /
-          _fallLeadSec *
+          (firstNote.start - (firstNote.start - fallLeadForCalc)) /
+          fallLeadForCalc *
           400.0;
       yAtHitStr = yAtHitTheoretical.toStringAsFixed(1);
     }
@@ -1027,11 +994,15 @@ class _PracticePageState extends State<PracticePage>
     // BUG FIX: Proof that countdown is armed and lead-in is computed correctly
     final countdownArmed = _countdownStartTime != null ? 'yes' : 'no';
     final notesReady = _noteEvents.isNotEmpty ? 'yes' : 'no';
-    final syntheticSpanSec = _fallLeadSec.toStringAsFixed(2);
+    // D2 FIX: During countdown, use effectiveLeadInSec
+    final fallLeadForCountdownCalc = _practiceState == _PracticeState.countdown 
+        ? _effectiveLeadInSec 
+        : _fallLeadSec;
+    final syntheticSpanSec = fallLeadForCountdownCalc.toStringAsFixed(2);
     final yAtCountdownStartStr =
         _countdownStartTime != null && _earliestNoteStartSec != null
-        ? (((-_fallLeadSec) - (_earliestNoteStartSec! - _fallLeadSec)) /
-                  _fallLeadSec *
+        ? (((-fallLeadForCountdownCalc) - (_earliestNoteStartSec! - fallLeadForCountdownCalc)) /
+                  fallLeadForCountdownCalc *
                   400.0)
               .toStringAsFixed(1)
         : '--';
@@ -1122,18 +1093,6 @@ class _PracticePageState extends State<PracticePage>
           ),
           Text(
             videoVariantLine,
-            style: AppTextStyles.caption.copyWith(
-              color: AppColors.textSecondary,
-            ),
-          ),
-          Text(
-            micLine,
-            style: AppTextStyles.caption.copyWith(
-              color: AppColors.textSecondary,
-            ),
-          ),
-          Text(
-            micPrecisionLine,
             style: AppTextStyles.caption.copyWith(
               color: AppColors.textSecondary,
             ),
@@ -1504,21 +1463,6 @@ class _PracticePageState extends State<PracticePage>
     await _togglePractice();
   }
 
-  double _computeRms(List<double> samples) {
-    if (samples.isEmpty) {
-      return 0.0;
-    }
-    double sum = 0.0;
-    for (final value in samples) {
-      sum += value * value;
-    }
-    return sqrt(sum / samples.length);
-  }
-
-  double _confidenceFromRms(double rms) {
-    return (rms * 4).clamp(0.0, 1.0);
-  }
-
   void _logMicDebug(DateTime now) {
     if (!kDebugMode) {
       return;
@@ -1569,9 +1513,11 @@ class _PracticePageState extends State<PracticePage>
       // D1+D3: Log MIC_FORMAT once per session (audio setup diagnostic)
       if (!_micConfigLogged && kDebugMode) {
         _micConfigLogged = true;
+        // FIX BUG CRITIQUE: Log actual detected sampleRate from MicEngine (may differ from requested)
+        final actualSr = _micEngine?.detectedSampleRate ?? PitchDetector.sampleRate;
         debugPrint(
-          'MIC_FORMAT sessionId=$_practiceSessionId sr=${PitchDetector.sampleRate} '
-          'bufferMs=${(PitchDetector.bufferSize * 1000 ~/ PitchDetector.sampleRate)} '
+          'MIC_FORMAT sessionId=$_practiceSessionId requested=${PitchDetector.sampleRate} actual=$actualSr '
+          'bufferMs=${(PitchDetector.bufferSize * 1000 ~/ actualSr)} '
           'offset=${_micScoringOffsetSec.toStringAsFixed(3)}s',
         );
       }
@@ -1638,10 +1584,12 @@ class _PracticePageState extends State<PracticePage>
     }
     const freq = 440.0;
     final samples = Float32List(PitchDetector.bufferSize);
+    // FIX BUG CRITIQUE: Generate test samples with actual detected sampleRate
+    final actualSr = _micEngine?.detectedSampleRate ?? PitchDetector.sampleRate;
     for (int i = 0; i < samples.length; i++) {
-      samples[i] = sin(2 * pi * freq * i / PitchDetector.sampleRate);
+      samples[i] = sin(2 * pi * freq * i / actualSr);
     }
-    final detected = _pitchDetector.detectPitch(samples);
+    final detected = _pitchDetector.detectPitch(samples, sampleRate: actualSr);
     if (!mounted) {
       return;
     }
@@ -1668,8 +1616,10 @@ class _PracticePageState extends State<PracticePage>
     }
     const freq = 440.0;
     final samples = Float32List(PitchDetector.bufferSize);
+    // FIX BUG CRITIQUE: Generate injection with actual detected sampleRate
+    final actualSr = _micEngine?.detectedSampleRate ?? PitchDetector.sampleRate;
     for (int i = 0; i < samples.length; i++) {
-      samples[i] = sin(2 * pi * freq * i / PitchDetector.sampleRate);
+      samples[i] = sin(2 * pi * freq * i / actualSr);
     }
     _processSamples(samples, now: DateTime.now(), injected: true);
   }
@@ -1762,9 +1712,10 @@ class _PracticePageState extends State<PracticePage>
       blackKeys: _blackKeys,
       targetNotes: targetNotes,
       detectedNote: _uiDetectedNote(),
-      successFlashNote: _lastCorrectDetectedNote,
+      // Flash the expected/target note (more consistent with falling overlay feedback).
+      successFlashNote: _lastCorrectNote,
       successFlashActive: successFlashActive,
-      wrongFlashNote: _lastWrongDetectedNote,
+      wrongFlashNote: _lastWrongNote,
       wrongFlashActive: wrongFlashActive,
       noteToXFn: noteToXFn,
       showDebugLabels: showDebugLabels,
@@ -1776,18 +1727,11 @@ class _PracticePageState extends State<PracticePage>
     if (_notesLoading) {
       return SizedBox(
         width: width,
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              const SizedBox(height: AppConstants.spacing8),
-              Text('Chargement des notes...', style: AppTextStyles.caption),
-            ],
+        child: const Center(
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
           ),
         ),
       );
@@ -1887,8 +1831,8 @@ class _PracticePageState extends State<PracticePage>
 
   double? _guidanceElapsedSec() {
     // FEATURE A: Handle countdown state (synthetic elapsed time for falling notes)
-    // BUG FIX: Map countdown time to full [-fallLeadSec, 0] range to ensure
-    // first notes spawn from top regardless of leadInSec vs fallLeadSec relationship
+    // D2 FIX: Map countdown time to [-leadInSec, 0] range to ensure ratio=1.0
+    // Notes spawn from top and fall during entire countdown duration
     if (_practiceState == _PracticeState.countdown &&
         _countdownStartTime != null) {
       final elapsedSinceCountdownSec =
@@ -1897,7 +1841,6 @@ class _PracticePageState extends State<PracticePage>
       return syntheticCountdownElapsedForTest(
         elapsedSinceCountdownStartSec: elapsedSinceCountdownSec,
         leadInSec: _effectiveLeadInSec,
-        fallLeadSec: _fallLeadSec,
       );
     }
     // A) Guidance is tied to Practice running + video position.
@@ -1905,31 +1848,14 @@ class _PracticePageState extends State<PracticePage>
     if (!_practiceRunning) {
       return null;
     }
-    // D1: Timebase continuity - lock clock→video offset ONCE
+    // D1: Timebase continuity - clock-based (simplified)
     final clock = _practiceClockSec();
-    final v = _videoElapsedSec();
 
-    if (v != null &&
-        _videoController != null &&
-        _videoController!.value.isInitialized &&
-        !_videoGuidanceLocked) {
-      // Lock offset at moment video becomes available
-      _videoGuidanceOffsetSec = clock - v;
-      _videoGuidanceLocked = true;
-      if (kDebugMode) {
-        debugPrint(
-          'GUIDANCE_LOCK sessionId=$_practiceSessionId clock=${clock.toStringAsFixed(3)}s '
-          'video=${v.toStringAsFixed(3)}s offset=${_videoGuidanceOffsetSec!.toStringAsFixed(3)}s',
-        );
-      }
-    }
-
-    // Return video time + offset if available, else clock
-    // CRITICAL: Do NOT clamp to 0.0 - allow negative time during early video frames
-    // so notes can fall from top (noteStart=0 needs guidanceElapsed<0 to render above hit line)
-    if (v != null && _videoGuidanceOffsetSec != null) {
-      return v + _videoGuidanceOffsetSec!;
-    }
+    // BUG FIX #13 REVISED: Always use clock during practice running
+    // The original video offset lock was causing issues:
+    // - Video position can be null/stale during early frames after countdown
+    // - Clock is more reliable and starts from 0 when practice begins
+    // - This ensures guidanceElapsed starts near 0, allowing notes to fall from top
     return clock;
   }
 
@@ -1993,16 +1919,31 @@ class _PracticePageState extends State<PracticePage>
     if (effectiveDuration == null || effectiveDuration <= 0) {
       return false;
     }
+    // BUG FIX #14: Guard notes loaded before allowing practice start
+    // If notes not loaded yet, MicEngine would be created with empty noteEvents
+    // Then when notes load, _noteEvents reassignment creates desync
+    if (_notesLoading || _noteEvents.isEmpty) {
+      return false;
+    }
     return true;
   }
 
   void _showVideoNotReadyHint() {
     if (!mounted) return;
+    // BUG FIX #14: Message plus précis selon ce qui manque
+    String message;
+    if (_notesLoading) {
+      message = 'Notes en cours de chargement, reessaye dans un instant.';
+    } else if (_noteEvents.isEmpty) {
+      message = 'Notes indisponibles pour ce niveau.';
+    } else if (_videoLoading) {
+      message = 'Video en cours de chargement, reessaye dans un instant.';
+    } else {
+      message = 'Chargement en cours, reessaye dans un instant.';
+    }
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Video en cours de chargement, reessaye dans un instant.',
-        ),
+      SnackBar(
+        content: Text(message),
       ),
     );
   }
@@ -2061,7 +2002,9 @@ class _PracticePageState extends State<PracticePage>
     _score = 0;
     _correctNotes = 0;
     _totalNotes = 0;
-    _hitNotes = []; // Reassign instead of clear (was fixed-length list)
+    // BUG FIX #12: Use clear() instead of reassignment to maintain MicEngine reference
+    _hitNotes.clear();
+    _micEngine = null; // Recreate per-session after notes + hitNotes are ready
     _notesSourceLocked = false; // C2: Reset source lock for next session
     _notesLoadingSessionId = null; // C4: Reset load guard for next session
     _notesLoadedSessionId = null; // C4: Reset loaded flag for next session
@@ -2069,9 +2012,7 @@ class _PracticePageState extends State<PracticePage>
         null; // C6: Reset stable duration for next session
     _lastSanitizedDurationSec = null; // C7: Reset sanitize epsilon guard
     _lastCorrectNote = null;
-    _lastWrongDetectedNote = null;
-    _videoGuidanceOffsetSec = null;
-    _videoGuidanceLocked = false;
+    _lastWrongNote = null;
     if (_videoController != null && _videoController!.value.isInitialized) {
       await _videoController!.pause();
       await _videoController!.seekTo(Duration.zero);
@@ -2079,6 +2020,15 @@ class _PracticePageState extends State<PracticePage>
   }
 
   Future<void> _startPractice({Duration? startPosition}) async {
+    // FIX BUG 4: Prevent instant replay after video end - require 2s delay
+    if (_lastVideoEndAt != null) {
+      final timeSinceEnd = DateTime.now().difference(_lastVideoEndAt!).inMilliseconds;
+      if (timeSinceEnd < 2000) {
+        return; // Ignore replay attempts within 2s of video end
+      }
+      _lastVideoEndAt = null; // Clear guard after delay passed
+    }
+    
     if (!_canStartPractice()) {
       _showVideoNotReadyHint();
       if (mounted) {
@@ -2107,8 +2057,6 @@ class _PracticePageState extends State<PracticePage>
     _micFrequency = null;
     _micNote = null;
     _micConfidence = 0.0;
-    _detectedChannelCount =
-        null; // D1-R1: Reset channel detection for new session
     _lastMicLogAt = null;
     _lastMidiFrameAt = null;
     _lastMidiNote = null;
@@ -2119,28 +2067,8 @@ class _PracticePageState extends State<PracticePage>
     _lastUiUpdateAt = null;
     _videoEndFired = false;
 
-    // Initialize MicEngine for robust scoring
-    _micEngine = mic.MicEngine(
-      noteEvents: _noteEvents
-          .map((n) => mic.NoteEvent(start: n.start, end: n.end, pitch: n.pitch))
-          .toList(),
-      hitNotes: _hitNotes,
-      detectPitch: (samples, sr) {
-        final float32Samples = Float32List.fromList(
-          samples.map((s) => s.toDouble()).toList(),
-        );
-        // Pass detected sample rate to pitch detector (fixes 44100 vs 35280 Hz mismatch)
-        final result = _pitchDetector.detectPitch(
-          float32Samples,
-          sampleRate: sr.round(),
-        );
-        return result ?? 0.0;
-      },
-      headWindowSec: _targetWindowHeadSec,
-      tailWindowSec: _targetWindowTailSec,
-      absMinRms: 0.0008,
-    );
-    _micEngine!.reset('$sessionId');
+    // NOTE: MicEngine will be initialized AFTER _loadNoteEvents to avoid race condition
+    // (hitNotes must be synced with noteEvents length)
     _setMicDisabled(false);
     if (mounted) {
       setState(() {
@@ -2213,6 +2141,7 @@ class _PracticePageState extends State<PracticePage>
     // RACE FIX: Arm countdown NOW that BOTH notes AND video are ready
     // Set state + timestamp TOGETHER to guarantee elapsedOk && notesOk both true for painter
     if (_practiceStarting && _countdownStartTime == null) {
+      _spawnLogCount = 0; // D2: Reset log counter for new session
       if (mounted) {
         setState(() {
           _practiceState = _PracticeState.countdown;
@@ -2225,33 +2154,62 @@ class _PracticePageState extends State<PracticePage>
         _practiceStarting = false;
       }
       // C8: Log countdown timing to verify no chute compression
+      // D2 FIX: During countdown, notes use effectiveLeadInSec for fall calculation
+      // so ratio should be 1.00 (leadIn / leadIn) not (leadIn / fallLead)
       if (kDebugMode) {
         final leadIn = _effectiveLeadInSec;
-        final fallLead = _fallLeadSec;
+        final effectiveFallDuringCountdown = _effectiveLeadInSec; // Notes actually use this
         final firstStart = _earliestNoteStartSec ?? 0;
         debugPrint(
-          'Countdown C8: leadInSec=$leadIn fallLeadSec=$fallLead '
-          'ratio=${(leadIn / fallLead).toStringAsFixed(2)} '
-          'earliestNoteStart=$firstStart synthAt_t0=-$fallLead synthAt_tEnd=0',
+          'Countdown C8: leadInSec=$leadIn fallLeadUsedInPainter=$effectiveFallDuringCountdown '
+          'ratio=${(leadIn / effectiveFallDuringCountdown).toStringAsFixed(2)} '
+          'earliestNoteStart=$firstStart synthAt_t0=-$effectiveFallDuringCountdown synthAt_tEnd=0',
         );
       }
     }
     _score = 0;
     _correctNotes = 0;
     _totalNotes = _noteEvents.length;
-    _hitNotes = List<bool>.filled(_noteEvents.length, false);
+    // BUG FIX #12: Rebuild list in-place to maintain MicEngine reference
+    _hitNotes.clear();
+    _hitNotes.addAll(List<bool>.filled(_noteEvents.length, false));
+    
+    // Initialize MicEngine NOW (after notes loaded, hitNotes synced)
+    // Previously MicEngine was created before _hitNotes was populated, causing
+    // SCORING_DESYNC ABORT and no hits / no key highlights.
+    _micEngine = mic.MicEngine(
+      noteEvents: _noteEvents
+          .map((n) => mic.NoteEvent(start: n.start, end: n.end, pitch: n.pitch))
+          .toList(),
+      hitNotes: _hitNotes,
+      detectPitch: (samples, sr) {
+        // samples are already List<double>, no conversion needed
+        final float32Samples = Float32List.fromList(samples);
+        // FIX BUG 6: Use actual detected sample rate from MicEngine, not hardcoded constant
+        // MicEngine calculates sr based on audio chunk timing (e.g., 32784 Hz on some devices)
+        // Using wrong sr causes semitoneShift (e.g., 32784→44100 = -5.13 semitones = all notes wrong)
+        final result = _pitchDetector.detectPitch(
+          float32Samples,
+          sampleRate: sr.round(),
+        );
+        return result ?? 0.0;
+      },
+      headWindowSec: _targetWindowHeadSec,
+      tailWindowSec: _targetWindowTailSec,
+      // FIX BUG 3: Increase RMS threshold to reduce false positives from ambient noise
+      // Previous: 0.0008 was too sensitive, captured background noise as wrong notes
+      // New: 0.0020 filters out quiet ambient noise while preserving real piano input
+      absMinRms: 0.0020,
+    );
+    _micEngine!.reset('$sessionId');
+    
     _lastCorrectHitAt = null;
     _lastCorrectNote = null;
-    _lastCorrectDetectedNote = null;
     _lastWrongHitAt = null;
-    _lastWrongDetectedNote = null;
-    _startTime = DateTime.now();
-    if (_micBuffer.isNotEmpty) {
-      _micBuffer.removeRange(
-        0,
-        _micBuffer.length,
-      ); // C5: Safe clear on final list
-    }
+    _lastWrongNote = null;
+    // BUG FIX #15: Do NOT set _startTime here - it will be set when countdown finishes
+    // If set here, clock advances during countdown and guidanceElapsed starts at 2s instead of 0
+    // _startTime = DateTime.now(); // REMOVED
 
     if (_useMidi) {
       // Already listening via MIDI subscription
@@ -2265,6 +2223,7 @@ class _PracticePageState extends State<PracticePage>
   /// Formula: effectiveLeadInSec = max(baseLeadIn, fallLead) to prevent chute compression.
   void _computeEffectiveLeadIn() {
     if (_noteEvents.isEmpty) {
+      // FIX: ALWAYS use max(), not practiceLeadIn (would cause 1.5s countdown instead of 2.0s)
       _effectiveLeadInSec = max(_practiceLeadInSec, _fallLeadSec) + 1.0;
       _earliestNoteStartSec = null;
     } else {
@@ -2276,6 +2235,9 @@ class _PracticePageState extends State<PracticePage>
       _earliestNoteStartSec = max(0.0, minStart);
       // D1: Ensure countdown ratio = 1.0 (no velocity > 1.0 compression)
       _effectiveLeadInSec = max(_practiceLeadInSec, _fallLeadSec) + 1.0;
+      if (kDebugMode) {
+        debugPrint('EFFECTIVE_LEADIN computed=${_effectiveLeadInSec.toStringAsFixed(3)}s (practiceLeadIn=$_practiceLeadInSec fallLead=$_fallLeadSec)');
+      }
     }
   }
 
@@ -2309,6 +2271,14 @@ class _PracticePageState extends State<PracticePage>
     final countdownCompleteSec = _effectiveLeadInSec;
     if (elapsedMs >= countdownCompleteSec * 1000) {
       // Countdown finished: start video + mic + enter running state
+      // FIX BUG 5 REVISED: Set _startTime to NOW, _practiceClockSec handles latency subtraction
+      // This ensures smooth transition: synthetic countdown ends at 0.0s, running starts at 0.0s
+      // The latency compensation in _practiceClockSec() will naturally delay elapsed by ~100ms
+      _startTime = DateTime.now();
+      if (kDebugMode) {
+        final finalElapsed = _guidanceElapsedSec();
+        debugPrint('COUNTDOWN_FINISH elapsedMs=$elapsedMs countdownCompleteSec=$countdownCompleteSec finalElapsed=${finalElapsed?.toStringAsFixed(3)} latency=${_latencyMs.toStringAsFixed(1)}ms -> RUNNING');
+      }
       if (mounted) {
         setState(() {
           _practiceState = _PracticeState.running;
@@ -2358,11 +2328,13 @@ class _PracticePageState extends State<PracticePage>
       _practiceState = _PracticeState.idle;
       _countdownStartTime = null;
     }
+    // FIX PASS2: Cancel subscription BEFORE stop to prevent AudioRecord -38
     _micSub?.cancel();
     _micSub = null;
     try {
       await _recorder.stop();
     } catch (_) {}
+    // End FIX PASS2
     _midiSub?.cancel();
     _midiSub = null;
     await _videoController?.pause();
@@ -2396,26 +2368,22 @@ class _PracticePageState extends State<PracticePage>
       _lastMidiNote = null;
       _lastCorrectHitAt = null;
       _lastCorrectNote = null;
-      _lastCorrectDetectedNote = null;
       _lastWrongHitAt = null;
-      _lastWrongDetectedNote = null;
-      // FEATURE B: Reset mic precision state
-      _noiseFloorRms = 0.04;
-      _stableNoteStartTime = null;
-      _lastStableNote = null;
-      _stableFrameCount = 0;
-      _lastAcceptedNoteAt = null;
-      _lastAcceptedNote = null;
-      // M1: Clear pitch history on new session
-      _pitchHistory.clear();
+      _lastWrongNote = null;
       // D1, D3: Reset mic config logging and latency comp for new session
       _micConfigLogged = false;
       _micLatencyCompSec = 0.0;
     });
 
+    // FIX BUG 2: Await score dialog to prevent screen returning to Play immediately
+    // Before: async call continued, UI returned to idle while dialog was opening
+    // After: Wait for dialog close before marking video end
     if (showSummary && mounted) {
-      _showScoreDialog(score: score, accuracy: accuracy);
+      await _showScoreDialog(score: score, accuracy: accuracy);
     }
+    
+    // FIX BUG 4: Mark video end time to prevent instant replay
+    _lastVideoEndAt = DateTime.now();
   }
 
   Future<void> _sendPracticeSession({
@@ -2434,7 +2402,7 @@ class _PracticePageState extends State<PracticePage>
       final dio = Dio(
         BaseOptions(
           baseUrl: AppConstants.backendBaseUrl,
-          connectTimeout: const Duration(seconds: 20),
+          connectTimeout: const Duration(seconds: 15), // SYNC: uniform API timeout
         ),
       );
       DebugJobGuard.attachToDio(dio);
@@ -2476,11 +2444,21 @@ class _PracticePageState extends State<PracticePage>
     WidgetsBinding.instance.removeObserver(this);
     _ticker.dispose();
     _keyboardScrollController.dispose();
+    // FIX PASS2: Cancel subscription BEFORE stop to prevent AudioRecord -38
     _micSub?.cancel();
     _midiSub?.cancel();
     try {
       _recorder.stop();
     } catch (_) {}
+    // End FIX PASS2
+    // FIX BUG CRITIQUE #2: Cancel calibration beep before disposing player
+    if (_isCalibrating) {
+      try {
+        _beepPlayer.stop();
+      } catch (_) {}
+      _isCalibrating = false;
+    }
+    _beepPlayer.dispose(); // FIX: Dispose AudioPlayer to prevent memory leak
     _videoController?.dispose();
     _chewieController?.dispose();
     super.dispose();
@@ -2510,72 +2488,22 @@ class _PracticePageState extends State<PracticePage>
     }
     if (_startTime == null && !injected) return;
     // D1: Disable mic during countdown (anti-pollution: avoid capturing app's reference note)
-    // and clear pitch history to prevent carryover from previous expected notes
     if (_practiceState == _PracticeState.countdown) {
-      _pitchHistory.clear();
       return;
     }
     _lastMicFrameAt = now;
-    // D1-R1: Detect stereo and downmix to mono if needed
-    // Heuristic: if buffer accumulates faster than expected for mono, likely stereo interleaved
-    var processSamples = samples;
-    if (_detectedChannelCount == null && samples.isNotEmpty) {
-      // Expected mono rate: 44100 samples/sec ≈ 882 per 20ms window
-      // If buffer grows 2x faster ⇒ likely stereo (2 channels)
-      final expectedMonoSamplesPerFrame = 44100 ~/ 50; // ~882 per 20ms
-      final isStereoLikely =
-          _micBuffer.length > expectedMonoSamplesPerFrame * 2 &&
-          samples.length > 100;
-      if (isStereoLikely) {
-        processSamples = _downmixStereoToMono(samples);
-        _detectedChannelCount = 2;
-        if (kDebugMode) {
-          debugPrint(
-            'AUDIO_STEREO_DETECTED sessionId=$_practiceSessionId '
-            'downmixing to mono (L+R)/2',
-          );
-        }
-      } else {
-        _detectedChannelCount = 1;
-      }
-    }
-    _micRms = _computeRms(processSamples);
-    _appendSamples(_micBuffer, processSamples);
 
     // ═══════════════════════════════════════════════════════════════
-    // CRITICAL: MicEngine scoring BEFORE any early returns
+    // CRITICAL: MicEngine scoring (all gating + buffering internal)
     // ═══════════════════════════════════════════════════════════════
-    // The MicEngine MUST receive ALL audio chunks to populate its event buffer.
-    // Old architecture had early returns (window==null, freq==null, RMS<threshold, etc.)
-    // that prevented MicEngine from ever being called → 0% HITs.
-    // New architecture: MicEngine processes FIRST, then HUD filters run (non-blocking).
-
     final elapsed = _guidanceElapsedSec();
     if (elapsed != null && _micEngine != null) {
-      // PROOF log: show guidance time vs expected notes (debug timebase sync)
-      if (kDebugMode) {
-        final activeNotes = _noteEvents
-            .asMap()
-            .entries
-            .where((e) => !_hitNotes[e.key])
-            .where((e) {
-              final windowStart = e.value.start - _targetWindowHeadSec;
-              final windowEnd = e.value.end + _targetWindowTailSec;
-              return elapsed >= windowStart && elapsed <= windowEnd;
-            })
-            .toList();
-        if (activeNotes.isNotEmpty) {
-          final note = activeNotes.first;
-          debugPrint(
-            'SCORING_TIMEBASE sessionId=$_practiceSessionId guidanceElapsed=${elapsed.toStringAsFixed(3)} '
-            'activeNoteIdx=${note.key} expectedMidi=${note.value.pitch} '
-            'noteWindow=[${(note.value.start - _targetWindowHeadSec).toStringAsFixed(3)}..${(note.value.end + _targetWindowTailSec).toStringAsFixed(3)}]',
-          );
-        }
-      }
-
       final prevAccuracy = _accuracy;
-      final decisions = _micEngine!.onAudioChunk(processSamples, now, elapsed);
+      final decisions = _micEngine!.onAudioChunk(
+        samples,
+        now,
+        elapsed,
+      );
 
       // Apply decisions (HIT/MISS/wrongFlash)
       for (final decision in decisions) {
@@ -2589,10 +2517,10 @@ class _PracticePageState extends State<PracticePage>
               detectedNote: decision.detectedMidi!,
               now: now,
             );
+            _updateDetectedNote(decision.detectedMidi, now, accuracyChanged: true);
             break;
 
           case mic.DecisionType.miss:
-            // Already logged by MicEngine, just mark accuracy
             if (_accuracy != NoteAccuracy.correct) {
               _accuracy = NoteAccuracy.wrong;
             }
@@ -2601,6 +2529,7 @@ class _PracticePageState extends State<PracticePage>
           case mic.DecisionType.wrongFlash:
             _accuracy = NoteAccuracy.wrong;
             _registerWrongHit(detectedNote: decision.detectedMidi!, now: now);
+            _updateDetectedNote(decision.detectedMidi, now, accuracyChanged: true);
             break;
         }
       }
@@ -2611,109 +2540,13 @@ class _PracticePageState extends State<PracticePage>
       _updateDetectedNote(uiMidi, now, accuracyChanged: accuracyChanged);
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // HUD-ONLY filters (do NOT block scoring, already done by MicEngine)
-    // ═══════════════════════════════════════════════════════════════
-    // These filters update HUD state (_micFrequency, _micNote, _micConfidence)
-    // and log debug metrics, but no longer prevent scoring via early returns.
-
-    // FEATURE B: Track noise floor (EWMA of RMS when no stable note)
-    if (_lastStableNote == null) {
-      _noiseFloorRms = _noiseFloorRms * 0.7 + _micRms * 0.3; // EWMA
-    }
-    final dynamicMinRms = max(_absMinRms, _noiseFloorRms * _noiseMultiplier);
-
-    final window = _latestWindow(_micBuffer);
-    if (window == null) {
-      // HUD-only: clear display state, but scoring already done by MicEngine
-      _micFrequency = null;
-      _micNote = null;
-      _micConfidence = 0.0;
-      _logMicDebug(now);
-      return; // No pitch to display, but MicEngine already processed audio
-    }
-
-    final freq = _pitchDetector.detectPitch(window);
-    if (freq == null) {
-      // HUD-only: clear display state
-      _micFrequency = null;
-      _micNote = null;
-      _micConfidence = 0.0;
-      _logMicDebug(now);
-      return; // No pitch to display, scoring already done
-    }
-
-    // D2: Reject aberrant F0 frequencies (< 50 Hz or > 2000 Hz)
-    if (freq < _minValidF0Hz || freq > _maxValidF0Hz) {
-      // HUD-only: clear display state
-      _micFrequency = null;
-      _micNote = null;
-      _micConfidence = 0.0;
-      _logMicDebug(now);
-      return; // Aberrant freq, scoring already done
-    }
-
-    final midi = _pitchDetector.frequencyToMidiNote(freq);
-    _micFrequency = freq;
-    _micNote = midi;
-    _micConfidence = _confidenceFromRms(_micRms);
-
-    _micRawCount++;
-
-    // FEATURE B: Improved gating (adaptive RMS + stability + debounce)
-    // BUG FIX: Removed confidence_low gate (redundant with dynamicMinRms + stability + debounce)
-    // Confidence is now only a HUD signal showing RMS intensity.
-
-    // Gate 1: Adaptive RMS threshold (HUD-only, not blocking)
-    if (_micRms < dynamicMinRms) {
-      _micSuppressedLowRms++;
-      _logMicDebug(now);
-      return; // Low RMS, don't spam HUD updates, scoring already done
-    }
+    // Mirror MicEngine state to HUD
+    _micFrequency = _micEngine?.lastFreqHz;
+    _micNote = _micEngine?.lastMidi;
+    _micConfidence = _micEngine?.lastConfidence ?? 0.0;
+    _micRms = _micEngine?.lastRms ?? 0.0;
 
     _logMicDebug(now);
-
-    // Gate 3: Stability filter (HUD stats only, not used for scoring)
-    // Keep counters for debug logs, but no longer blocks scoring
-    if (_lastStableNote != null && (_lastStableNote! - midi).abs() <= 1) {
-      // Same note
-      _stableFrameCount++;
-      _stableNoteStartTime ??= now;
-      final stableElapsedMs = now
-          .difference(_stableNoteStartTime!)
-          .inMilliseconds;
-      final stableMs = max(
-        _stabilityTimeThresholdMs,
-        (_stabilityFrameThreshold * 20).toDouble(), // ~20ms per frame
-      );
-      if (_stableFrameCount >= _stabilityFrameThreshold ||
-          stableElapsedMs >= stableMs) {
-        // Note is stable (for stats)
-        final nowMs = now.millisecondsSinceEpoch.toDouble();
-        final lastMs = (_lastAcceptedNoteAt?.millisecondsSinceEpoch ?? 0)
-            .toDouble();
-        if ((nowMs - lastMs) >= _debounceMs) {
-          // Debounce passed (for stats)
-          _lastAcceptedNote = midi;
-          _lastAcceptedNoteAt = now;
-          _micAcceptedCount++;
-        } else {
-          // Debounce rejected (for stats)
-          _micSuppressedDebounce++;
-        }
-      } else {
-        // Waiting for stability (for stats)
-        _micSuppressedUnstable++;
-      }
-    } else {
-      // Different note; reset stability counter (for stats)
-      _lastStableNote = midi;
-      _stableFrameCount = 1;
-      _stableNoteStartTime = now;
-      _micSuppressedUnstable++;
-    }
-
-    // End of _processSamples (HUD state updated, scoring already done by MicEngine)
   }
 
   void _updateDetectedNote(
@@ -2744,7 +2577,6 @@ class _PracticePageState extends State<PracticePage>
     required DateTime now,
   }) {
     _lastCorrectNote = targetNote;
-    _lastCorrectDetectedNote = detectedNote;
     _lastCorrectHitAt = now;
     HapticFeedback.lightImpact();
     if (mounted) {
@@ -2756,11 +2588,11 @@ class _PracticePageState extends State<PracticePage>
     final tooSoon =
         _lastWrongHitAt != null &&
         now.difference(_lastWrongHitAt!) < _successFlashDuration;
-    if (tooSoon && _lastWrongDetectedNote == detectedNote) {
+    if (tooSoon && _lastWrongNote == detectedNote) {
       return;
     }
     _lastWrongHitAt = now;
-    _lastWrongDetectedNote = detectedNote;
+    _lastWrongNote = detectedNote;
     HapticFeedback.selectionClick();
     if (mounted) {
       setState(() {});
@@ -2798,27 +2630,6 @@ class _PracticePageState extends State<PracticePage>
       samples.add(value / 32768.0);
     }
     return samples;
-  }
-
-  // D1: Downmix stereo interleaved samples to mono
-  List<double> _downmixStereoToMono(List<double> samples) {
-    if (samples.length < 2) return samples;
-    final mono = <double>[];
-    // Assume stereo interleaved: L,R,L,R,...
-    for (var i = 0; i < samples.length; i += 2) {
-      final left = samples[i];
-      final right = (i + 1 < samples.length) ? samples[i + 1] : left;
-      mono.add((left + right) / 2.0); // Average L+R
-    }
-    return mono;
-  }
-
-  void _appendSamples(List<double> buffer, List<double> samples) {
-    if (samples.isEmpty) return;
-    buffer.addAll(samples);
-    if (buffer.length > _micMaxBufferSamples) {
-      buffer.removeRange(0, buffer.length - _micMaxBufferSamples);
-    }
   }
 
   // B) Merge overlapping same-pitch events (fix "two streams" problem)
@@ -2902,12 +2713,6 @@ class _PracticePageState extends State<PracticePage>
     }
 
     return merged;
-  }
-
-  Float32List? _latestWindow(List<double> buffer) {
-    if (buffer.length < PitchDetector.bufferSize) return null;
-    final start = buffer.length - PitchDetector.bufferSize;
-    return Float32List.fromList(buffer.sublist(start));
   }
 
   _SanitizedNotes _sanitizeNoteEvents({
@@ -3221,7 +3026,8 @@ class _PracticePageState extends State<PracticePage>
       _notesDroppedDup = 0;
       _rawNoteEvents = [];
       _noteEvents = [];
-      _effectiveLeadInSec = max(_practiceLeadInSec, _fallLeadSec) + 1.0; // Reset when clearing notes
+      // FIX: ALWAYS use max(), not practiceLeadIn (would cause mid-screen spawn)
+      _effectiveLeadInSec = max(_practiceLeadInSec, _fallLeadSec) + 1.0;
     });
 
     final midiUrl = widget.level.midiUrl;
@@ -3232,8 +3038,8 @@ class _PracticePageState extends State<PracticePage>
         _notesError = 'Notes indisponibles';
         _rawNoteEvents = [];
         _noteEvents = [];
-        _effectiveLeadInSec =
-            _practiceLeadInSec; // Reset when notes fail to load
+        // FIX: ALWAYS use max() even when jobId null
+        _effectiveLeadInSec = max(_practiceLeadInSec, _fallLeadSec) + 1.0;
         _notesSource = NotesSource.none;
         _displayFirstKey = _defaultFirstKey;
         _displayLastKey = _defaultLastKey;
@@ -3372,7 +3178,8 @@ class _PracticePageState extends State<PracticePage>
       applyUpdate(() {
         _rawNoteEvents = [];
         _noteEvents = [];
-        _effectiveLeadInSec = max(_practiceLeadInSec, _fallLeadSec) + 1.0; // Reset on load error
+        // FIX: ALWAYS use max() even on DioException
+        _effectiveLeadInSec = max(_practiceLeadInSec, _fallLeadSec) + 1.0;
         _notesSource = NotesSource.none;
         _notesLoading = false;
         _notesError = 'Notes indisponibles';
@@ -3386,7 +3193,8 @@ class _PracticePageState extends State<PracticePage>
       applyUpdate(() {
         _rawNoteEvents = [];
         _noteEvents = [];
-        _effectiveLeadInSec = max(_practiceLeadInSec, _fallLeadSec) + 1.0; // Reset on parse error
+        // FIX: ALWAYS use max() even on general error
+        _effectiveLeadInSec = max(_practiceLeadInSec, _fallLeadSec) + 1.0;
         _notesSource = NotesSource.none;
         _notesLoading = false;
         _notesError = 'Notes indisponibles';
@@ -3499,6 +3307,13 @@ class _PracticePageState extends State<PracticePage>
   Future<void> _calibrateLatency({bool force = false}) async {
     // Already calibrated
     if (_latencyMs > 0 && !force) return;
+    
+    // FIX BUG 2: Skip calibration if countdown/practice active to prevent beep during gameplay
+    if (_practiceState == _PracticeState.countdown || _practiceRunning) {
+      _latencyMs = _fallbackLatencyMs; // Use fallback instead
+      return;
+    }
+    
     final micGranted = await _ensureMicPermission();
     if (!micGranted) {
       return;
@@ -3510,15 +3325,20 @@ class _PracticePageState extends State<PracticePage>
     final calibBuffer = <double>[];
     final recorder = RecorderStream();
     try {
+      _isCalibrating = true; // FIX BUG CRITIQUE #2: Flag active calibration
       await recorder.initialize(sampleRate: PitchDetector.sampleRate);
       await recorder.start();
       calibSub = recorder.audioStream.listen((chunk) {
         if (beepStart == null) return;
         final samples = _convertChunkToSamples(chunk);
         if (samples.isEmpty) return;
-        _appendSamples(calibBuffer, samples);
-        final window = _latestWindow(calibBuffer);
-        if (window == null) return;
+        calibBuffer.addAll(samples);
+        if (calibBuffer.length > 8192) {
+          calibBuffer.removeRange(0, calibBuffer.length - 8192);
+        }
+        if (calibBuffer.length < PitchDetector.bufferSize) return;
+        final start = calibBuffer.length - PitchDetector.bufferSize;
+        final window = Float32List.fromList(calibBuffer.sublist(start));
         final freq = _pitchDetector.detectPitch(window);
         if (freq == null) return;
         if ((freq - targetFreq).abs() < 80) {
@@ -3528,10 +3348,12 @@ class _PracticePageState extends State<PracticePage>
       });
 
       // Play beep from generated bytes
+      // FIX BUG CRITIQUE: Generate beep with actual detected sampleRate for accurate calibration
+      final actualSr = _micEngine?.detectedSampleRate ?? PitchDetector.sampleRate;
       final beepBytes = _generateBeepBytes(
         durationMs: 400,
         freq: targetFreq,
-        sampleRate: PitchDetector.sampleRate,
+        sampleRate: actualSr,
       );
       beepStart = DateTime.now();
       await _beepPlayer.play(BytesSource(beepBytes));
@@ -3539,6 +3361,7 @@ class _PracticePageState extends State<PracticePage>
     } catch (_) {
       // ignore
     } finally {
+      _isCalibrating = false; // FIX BUG CRITIQUE #2: Reset flag
       await calibSub?.cancel();
       try {
         await recorder.stop();
@@ -3619,14 +3442,16 @@ class _PracticePageState extends State<PracticePage>
         if (elapsed >= n.start && elapsed <= n.end + _targetWindowTailSec) {
           activeIndices.add(i);
         }
-        if (elapsed > n.end + _targetWindowTailSec && !_hitNotes[i]) {
+        // BUG FIX #10: Bounds check to prevent RangeError if _hitNotes desync
+        if (elapsed > n.end + _targetWindowTailSec && i < _hitNotes.length && !_hitNotes[i]) {
           _hitNotes[i] = true; // mark as processed
         }
       }
 
       bool matched = false;
       for (final idx in activeIndices) {
-        if (_hitNotes[idx]) continue;
+        // BUG FIX #10: Bounds check to prevent RangeError
+        if (idx >= _hitNotes.length || _hitNotes[idx]) continue;
         if ((note - _noteEvents[idx].pitch).abs() <= 1) {
           matched = true;
           _hitNotes[idx] = true;
@@ -3661,9 +3486,18 @@ class _PracticePageState extends State<PracticePage>
   }
 
   Future<void> _initVideo() async {
+    // Token guard against double concurrent init
+    final token = ++_videoInitToken;
+
     try {
       await _disposeVideoControllers();
       _videoEndFired = false;
+
+      // Check token again after async gap
+      if (token != _videoInitToken) {
+        return; // Another init started, abort this one
+      }
+
       setState(() {
         _videoLoading = true;
         _videoError = null;
@@ -4038,7 +3872,9 @@ class _PracticePageState extends State<PracticePage>
     _notesLoading = false;
     _notesError = null;
     _noteEvents = [_NoteEvent(pitch: 60, start: 0.0, end: 1.0)];
-    _hitNotes = List<bool>.filled(_noteEvents.length, false);
+    // BUG FIX #12: Rebuild list in-place to maintain MicEngine reference
+    _hitNotes.clear();
+    _hitNotes.addAll(List<bool>.filled(_noteEvents.length, false));
     _notesSource = NotesSource.none;
     _notesRawCount = _noteEvents.length;
     _notesDedupedCount = _noteEvents.length;
@@ -4062,7 +3898,7 @@ class _PracticePageState extends State<PracticePage>
 
   bool _isWrongFlashActive(DateTime now) {
     return _lastWrongHitAt != null &&
-        _lastWrongDetectedNote != null &&
+        _lastWrongNote != null &&
         now.difference(_lastWrongHitAt!) <= _successFlashDuration;
   }
 
@@ -4109,6 +3945,7 @@ class _PracticePageState extends State<PracticePage>
             _overlayBuiltInBuild = true;
             return true;
           }());
+          // Now constraints.maxHeight is stable (bottomNavigationBar always present as 50px spacer)
           final overlay = _buildNotesOverlay(
             layout: layout,
             overlayHeight: constraints.maxHeight,
@@ -4118,14 +3955,21 @@ class _PracticePageState extends State<PracticePage>
           // PATCH: Hide video layer permanently + show only Flutter overlay
           // Chewie continues running for timing, but is opacity=0 to prevent "two streams"
           // All visual notes come from _FallingNotesPainter only
+          // FIX BUG 1: Use SizedBox with explicit dimensions instead of Positioned.fill
+          // to respect CustomPaint.size (otherwise Stack collapses canvas to parent height)
           final stack = Stack(
             children: [
               // Opacity 0: video runs for timing/audio but isn't visible
               Positioned.fill(child: Opacity(opacity: 0.0, child: videoLayer)),
               // Paint overlay during countdown + running (notes visible during lead-in)
+              // FIX: Wrap overlay in SizedBox matching constraints.maxHeight (now stable)
               if (_practiceRunning ||
                   _practiceState == _PracticeState.countdown)
-                Positioned.fill(child: overlay),
+                SizedBox(
+                  width: layout.displayWidth,
+                  height: constraints.maxHeight,
+                  child: overlay,
+                ),
               // Render empty overlay container for key when not in countdown/running
               if (!(_practiceRunning ||
                   _practiceState == _PracticeState.countdown))
@@ -4205,19 +4049,39 @@ class _PracticePageState extends State<PracticePage>
     final successFlashActive = _isSuccessFlashActive(now);
     final wrongFlashActive = _isWrongFlashActive(now);
     final elapsed = elapsedSec;
-    // CRITICAL FIX: Only paint notes during running state, not countdown
-    // If first note has start < 0.5s, it could appear mid-screen at countdown start
-    // (since fallLeadSec=2.0 vs _practiceLeadInSec=1.5 → note.appear = start-2.0 <= -1.7
-    //  and syntheticElapsed at t=0 is -1.5, so appear condition is met)
-    // Solution: Only paint when fully running, not during countdown lead-in.
+    // BUG FIX #9: Must paint notes during COUNTDOWN to allow falling animation
+    // Notes need to spawn offscreen (spawnY < 0) and fall during countdown
+    // Previous condition blocked countdown rendering, causing "notes pop mid-screen" bug
+    // FIX BUG 4: Wait 100ms after countdown start for layout to stabilize
+    // Prevents notes appearing "en bas" with incorrect overlayHeight
     final shouldPaintNotes =
-        _practiceRunning &&
+        (_practiceRunning || _practiceState == _PracticeState.countdown) &&
         elapsed != null &&
         _noteEvents.isNotEmpty &&
-        _practiceState == _PracticeState.running;
+        _isLayoutStable(); // Only paint when layout is stable
     final paintElapsedSec = elapsed ?? 0.0;
     final resolvedTargets = shouldPaintNotes ? targetNotes : <int>{};
     var noteEvents = shouldPaintNotes ? _noteEvents : const <_NoteEvent>[];
+
+    // D2: Debug log to track note spawning during countdown
+    if (kDebugMode && 
+        _practiceState == _PracticeState.countdown && 
+        shouldPaintNotes && 
+        _noteEvents.isNotEmpty) {
+      if (_spawnLogCount < 3) { // Log only first 3 frames to avoid spam
+        _spawnLogCount++;
+        final firstNote = _noteEvents.first;
+        final effectiveFallForLog = _effectiveLeadInSec; // Use effective lead during countdown
+        final spawnTimeTheoreticalSec = firstNote.start - effectiveFallForLog;
+        final yTop = (paintElapsedSec - spawnTimeTheoreticalSec) / effectiveFallForLog * overlayHeight;
+        final yBottom = (paintElapsedSec - (firstNote.end - effectiveFallForLog)) / effectiveFallForLog * overlayHeight;
+        debugPrint(
+          'SPAWN note midi=${firstNote.pitch} at guidanceElapsed=${paintElapsedSec.toStringAsFixed(3)} '
+          'yTop=${yTop.toStringAsFixed(1)} yBottom=${yBottom.toStringAsFixed(1)} '
+          'noteStart=${firstNote.start.toStringAsFixed(3)} spawnAt=${spawnTimeTheoreticalSec.toStringAsFixed(3)}',
+        );
+      }
+    }
 
     // 4) Debug toggle: show only target notes (ghost test isolation)
     if (_showOnlyTargets && shouldPaintNotes) {
@@ -4234,6 +4098,12 @@ class _PracticePageState extends State<PracticePage>
     // C4: Track painter instance for debugging duplicate overlays
     _painterInstanceId += 1;
 
+    // FIX BUG 2: Always use constant fallLead to prevent visual jump at countdown→running transition
+    // Previous: Used _effectiveLeadInSec (3.0s) during countdown, _fallLeadSec (2.0s) during running
+    // Problem: When transitioning, all note Y positions suddenly shifted (3.0→2.0 ratio change)
+    // Solution: Use constant _fallLeadSec (2.0s) for both states - notes fall at consistent speed
+    final effectiveFallLead = _fallLeadSec;
+
     return IgnorePointer(
       child: CustomPaint(
         key: const Key('practice_notes_overlay'),
@@ -4244,7 +4114,7 @@ class _PracticePageState extends State<PracticePage>
           whiteWidth: layout.whiteWidth,
           blackWidth: layout.blackWidth,
           fallAreaHeight: overlayHeight,
-          fallLead: _fallLeadSec,
+          fallLead: effectiveFallLead,
           fallTail: _fallTailSec,
           noteToX: noteToX,
           firstKey: layout.firstKey,
@@ -4252,7 +4122,7 @@ class _PracticePageState extends State<PracticePage>
           targetNotes: resolvedTargets,
           successNote: _lastCorrectNote,
           successFlashActive: successFlashActive,
-          wrongNote: _lastWrongDetectedNote,
+          wrongNote: _lastWrongNote,
           wrongFlashActive: wrongFlashActive,
           forceLabels: true,
           showGuides: showGuides,
@@ -4488,6 +4358,7 @@ class _FallingNotesPainter extends CustomPainter {
   static const List<int> _blackKeySteps = [1, 3, 6, 8, 10];
   static final Map<String, TextPainter> _labelFillCache = {};
   static final Map<String, TextPainter> _labelStrokeCache = {};
+  static int _paintCallCount = 0;
 
   _FallingNotesPainter({
     required this.noteEvents,
@@ -4623,6 +4494,13 @@ class _FallingNotesPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()..style = PaintingStyle.fill;
+    
+    // DEBUG: Log paint calls during countdown (limit to first 10)
+    if (elapsedSec < 0 && _paintCallCount < 10) {
+      _paintCallCount++;
+      debugPrint('[PAINTER] paint() call #$_paintCallCount: elapsed=$elapsedSec fallLead=$fallLead noteCount=${noteEvents.length} size=$size');
+    }
+    
     if (showGuides) {
       final guidePaint = Paint()
         ..color = Colors.white.withValues(alpha: 0.18)
@@ -4637,24 +4515,15 @@ class _FallingNotesPainter extends CustomPainter {
     }
 
     // CULLING: only draw notes within active window
-    // pastGraceSec: notes older than this are culled (prevents "pin" at bottom)
-    // futureHeadSec: notes further than this can be ignored (optimization)
-    const double pastGraceSec = 0.35;
-    const double futureHeadSec = 0.5;
-    final windowStart = elapsedSec - pastGraceSec;
-    final windowEnd = elapsedSec + (fallLead + futureHeadSec);
-
+    int drawnCount = 0;
     for (final n in noteEvents) {
       if (n.pitch < firstKey || n.pitch > lastKey) {
         continue;
       }
-      // STRICT CULLING: skip notes entirely outside active window
-      if (n.end < windowStart || n.start > windowEnd) {
-        continue;
-      }
-      final appear = n.start - fallLead;
+      // CRITICAL FIX: Allow negative elapsed (countdown) - notes must spawn offscreen top
+      // Only cull notes that are completely past (not future - countdown has elapsed < 0)
       final disappear = n.end + fallTail;
-      if (elapsedSec < appear || elapsedSec > disappear) continue;
+      if (elapsedSec > disappear && elapsedSec > 0) continue; // Skip only if past AND not countdown
 
       // Use CANONICAL mapping for vertical position
       final bottomY = _computeNoteYPosition(
@@ -4670,8 +4539,14 @@ class _FallingNotesPainter extends CustomPainter {
         fallAreaHeightPx: fallAreaHeight,
       );
 
+      // DEBUG: Log Y positions for first few notes during countdown
+      if (elapsedSec < 0 && _paintCallCount <= 3 && drawnCount < 3) {
+        debugPrint('[PAINTER] Note midi=${n.pitch} start=${n.start} end=${n.end}: topY=$topY bottomY=$bottomY (elapsed=$elapsedSec fallLead=$fallLead height=$fallAreaHeight)');
+      }
+
       final rectTop = topY;
       final rectBottom = bottomY;
+      // Cull notes completely outside visible area (allows spawnY < 0 offscreen)
       if (rectBottom < 0 || rectTop > fallAreaHeight) {
         continue;
       }
@@ -4688,16 +4563,32 @@ class _FallingNotesPainter extends CustomPainter {
         continue;
       }
 
-      final isTarget = targetNotes.contains(n.pitch);
+      // FIX FINAL V2: Check if note rectangle CROSSES keyboard line (visual intersection)
+      // BUG WAS: targetNotes contains all pitches → colored ALL notes with same pitch
+      // ATTEMPT 1 FAILED: elapsedSec >= n.start (fails during countdown when elapsed negative)
+      // ATTEMPT 2 FAILED: Time window ±0.5s (doesn't match _computeImpactNotes duration logic)
+      // ATTEMPT 3 FAILED: Check bottomY only (misses long notes crossing keyboard)
+      // SOLUTION: Check if rectangle [topY, bottomY] intersects keyboard zone
+      // Long notes: topY=200px, bottomY=600px → crosses keyboard@400px ✓
+      final hitZonePixels = 50.0; // Visual tolerance around keyboard line
+      final keyboardY = fallAreaHeight;
+      final rectTop = min(topY, bottomY);
+      final rectBot = max(topY, bottomY);
+      final isCrossingKeyboard = (rectTop <= keyboardY + hitZonePixels) && 
+                                  (rectBot >= keyboardY - hitZonePixels);
+      final isTarget = isCrossingKeyboard && targetNotes.contains(n.pitch);
       final isSuccessFlash =
           successFlashActive && successNote != null && n.pitch == successNote;
       final isWrongFlash =
           wrongFlashActive && wrongNote != null && n.pitch == wrongNote;
 
+      // FIX BUG 5+7: Change rectangle color when note hit, not just halo
+      // Before: Rectangle stayed orange with blue halo overlay (inconsistent)
+      // After: Rectangle becomes green/cyan like keyboard key (consistent visual feedback)
       if (isTarget) {
         final glowPaint = Paint()
-          ..color = AppColors.accent.withValues(alpha: 0.35)
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10);
+          ..color = AppColors.success.withValues(alpha: 0.40)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 12);
         final glowRect = RRect.fromRectAndRadius(
           Rect.fromLTWH(
             x - 2,
@@ -4710,10 +4601,13 @@ class _FallingNotesPainter extends CustomPainter {
         canvas.drawRRect(glowRect, glowPaint);
       }
 
+      // Priority: successFlash > wrongFlash > isTarget (note hit) > default (orange)
       paint.color = isSuccessFlash
           ? AppColors.success.withValues(alpha: 0.95)
           : isWrongFlash
           ? AppColors.error.withValues(alpha: 0.9)
+          : isTarget
+          ? AppColors.success.withValues(alpha: 0.85)
           : AppColors.warning.withValues(alpha: 0.85);
       final rect = RRect.fromRectAndRadius(
         Rect.fromLTWH(x, rectBottom - barHeight, width, barHeight),
@@ -4760,6 +4654,13 @@ class _FallingNotesPainter extends CustomPainter {
         strokePainter.paint(canvas, textOffset);
         textPainter.paint(canvas, textOffset);
       }
+      
+      drawnCount++;
+    }
+    
+    // DEBUG: Log drawn notes during countdown (limit)
+    if (elapsedSec < 0 && _paintCallCount <= 10) {
+      debugPrint('[PAINTER] Drawn $drawnCount notes during countdown');
     }
   }
 

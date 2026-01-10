@@ -46,6 +46,9 @@ class MicEngine {
   double? _sampleRateEmaHz;
   DateTime? _lastPitchAt;
 
+  // FIX BUG CRITIQUE: Expose detected sample rate for calibration/tests
+  int get detectedSampleRate => _detectedSampleRate;
+
   final List<double> _sampleBuffer = <double>[];
   Float32List? _pitchWindow;
 
@@ -152,7 +155,16 @@ class MicEngine {
         window[i] = _sampleBuffer[start + i];
       }
 
-      final freq = detectPitch(window, _detectedSampleRate.toDouble());
+      final freqRaw = detectPitch(window, _detectedSampleRate.toDouble());
+      // FIX BUG 3 CRITICAL: Compensate frequency for sampleRate mismatch
+      // If device records at 49344 Hz but algorithm expects 44100 Hz,
+      // detected frequency is off by ratio 49344/44100 = 1.119 → +1.95 semitones
+      // Correction: freq_real = freq_detected * (44100 / detectedSampleRate)
+      const expectedSampleRate = 44100;
+      final freq = freqRaw > 0 
+          ? freqRaw * (expectedSampleRate / _detectedSampleRate) 
+          : 0.0;
+      
       if (freq > 0 && freq >= 50.0 && freq <= 2000.0) {
         final midi = _freqToMidi(freq);
         final conf = (rms / 0.05).clamp(0.0, 1.0);

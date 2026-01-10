@@ -112,8 +112,11 @@ try {
     if (Get-Command adb -ErrorAction SilentlyContinue) {
       $logcatScript = @(
         "`$host.UI.RawUI.WindowTitle = 'Logcat'",
-        "Write-Host 'Logcat window'",
+        "Write-Host 'Logcat window - filters: flutter + ShazaPiano'",
+        "Write-Host 'Clearing logcat buffer...'",
         "adb logcat -c",
+        "Start-Sleep -Milliseconds 500",
+        "Write-Host 'Streaming logs (Ctrl+C to stop)...'",
         "adb logcat | findstr /i $logcatFilterArgs"
       ) -join "; "
       Start-Process -FilePath $shell -ArgumentList "-NoExit", "-Command", $logcatScript | Out-Null

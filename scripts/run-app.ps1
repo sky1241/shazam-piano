@@ -58,6 +58,13 @@ Write-Host "DART_TOOL_VM_OPTIONS=$env:DART_TOOL_VM_OPTIONS"
 
 Set-Location (Join-Path $repoRoot "app")
 if (-not $Fast) {
+  # Uninstall APK first to avoid cache issues
+  try {
+    Write-Host "Uninstalling previous APK..."
+    adb uninstall com.ludo.shazapiano 2>$null | Out-Null
+  } catch {
+    Write-Host "No previous APK found (or adb not available)"
+  }
   flutter clean
   flutter pub get
 } else {
