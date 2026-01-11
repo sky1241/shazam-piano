@@ -2660,25 +2660,6 @@ class _PracticePageState extends ConsumerState<PracticePage>
       for (final decision in decisions) {
         switch (decision.type) {
           case mic.DecisionType.hit:
-            // BUG 5 FIX: Score based on timing precision, not just binary hit
-            final timingErrorMs = (decision.dtSec?.abs() ?? 0.0) * 1000.0;
-            final timingScore = _calculateTimingScore(timingErrorMs);
-
-            _correctNotes += 1;
-            _score +=
-                timingScore; // BUG 5 FIX: Add weighted score instead of +1
-            _accuracy = NoteAccuracy.correct;
-            _registerCorrectHit(
-              targetNote: decision.expectedMidi!,
-              detectedNote: decision.detectedMidi!,
-              now: now,
-            );
-            _updateDetectedNote(
-              decision.detectedMidi,
-              now,
-              accuracyChanged: true,
-            );
-
             // ═══════════════════════════════════════════════════════════════
             // SESSION 4: Send played note event to NEW controller
             // ═══════════════════════════════════════════════════════════════
@@ -2691,7 +2672,30 @@ class _PracticePageState extends ConsumerState<PracticePage>
                 source: NoteSource.microphone,
               );
               _newController!.onPlayedNote(playedEvent);
+              
+              // NEW SYSTEM: Don't use visual flash (avoid sapin de Noël bug)
+              // Trust the new controller's scoring, old _registerCorrectHit causes false positives
+            } else {
+              // OLD SYSTEM: Score based on timing precision
+              final timingErrorMs = (decision.dtSec?.abs() ?? 0.0) * 1000.0;
+              final timingScore = _calculateTimingScore(timingErrorMs);
+
+              _correctNotes += 1;
+              _score +=
+                  timingScore; // BUG 5 FIX: Add weighted score instead of +1
+              _registerCorrectHit(
+                targetNote: decision.expectedMidi!,
+                detectedNote: decision.detectedMidi!,
+                now: now,
+              );
             }
+            
+            _accuracy = NoteAccuracy.correct;
+            _updateDetectedNote(
+              decision.detectedMidi,
+              now,
+              accuracyChanged: true,
+            );
             // ═══════════════════════════════════════════════════════════════
             break;
 
@@ -2702,14 +2706,6 @@ class _PracticePageState extends ConsumerState<PracticePage>
             break;
 
           case mic.DecisionType.wrongFlash:
-            _accuracy = NoteAccuracy.wrong;
-            _registerWrongHit(detectedNote: decision.detectedMidi!, now: now);
-            _updateDetectedNote(
-              decision.detectedMidi,
-              now,
-              accuracyChanged: true,
-            );
-
             // ═══════════════════════════════════════════════════════════════
             // SESSION 4: Send wrong note to NEW controller
             // ═══════════════════════════════════════════════════════════════
@@ -2722,7 +2718,20 @@ class _PracticePageState extends ConsumerState<PracticePage>
                 source: NoteSource.microphone,
               );
               _newController!.onPlayedNote(playedEvent);
+              
+              // NEW SYSTEM: Don't use visual flash (avoid sapin de Noël bug)
+              // Trust the new controller's scoring
+            } else {
+              // OLD SYSTEM: Flash wrong note
+              _registerWrongHit(detectedNote: decision.detectedMidi!, now: now);
             }
+            
+            _accuracy = NoteAccuracy.wrong;
+            _updateDetectedNote(
+              decision.detectedMidi,
+              now,
+              accuracyChanged: true,
+            );
             // ═══════════════════════════════════════════════════════════════
             break;
         }
@@ -3666,51 +3675,54 @@ class _PracticePageState extends ConsumerState<PracticePage>
 
         // Also update time for miss detection
         _newController!.onTimeUpdate(elapsed * 1000.0);
-      }
-      // ═══════════════════════════════════════════════════════════════
-
-      // Find active expected notes
-      final activeIndices = <int>[];
-      for (var i = 0; i < _noteEvents.length; i++) {
-        final n = _noteEvents[i];
-        if (elapsed >= n.start && elapsed <= n.end + _targetWindowTailSec) {
-          activeIndices.add(i);
+        
+        // NEW SYSTEM: Don't use visual flash (avoid sapin de Noël bug)
+        // Trust the new controller's scoring
+      } else {
+        // OLD SYSTEM: Find active expected notes
+        final activeIndices = <int>[];
+        for (var i = 0; i < _noteEvents.length; i++) {
+          final n = _noteEvents[i];
+          if (elapsed >= n.start && elapsed <= n.end + _targetWindowTailSec) {
+            activeIndices.add(i);
+          }
+          // BUG FIX #10: Bounds check to prevent RangeError if _hitNotes desync
+          if (elapsed > n.end + _targetWindowTailSec &&
+              i < _hitNotes.length &&
+              !_hitNotes[i]) {
+            _hitNotes[i] = true; // mark as processed
+          }
         }
-        // BUG FIX #10: Bounds check to prevent RangeError if _hitNotes desync
-        if (elapsed > n.end + _targetWindowTailSec &&
-            i < _hitNotes.length &&
-            !_hitNotes[i]) {
-          _hitNotes[i] = true; // mark as processed
-        }
-      }
 
-      bool matched = false;
-      for (final idx in activeIndices) {
-        // BUG FIX #10: Bounds check to prevent RangeError
-        if (idx >= _hitNotes.length || _hitNotes[idx]) continue;
-        if ((note - _noteEvents[idx].pitch).abs() <= 1) {
-          matched = true;
-          _hitNotes[idx] = true;
-          _correctNotes += 1;
-          _score += 1;
-          _accuracy = NoteAccuracy.correct;
-          _registerCorrectHit(
-            targetNote: _noteEvents[idx].pitch,
-            detectedNote: note,
-            now: now,
-          );
+        bool matched = false;
+        for (final idx in activeIndices) {
+          // BUG FIX #10: Bounds check to prevent RangeError
+          if (idx >= _hitNotes.length || _hitNotes[idx]) continue;
+          if ((note - _noteEvents[idx].pitch).abs() <= 1) {
+            matched = true;
+            _hitNotes[idx] = true;
+            _correctNotes += 1;
+            _score += 1;
+            _accuracy = NoteAccuracy.correct;
+            _registerCorrectHit(
+              targetNote: _noteEvents[idx].pitch,
+              detectedNote: note,
+              now: now,
+            );
           break;
         }
       }
 
-      if (!matched && activeIndices.isNotEmpty) {
-        // PATCH: Only trigger wrongFlash if there's an active note to play
-        final impactNotes = _computeImpactNotes(elapsedSec: elapsed);
-        if (impactNotes.isNotEmpty) {
-          _accuracy = NoteAccuracy.wrong;
-          _registerWrongHit(detectedNote: note, now: now);
+        if (!matched && activeIndices.isNotEmpty) {
+          // PATCH: Only trigger wrongFlash if there's an active note to play
+          final impactNotes = _computeImpactNotes(elapsedSec: elapsed);
+          if (impactNotes.isNotEmpty) {
+            _accuracy = NoteAccuracy.wrong;
+            _registerWrongHit(detectedNote: note, now: now);
+          }
         }
       }
+      // ═══════════════════════════════════════════════════════════════
 
       setState(() {
         _detectedNote = note;
