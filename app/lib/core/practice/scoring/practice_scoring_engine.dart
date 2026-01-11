@@ -27,7 +27,7 @@ class ScoringConfig {
 }
 
 /// Pure Dart scoring engine (no Flutter dependencies, 100% testable)
-/// 
+///
 /// Handles:
 /// - Hit grade calculation from timing delta
 /// - Base points per grade
@@ -41,7 +41,7 @@ class PracticeScoringEngine {
   final ScoringConfig config;
 
   /// Grade a note based on absolute timing delta (ms)
-  /// 
+  ///
   /// CRITICAL: Test edge cases:
   /// - 39ms, 40ms, 41ms
   /// - 99ms, 100ms, 101ms
@@ -70,11 +70,11 @@ class PracticeScoringEngine {
   }
 
   /// Compute sustain factor from duration played vs expected
-  /// 
+  ///
   /// Returns 1.0 if:
   /// - durExpected is null or ≤0 (duration not available)
   /// - durPlayed is null (not available)
-  /// 
+  ///
   /// Otherwise:
   /// - Calculate duration error
   /// - Threshold = max(150ms, durExpected)
@@ -94,9 +94,9 @@ class PracticeScoringEngine {
   }
 
   /// Compute combo multiplier with cap at 2.0x
-  /// 
+  ///
   /// Formula: 1.0 + floor(combo/10) * 0.1
-  /// 
+  ///
   /// Examples:
   /// - combo 0-9 → 1.0x
   /// - combo 10-19 → 1.1x
@@ -109,7 +109,7 @@ class PracticeScoringEngine {
   }
 
   /// Compute final points for a note resolution
-  /// 
+  ///
   /// Formula: basePoints * sustainFactor * comboMultiplier (rounded)
   int computeFinalPoints(HitGrade grade, int combo, double sustainFactor) {
     final base = basePoints(grade);
@@ -121,7 +121,7 @@ class PracticeScoringEngine {
   }
 
   /// Apply a resolution to the scoring state (mutates state)
-  /// 
+  ///
   /// Updates:
   /// - totalScore
   /// - combo (increment or reset)
@@ -129,15 +129,13 @@ class PracticeScoringEngine {
   /// - grade counts (perfectCount, goodCount, etc.)
   /// - timing sum (for average)
   /// - sustain sum (for average)
-  void applyResolution(
-    PracticeScoringState state,
-    NoteResolution resolution,
-  ) {
+  void applyResolution(PracticeScoringState state, NoteResolution resolution) {
     // Add points
     state.totalScore += resolution.pointsAdded;
 
     // Update combo
-    final isHit = resolution.grade == HitGrade.perfect ||
+    final isHit =
+        resolution.grade == HitGrade.perfect ||
         resolution.grade == HitGrade.good ||
         resolution.grade == HitGrade.ok;
 
@@ -178,7 +176,7 @@ class PracticeScoringEngine {
   }
 
   /// Apply a wrong note penalty (if enabled)
-  /// 
+  ///
   /// Updates:
   /// - totalScore (add penalty points, usually negative)
   /// - combo (reset to 0)

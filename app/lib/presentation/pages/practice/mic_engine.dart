@@ -161,10 +161,10 @@ class MicEngine {
       // detected frequency is off by ratio 49344/44100 = 1.119 → +1.95 semitones
       // Correction: freq_real = freq_detected * (44100 / detectedSampleRate)
       const expectedSampleRate = 44100;
-      final freq = freqRaw > 0 
-          ? freqRaw * (expectedSampleRate / _detectedSampleRate) 
+      final freq = freqRaw > 0
+          ? freqRaw * (expectedSampleRate / _detectedSampleRate)
           : 0.0;
-      
+
       if (freq > 0 && freq >= 50.0 && freq <= 2000.0) {
         final midi = _freqToMidi(freq);
         final conf = (rms / 0.05).clamp(0.0, 1.0);

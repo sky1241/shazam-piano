@@ -165,9 +165,10 @@ class PracticeKeyboard extends StatelessWidget {
   }) {
     final isExpected = targetNotes.contains(note);
     final isDetected = note == detectedNote;
-    
+
     // BUG 3 FIX: Red color for wrong note WHILE playing (not just flash)
-    final isWrong = isDetected && !isExpected; // Detected but not expected = wrong
+    final isWrong =
+        isDetected && !isExpected; // Detected but not expected = wrong
 
     Color keyColor;
     if (successFlashActive &&

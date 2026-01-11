@@ -143,8 +143,7 @@ class PracticeScoringState {
   }
 
   /// Total notes processed
-  int get totalNotesProcessed =>
-      perfectCount + goodCount + okCount + missCount;
+  int get totalNotesProcessed => perfectCount + goodCount + okCount + missCount;
 
   PracticeScoringState copyWith({
     int? totalScore,

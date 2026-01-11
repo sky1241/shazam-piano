@@ -22,10 +22,8 @@ class PracticeViewState {
   final int currentNoteIndex;
   final HitGrade? lastGrade;
 
-  factory PracticeViewState.initial() => PracticeViewState(
-        isActive: false,
-        scoringState: PracticeScoringState(),
-      );
+  factory PracticeViewState.initial() =>
+      PracticeViewState(isActive: false, scoringState: PracticeScoringState());
 
   PracticeViewState copyWith({
     bool? isActive,
@@ -45,9 +43,9 @@ class PracticeViewState {
 }
 
 /// Practice session controller
-/// 
+///
 /// Orchestrates matching, scoring, and logging for a practice session.
-/// 
+///
 /// Workflow:
 /// 1. startPractice() → init session, load expected notes
 /// 2. onPlayedNote() → match + score + update state
@@ -58,10 +56,10 @@ class PracticeController extends StateNotifier<PracticeViewState> {
     required PracticeScoringEngine scoringEngine,
     required NoteMatcher matcher,
     required PracticeDebugLogger logger,
-  })  : _scoringEngine = scoringEngine,
-        _matcher = matcher,
-        _logger = logger,
-        super(PracticeViewState.initial());
+  }) : _scoringEngine = scoringEngine,
+       _matcher = matcher,
+       _logger = logger,
+       super(PracticeViewState.initial());
 
   final PracticeScoringEngine _scoringEngine;
   final NoteMatcher _matcher;
@@ -83,7 +81,7 @@ class PracticeController extends StateNotifier<PracticeViewState> {
   static const _uuid = Uuid();
 
   /// Start a new practice session
-  /// 
+  ///
   /// [sessionId] must be unique per session (anti-replay)
   /// [expectedNotes] list of notes to match against
   void startPractice({
@@ -110,7 +108,7 @@ class PracticeController extends StateNotifier<PracticeViewState> {
   }
 
   /// Stop the current practice session
-  /// 
+  ///
   /// Finalizes metrics and clears session state
   void stopPractice() {
     if (!state.isActive) return;
@@ -122,16 +120,13 @@ class PracticeController extends StateNotifier<PracticeViewState> {
       _scoringState.timingP95AbsMs = sorted[p95Index];
     }
 
-    state = state.copyWith(
-      isActive: false,
-      scoringState: _scoringState,
-    );
+    state = state.copyWith(isActive: false, scoringState: _scoringState);
 
     _currentSessionId = null;
   }
 
   /// Handle a played note event (mic or MIDI)
-  /// 
+  ///
   /// This is the core matching + scoring logic:
   /// 1. Validate session
   /// 2. Add to buffer
@@ -151,8 +146,10 @@ class PracticeController extends StateNotifier<PracticeViewState> {
     // We scan from _nextExpectedIndex up to a reasonable lookahead
     // (e.g., 10 notes ahead) to handle early hits
     final lookahead = 10;
-    final scanEndIndex =
-        (_nextExpectedIndex + lookahead).clamp(0, _expectedNotes.length);
+    final scanEndIndex = (_nextExpectedIndex + lookahead).clamp(
+      0,
+      _expectedNotes.length,
+    );
 
     for (var i = _nextExpectedIndex; i < scanEndIndex; i++) {
       final expected = _expectedNotes[i];
@@ -193,7 +190,7 @@ class PracticeController extends StateNotifier<PracticeViewState> {
   }
 
   /// Update current time (called every frame or regularly)
-  /// 
+  ///
   /// Checks for missed notes (time passed beyond window)
   void onTimeUpdate(double currentTimeMs) {
     if (!state.isActive) return;
@@ -321,10 +318,7 @@ class PracticeController extends StateNotifier<PracticeViewState> {
     );
 
     // Update UI with last grade
-    state = state.copyWith(
-      lastGrade: grade,
-      scoringState: _scoringState,
-    );
+    state = state.copyWith(lastGrade: grade, scoringState: _scoringState);
   }
 
   /// Handle a wrong note (played but never matched)
@@ -358,7 +352,7 @@ class PracticeController extends StateNotifier<PracticeViewState> {
   Map<String, dynamic> getSessionSummary() {
     return _logger.getSessionSummary(_currentSessionId ?? 'unknown');
   }
-  
+
   /// Get current scoring state (for HUD display)
   PracticeScoringState get currentScoringState => _scoringState;
 
@@ -380,28 +374,26 @@ class PracticeController extends StateNotifier<PracticeViewState> {
 }
 
 /// Provider for practice controller
-/// 
+///
 /// Will be used in practice_page.dart for state management
 final practiceControllerProvider =
-    StateNotifierProvider<PracticeController, PracticeViewState>(
-  (ref) {
-    // Default config (will be customizable later)
-    final scoringConfig = ScoringConfig();
-    final scoringEngine = PracticeScoringEngine(config: scoringConfig);
+    StateNotifierProvider<PracticeController, PracticeViewState>((ref) {
+      // Default config (will be customizable later)
+      final scoringConfig = ScoringConfig();
+      final scoringEngine = PracticeScoringEngine(config: scoringConfig);
 
-    // Use existing pitch matching logic (to be injected from practice_page)
-    final matcher = NoteMatcher(
-      windowMs: 200,
-      pitchEquals: (p1, p2) => p1 == p2, // Placeholder, will use real logic
-    );
+      // Use existing pitch matching logic (to be injected from practice_page)
+      final matcher = NoteMatcher(
+        windowMs: 200,
+        pitchEquals: (p1, p2) => p1 == p2, // Placeholder, will use real logic
+      );
 
-    final debugConfig = DebugLogConfig(enableLogs: true);
-    final logger = PracticeDebugLogger(config: debugConfig);
+      final debugConfig = DebugLogConfig(enableLogs: true);
+      final logger = PracticeDebugLogger(config: debugConfig);
 
-    return PracticeController(
-      scoringEngine: scoringEngine,
-      matcher: matcher,
-      logger: logger,
-    );
-  },
-);
+      return PracticeController(
+        scoringEngine: scoringEngine,
+        matcher: matcher,
+        logger: logger,
+      );
+    });

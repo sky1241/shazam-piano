@@ -152,11 +152,7 @@ void main() {
         expect(match1!.playedId, event.id);
 
         // Second match with same event: fails (already consumed)
-        final match2 = matcher.findBestMatch(
-          expected2,
-          buffer,
-          {event.id},
-        );
+        final match2 = matcher.findBestMatch(expected2, buffer, {event.id});
         expect(match2, isNull);
       });
 
@@ -189,7 +185,9 @@ void main() {
         final matchStart = matcher.findBestMatch(expected, buffer, {});
         expect(matchStart, isNotNull);
 
-        final matchEnd = matcher.findBestMatch(expected, buffer, {eventStart.id});
+        final matchEnd = matcher.findBestMatch(expected, buffer, {
+          eventStart.id,
+        });
         expect(matchEnd, isNotNull);
         expect(matchEnd!.playedId, eventEnd.id);
       });
@@ -236,10 +234,26 @@ void main() {
     group('indexBufferByPitch', () {
       test('Groups events by pitch class', () {
         final buffer = [
-          PlayedNoteEvent(midi: 60, tPlayedMs: 1000.0, source: NoteSource.microphone), // C
-          PlayedNoteEvent(midi: 72, tPlayedMs: 1100.0, source: NoteSource.microphone), // C (octave higher)
-          PlayedNoteEvent(midi: 61, tPlayedMs: 1200.0, source: NoteSource.microphone), // C#
-          PlayedNoteEvent(midi: 62, tPlayedMs: 1300.0, source: NoteSource.microphone), // D
+          PlayedNoteEvent(
+            midi: 60,
+            tPlayedMs: 1000.0,
+            source: NoteSource.microphone,
+          ), // C
+          PlayedNoteEvent(
+            midi: 72,
+            tPlayedMs: 1100.0,
+            source: NoteSource.microphone,
+          ), // C (octave higher)
+          PlayedNoteEvent(
+            midi: 61,
+            tPlayedMs: 1200.0,
+            source: NoteSource.microphone,
+          ), // C#
+          PlayedNoteEvent(
+            midi: 62,
+            tPlayedMs: 1300.0,
+            source: NoteSource.microphone,
+          ), // D
         ];
 
         final indexed = matcher.indexBufferByPitch(buffer);
@@ -275,27 +289,27 @@ void main() {
       test('micPitchMatch: distance ≤3 tolerance (same pitch class only)', () {
         // Tolerance is applied AFTER pitch class match
         // C4 (60, PC=0) can match other C notes (PC=0) with distance ≤3
-        
+
         // Direct: C4 (60) with tolerance ±3
         expect(micPitchMatch(60, 57), isFalse); // A3 (PC=9) → different PC
         expect(micPitchMatch(60, 63), isFalse); // D#4 (PC=3) → different PC
-        
+
         // C4 (60) vs C3 (48): distance = 12, but with octave shift → 0
         expect(micPitchMatch(60, 48), isTrue); // C3, exact octave match
-        
+
         // C4 (60) vs B2 (47): PC=11 ≠ 0 → false
         expect(micPitchMatch(60, 47), isFalse);
-        
+
         // C4 (60) vs C#3 (49): PC=1 ≠ 0 → false
         expect(micPitchMatch(60, 49), isFalse);
-        
+
         // C4 (60) vs C2 (36): distance = 24, with -24 shift → 0, exact
         expect(micPitchMatch(60, 36), isTrue);
-        
+
         // Edge case: C4 (60) vs G2 (43)
         // PC: 43%12=7 ≠ 0 → false
         expect(micPitchMatch(60, 43), isFalse);
-        
+
         // The ±3 tolerance allows slight detuning in real piano
         // but this is tested at the MIDI level, not frequency
         // In practice, detected MIDI is already rounded, so tolerance

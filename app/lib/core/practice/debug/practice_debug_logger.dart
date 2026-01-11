@@ -40,16 +40,16 @@ class NoteResolutionLog {
   final String? matchedPlayedId;
 
   Map<String, dynamic> toJson() => {
-        'timestamp': timestamp.toIso8601String(),
-        'sessionId': sessionId,
-        'expectedIndex': expectedIndex,
-        'grade': grade.name,
-        'dtMs': dtMs,
-        'pointsAdded': pointsAdded,
-        'combo': combo,
-        'totalScore': totalScore,
-        'matchedPlayedId': matchedPlayedId,
-      };
+    'timestamp': timestamp.toIso8601String(),
+    'sessionId': sessionId,
+    'expectedIndex': expectedIndex,
+    'grade': grade.name,
+    'dtMs': dtMs,
+    'pointsAdded': pointsAdded,
+    'combo': combo,
+    'totalScore': totalScore,
+    'matchedPlayedId': matchedPlayedId,
+  };
 }
 
 /// Log entry for wrong note played
@@ -71,17 +71,17 @@ class WrongNoteLog {
   final String reason;
 
   Map<String, dynamic> toJson() => {
-        'timestamp': timestamp.toIso8601String(),
-        'sessionId': sessionId,
-        'playedId': playedId,
-        'pitchKey': pitchKey,
-        'tPlayedMs': tPlayedMs,
-        'reason': reason,
-      };
+    'timestamp': timestamp.toIso8601String(),
+    'sessionId': sessionId,
+    'playedId': playedId,
+    'pitchKey': pitchKey,
+    'tPlayedMs': tPlayedMs,
+    'reason': reason,
+  };
 }
 
 /// Debug logger for practice scoring system
-/// 
+///
 /// Features:
 /// - Logs note resolutions (hit/miss) with timing info
 /// - Logs wrong notes with reason
@@ -97,7 +97,7 @@ class PracticeDebugLogger {
   final List<WrongNoteLog> _wrongNoteLogs = [];
 
   /// Log a note resolution (hit/miss/wrong)
-  /// 
+  ///
   /// Called after matching and scoring a note
   void logResolveExpected({
     required String sessionId,
@@ -139,7 +139,7 @@ class PracticeDebugLogger {
   }
 
   /// Log a wrong note (played but didn't match any expected note)
-  /// 
+  ///
   /// Called when a played note cannot be matched
   void logWrongPlayed({
     required String sessionId,
@@ -171,7 +171,7 @@ class PracticeDebugLogger {
   }
 
   /// Export all logs as JSON string
-  /// 
+  ///
   /// Useful for offline analysis or debugging
   String exportLogsAsJson() {
     if (!config.enableJsonExport) {
@@ -195,9 +195,7 @@ class PracticeDebugLogger {
 
   /// Get resolution logs for a specific session
   List<NoteResolutionLog> getResolutionLogsForSession(String sessionId) {
-    return _resolutionLogs
-        .where((log) => log.sessionId == sessionId)
-        .toList();
+    return _resolutionLogs.where((log) => log.sessionId == sessionId).toList();
   }
 
   /// Get wrong note logs for a specific session
@@ -210,14 +208,14 @@ class PracticeDebugLogger {
     final resolutions = getResolutionLogsForSession(sessionId);
     final wrongs = getWrongNoteLogsForSession(sessionId);
 
-    final perfectCount =
-        resolutions.where((r) => r.grade == HitGrade.perfect).length;
+    final perfectCount = resolutions
+        .where((r) => r.grade == HitGrade.perfect)
+        .length;
     final goodCount = resolutions.where((r) => r.grade == HitGrade.good).length;
     final okCount = resolutions.where((r) => r.grade == HitGrade.ok).length;
     final missCount = resolutions.where((r) => r.grade == HitGrade.miss).length;
 
-    final totalScore =
-        resolutions.isNotEmpty ? resolutions.last.totalScore : 0;
+    final totalScore = resolutions.isNotEmpty ? resolutions.last.totalScore : 0;
     final maxCombo = resolutions.fold<int>(
       0,
       (max, r) => r.combo > max ? r.combo : max,
@@ -227,8 +225,9 @@ class PracticeDebugLogger {
         .where((r) => r.dtMs != null)
         .map((r) => r.dtMs!.abs())
         .toList();
-    final avgTiming =
-        timings.isNotEmpty ? timings.reduce((a, b) => a + b) / timings.length : 0.0;
+    final avgTiming = timings.isNotEmpty
+        ? timings.reduce((a, b) => a + b) / timings.length
+        : 0.0;
 
     return {
       'sessionId': sessionId,
@@ -253,7 +252,7 @@ class PracticeDebugLogger {
 
   /// Get current log counts
   Map<String, int> get logCounts => {
-        'resolutions': _resolutionLogs.length,
-        'wrongNotes': _wrongNoteLogs.length,
-      };
+    'resolutions': _resolutionLogs.length,
+    'wrongNotes': _wrongNoteLogs.length,
+  };
 }

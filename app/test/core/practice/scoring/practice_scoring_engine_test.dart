@@ -28,7 +28,10 @@ void main() {
       });
 
       test('Good boundary (41-100ms)', () {
-        expect(engine.gradeFromDt(41), HitGrade.good); // Edge: just over perfect
+        expect(
+          engine.gradeFromDt(41),
+          HitGrade.good,
+        ); // Edge: just over perfect
         expect(engine.gradeFromDt(50), HitGrade.good);
         expect(engine.gradeFromDt(99), HitGrade.good);
         expect(engine.gradeFromDt(100), HitGrade.good); // Edge: exactly 100ms
