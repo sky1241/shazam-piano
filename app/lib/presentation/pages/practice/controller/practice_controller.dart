@@ -65,6 +65,12 @@ class PracticeController extends StateNotifier<PracticeViewState> {
   final NoteMatcher _matcher;
   final PracticeDebugLogger _logger;
 
+  // FIX BUG P0-A (SESSION4): Latence micro compensation
+  // Problème: onTimeUpdate() résolvait miss trop tôt (avant arrivée event stable)
+  // Solution: Ajouter latence micro (~300ms) avant de déclarer miss
+  // ChatGPT analysis: dt observés = 0.259-0.485s (moyenne ~300ms)
+  static const double _micLatencyMs = 300.0;
+
   // Session state
   String? _currentSessionId;
   List<ExpectedNote> _expectedNotes = [];
@@ -199,8 +205,11 @@ class PracticeController extends StateNotifier<PracticeViewState> {
     while (_nextExpectedIndex < _expectedNotes.length) {
       final expected = _expectedNotes[_nextExpectedIndex];
 
-      // If current time is beyond the match window, this note is missed
-      if (currentTimeMs > expected.tExpectedMs + _matcher.windowMs) {
+      // FIX BUG P0-A (SESSION4): Ne déclarer miss que si latence + window dépassés
+      // Avant: currentTimeMs > expected.tExpectedMs + windowMs
+      // Après: currentTimeMs > expected.tExpectedMs + windowMs + _micLatencyMs
+      // Raison: event micro stable arrive ~300ms après note jouée
+      if (currentTimeMs > expected.tExpectedMs + _matcher.windowMs + _micLatencyMs) {
         // Check if it was already matched
         final wasMatched = _consumedPlayedIds.any((id) {
           return _playedBuffer
@@ -384,7 +393,7 @@ final practiceControllerProvider =
 
       // Use existing pitch matching logic (to be injected from practice_page)
       final matcher = NoteMatcher(
-        windowMs: 200,
+        windowMs: 300, // P0 SESSION4: 200→300ms (observed dt=+259ms)
         pitchEquals: (p1, p2) => p1 == p2, // Placeholder, will use real logic
       );
 
