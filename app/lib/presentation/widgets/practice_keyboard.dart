@@ -165,6 +165,9 @@ class PracticeKeyboard extends StatelessWidget {
   }) {
     final isExpected = targetNotes.contains(note);
     final isDetected = note == detectedNote;
+    
+    // BUG 3 FIX: Red color for wrong note WHILE playing (not just flash)
+    final isWrong = isDetected && !isExpected; // Detected but not expected = wrong
 
     Color keyColor;
     if (successFlashActive &&
@@ -175,6 +178,9 @@ class PracticeKeyboard extends StatelessWidget {
         wrongFlashNote != null &&
         note == wrongFlashNote) {
       keyColor = AppColors.error.withValues(alpha: 0.9);
+    } else if (isWrong) {
+      // BUG 3 FIX: Red while playing wrong note
+      keyColor = AppColors.error.withValues(alpha: 0.85);
     } else if (isDetected && isExpected) {
       keyColor = AppColors.success;
     } else if (isExpected) {

@@ -16,7 +16,6 @@ import 'package:sound_stream/sound_stream.dart';
 import 'package:video_player/video_player.dart';
 import 'package:chewie/chewie.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../ads/admob_ads.dart';
 import '../../../core/config/build_info.dart';
@@ -25,44 +24,11 @@ import '../../../core/theme/app_text_styles.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/constants/strings_fr.dart';
 import '../../../core/debug/debug_job_guard.dart';
-import '../../../core/practice/model/practice_models.dart';
-import '../../../core/practice/scoring/practice_scoring_engine.dart';
-import '../../../core/practice/matching/note_matcher.dart';
-import '../../../core/practice/debug/practice_debug_logger.dart';
 import '../../../domain/entities/level_result.dart';
 import '../../widgets/practice_keyboard.dart';
 import '../../widgets/banner_ad_placeholder.dart';
-import 'controller/practice_controller.dart';
 import 'pitch_detector.dart';
 import 'mic_engine.dart' as mic;
-
-/// Pitch comparator for microphone mode (wraps existing mic_engine.dart logic)
-/// 
-/// Matches pitch class with octave shifts tolerance (±12, ±24 semitones)
-/// and accepts if distance ≤ 3 semitones (real piano micro-detuning)
-bool micPitchComparator(int detected, int expected) {
-  final detectedPC = detected % 12;
-  final expectedPC = expected % 12;
-  
-  // Reject if pitch class mismatch
-  if (detectedPC != expectedPC) return false;
-  
-  // Test direct + octave shifts
-  final shifts = [0, -12, 12, -24, 24];
-  for (final shift in shifts) {
-    if ((detected + shift - expected).abs() <= 3) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/// Pitch comparator for MIDI mode (wraps existing practice_page.dart logic)
-/// 
-/// Accepts if distance ≤ 1 semitone
-bool midiPitchComparator(int detected, int expected) {
-  return (detected - expected).abs() <= 1;
-}
 
 @visibleForTesting
 bool isVideoEnded(Duration position, Duration duration) {
@@ -233,7 +199,7 @@ enum _PracticeState {
   running, // Normal practice (audio + mic active)
 }
 
-class PracticePage extends ConsumerStatefulWidget {
+class PracticePage extends StatefulWidget {
   final LevelResult level;
   final bool forcePreview;
   final bool isTest;
@@ -246,10 +212,10 @@ class PracticePage extends ConsumerStatefulWidget {
   });
 
   @override
-  ConsumerState<PracticePage> createState() => _PracticePageState();
+  State<PracticePage> createState() => _PracticePageState();
 }
 
-class _PracticePageState extends ConsumerState<PracticePage>
+class _PracticePageState extends State<PracticePage>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   bool get _isTestEnv =>
       widget.isTest || const bool.fromEnvironment('FLUTTER_TEST');
@@ -322,14 +288,6 @@ class _PracticePageState extends ConsumerState<PracticePage>
   // D1: Micro scoring offset (auto-calibrated via EMA on pitch_match confidence)
   double _micScoringOffsetSec =
       0.0; // Offset between micro elapsed and scoring elapsed
-  
-  // ══════════════════════════════════════════════════════════════════════
-  // NEW SCORING SYSTEM (Session 4) - runs in PARALLEL with old system
-  // ══════════════════════════════════════════════════════════════════════
-  PracticeController? _newController; // New controller instance
-  final bool _useNewScoringSystem = true; // Flag to enable/disable new system
-  // ══════════════════════════════════════════════════════════════════════
-  
   // Timebase continuity variables removed (clock-based simplified)
   bool _micConfigLogged = false; // Log MIC_CONFIG only once per session
   List<_NoteEvent> _rawNoteEvents = [];
@@ -694,34 +652,11 @@ class _PracticePageState extends ConsumerState<PracticePage>
     if (_practiceState == _PracticeState.idle) {
       return SizedBox.shrink();
     }
-    
-    String statsText;
-    if (_useNewScoringSystem && _newController != null) {
-      // SESSION 4: Display NEW scoring system stats
-      final newState = _newController!.currentScoringState;
-      final matched = newState.perfectCount + newState.goodCount + newState.okCount;
-      final precisionValue = _totalNotes > 0
-          ? '${(matched / _totalNotes * 100).toStringAsFixed(1)}%'
-          : '0%';
-      statsText =
-          'Précision: $precisionValue   Notes justes: $matched/$_totalNotes   Score: ${newState.totalScore}   Combo: ${newState.combo}';
-      
-      // Debug: Compare old vs new in debug mode
-      if (kDebugMode) {
-        final oldPrecision = _totalNotes > 0 ? (_correctNotes / _totalNotes * 100) : 0.0;
-        final newPrecision = _totalNotes > 0 ? (matched / _totalNotes * 100) : 0.0;
-        if ((oldPrecision - newPrecision).abs() > 5.0 || (_score - newState.totalScore).abs() > 10) {
-          debugPrint('SESSION4_SCORING_DIFF: old=(prec=${oldPrecision.toStringAsFixed(1)}% score=$_score) new=(prec=${newPrecision.toStringAsFixed(1)}% score=${newState.totalScore})');
-        }
-      }
-    } else {
-      // Original scoring system
-      final precisionValue = _totalNotes > 0
-          ? '${(_correctNotes / _totalNotes * 100).toStringAsFixed(1)}%'
-          : '0%';
-      statsText =
-          'Précision: $precisionValue   Notes justes: $_correctNotes/$_totalNotes   Score: $_score';
-    }
+    final precisionValue = _totalNotes > 0
+        ? '${(_correctNotes / _totalNotes * 100).toStringAsFixed(1)}%'
+        : '0%';
+    final statsText =
+        'Précision: $precisionValue   Notes justes: $_correctNotes/$_totalNotes   Score: $_score';
 
     return Container(
       padding: const EdgeInsets.symmetric(
@@ -2255,52 +2190,6 @@ class _PracticePageState extends ConsumerState<PracticePage>
     );
     _micEngine!.reset('$sessionId');
     
-    // ══════════════════════════════════════════════════════════════════════
-    // SESSION 4: Initialize NEW scoring controller (parallel with old system)
-    // ══════════════════════════════════════════════════════════════════════
-    if (_useNewScoringSystem) {
-      // Create controller with proper configuration
-      final scoringConfig = ScoringConfig();
-      final scoringEngine = PracticeScoringEngine(config: scoringConfig);
-      
-      // Use mic or MIDI pitch comparator
-      final pitchComparator = _useMidi ? midiPitchComparator : micPitchComparator;
-      final matcher = NoteMatcher(
-        windowMs: 200,
-        pitchEquals: pitchComparator,
-      );
-      
-      final debugConfig = DebugLogConfig(enableLogs: kDebugMode);
-      final logger = PracticeDebugLogger(config: debugConfig);
-      
-      _newController = PracticeController(
-        scoringEngine: scoringEngine,
-        matcher: matcher,
-        logger: logger,
-      );
-      
-      // Convert _noteEvents to ExpectedNote format
-      final expectedNotes = _noteEvents.asMap().entries.map((entry) {
-        return ExpectedNote(
-          index: entry.key,
-          midi: entry.value.pitch,
-          tExpectedMs: entry.value.start * 1000.0, // Convert sec to ms
-          durationMs: (entry.value.end - entry.value.start) * 1000.0,
-        );
-      }).toList();
-      
-      // Start new scoring session
-      _newController!.startPractice(
-        sessionId: '$sessionId',
-        expectedNotes: expectedNotes,
-      );
-      
-      if (kDebugMode) {
-        debugPrint('SESSION4_CONTROLLER: Started with ${expectedNotes.length} notes, sessionId=$sessionId');
-      }
-    }
-    // ══════════════════════════════════════════════════════════════════════
-    
     _lastCorrectHitAt = null;
     _lastCorrectNote = null;
     _lastWrongHitAt = null;
@@ -2463,18 +2352,6 @@ class _PracticePageState extends ConsumerState<PracticePage>
     // FIX BUG 2: Await score dialog to prevent screen returning to Play immediately
     // Before: async call continued, UI returned to idle while dialog was opening
     // After: Wait for dialog close before marking video end
-    // ═══════════════════════════════════════════════════════════════
-    // SESSION 4: Stop NEW controller and finalize p95 timing metric
-    // ═══════════════════════════════════════════════════════════════
-    if (_useNewScoringSystem && _newController != null) {
-      _newController!.stopPractice();
-      if (kDebugMode) {
-        final state = _newController!.currentScoringState;
-        debugPrint('SESSION4_CONTROLLER: Stopped. Final score=${state.totalScore}, combo=${state.combo}, p95=${state.timingP95AbsMs.toStringAsFixed(1)}ms');
-      }
-    }
-    // ═══════════════════════════════════════════════════════════════
-    
     // CASCADE FIX #2: Wrap in try-finally to prevent state lock if dialog crashes
     try {
       if (showSummary && mounted) {
@@ -2646,19 +2523,6 @@ class _PracticePageState extends ConsumerState<PracticePage>
               now: now,
             );
             _updateDetectedNote(decision.detectedMidi, now, accuracyChanged: true);
-            
-            // ═══════════════════════════════════════════════════════════════
-            // SESSION 4: Send played note event to NEW controller
-            // ═══════════════════════════════════════════════════════════════
-            if (_useNewScoringSystem && _newController != null && decision.detectedMidi != null) {
-              final playedEvent = PracticeController.createPlayedEvent(
-                midi: decision.detectedMidi!,
-                tPlayedMs: elapsed * 1000.0, // Convert sec to ms
-                source: NoteSource.microphone,
-              );
-              _newController!.onPlayedNote(playedEvent);
-            }
-            // ═══════════════════════════════════════════════════════════════
             break;
 
           case mic.DecisionType.miss:
@@ -2671,30 +2535,9 @@ class _PracticePageState extends ConsumerState<PracticePage>
             _accuracy = NoteAccuracy.wrong;
             _registerWrongHit(detectedNote: decision.detectedMidi!, now: now);
             _updateDetectedNote(decision.detectedMidi, now, accuracyChanged: true);
-            
-            // ═══════════════════════════════════════════════════════════════
-            // SESSION 4: Send wrong note to NEW controller
-            // ═══════════════════════════════════════════════════════════════
-            if (_useNewScoringSystem && _newController != null && decision.detectedMidi != null) {
-              final playedEvent = PracticeController.createPlayedEvent(
-                midi: decision.detectedMidi!,
-                tPlayedMs: elapsed * 1000.0,
-                source: NoteSource.microphone,
-              );
-              _newController!.onPlayedNote(playedEvent);
-            }
-            // ═══════════════════════════════════════════════════════════════
             break;
         }
       }
-      
-      // ═══════════════════════════════════════════════════════════════════
-      // SESSION 4: Update time for miss detection in NEW controller
-      // ═══════════════════════════════════════════════════════════════════
-      if (_useNewScoringSystem && _newController != null) {
-        _newController!.onTimeUpdate(elapsed * 1000.0); // Convert sec to ms
-      }
-      // ═══════════════════════════════════════════════════════════════════
 
       // Update UI with MicEngine's held note (200ms hold)
       final uiMidi = _micEngine!.uiDetectedMidi;
@@ -3611,22 +3454,6 @@ class _PracticePageState extends ConsumerState<PracticePage>
       if (elapsed == null) {
         return;
       }
-      
-      // ═══════════════════════════════════════════════════════════════
-      // SESSION 4: Send MIDI note to NEW controller
-      // ═══════════════════════════════════════════════════════════════
-      if (_useNewScoringSystem && _newController != null) {
-        final playedEvent = PracticeController.createPlayedEvent(
-          midi: note,
-          tPlayedMs: elapsed * 1000.0, // Convert sec to ms
-          source: NoteSource.midi,
-        );
-        _newController!.onPlayedNote(playedEvent);
-        
-        // Also update time for miss detection
-        _newController!.onTimeUpdate(elapsed * 1000.0);
-      }
-      // ═══════════════════════════════════════════════════════════════
 
       // Find active expected notes
       final activeIndices = <int>[];
