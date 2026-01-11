@@ -269,8 +269,9 @@ class _PracticePageState extends State<PracticePage>
   // Increased from 100ms to 200ms to prevent preview flash during first frames
   // CRITICAL: Return false if countdown hasn't started yet to prevent preview during loading
   bool _isLayoutStable() {
-    if (_countdownStartTime == null)
+    if (_countdownStartTime == null) {
       return false; // Countdown not started = NOT stable
+    }
     return DateTime.now().difference(_countdownStartTime!).inMilliseconds >=
         200;
   }
@@ -4582,8 +4583,9 @@ class _FallingNotesPainter extends CustomPainter {
       // CRITICAL FIX: Allow negative elapsed (countdown) - notes must spawn offscreen top
       // Only cull notes that are completely past (not future - countdown has elapsed < 0)
       final disappear = n.end + fallTail;
-      if (elapsedSec > disappear && elapsedSec > 0)
+      if (elapsedSec > disappear && elapsedSec > 0) {
         continue; // Skip only if past AND not countdown
+      }
 
       // Use CANONICAL mapping for vertical position
       final bottomY = _computeNoteYPosition(
