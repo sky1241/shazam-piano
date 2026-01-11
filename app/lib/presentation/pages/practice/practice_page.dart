@@ -2668,19 +2668,25 @@ class _PracticePageState extends ConsumerState<PracticePage>
                 decision.detectedMidi != null) {
               // Capture state BEFORE to detect what changed
               final stateBefore = _newController!.currentScoringState;
-              final correctCountBefore = stateBefore.perfectCount + stateBefore.goodCount + stateBefore.okCount;
-              
+              final correctCountBefore =
+                  stateBefore.perfectCount +
+                  stateBefore.goodCount +
+                  stateBefore.okCount;
+
               final playedEvent = PracticeController.createPlayedEvent(
                 midi: decision.detectedMidi!,
                 tPlayedMs: elapsed * 1000.0, // Convert sec to ms
                 source: NoteSource.microphone,
               );
               _newController!.onPlayedNote(playedEvent);
-              
+
               // Check if NEW SYSTEM registered a correct hit
               final stateAfter = _newController!.currentScoringState;
-              final correctCountAfter = stateAfter.perfectCount + stateAfter.goodCount + stateAfter.okCount;
-              
+              final correctCountAfter =
+                  stateAfter.perfectCount +
+                  stateAfter.goodCount +
+                  stateAfter.okCount;
+
               if (correctCountAfter > correctCountBefore) {
                 // NEW SYSTEM says correct! Flash green
                 _registerCorrectHit(
@@ -2703,7 +2709,7 @@ class _PracticePageState extends ConsumerState<PracticePage>
                 now: now,
               );
             }
-            
+
             _accuracy = NoteAccuracy.correct;
             _updateDetectedNote(
               decision.detectedMidi,
@@ -2729,27 +2735,30 @@ class _PracticePageState extends ConsumerState<PracticePage>
               // Capture state BEFORE to detect what changed
               final stateBefore = _newController!.currentScoringState;
               final wrongCountBefore = stateBefore.wrongCount;
-              
+
               final playedEvent = PracticeController.createPlayedEvent(
                 midi: decision.detectedMidi!,
                 tPlayedMs: elapsed * 1000.0,
                 source: NoteSource.microphone,
               );
               _newController!.onPlayedNote(playedEvent);
-              
+
               // Check if NEW SYSTEM registered a wrong hit
               final stateAfter = _newController!.currentScoringState;
               final wrongCountAfter = stateAfter.wrongCount;
-              
+
               if (wrongCountAfter > wrongCountBefore) {
                 // NEW SYSTEM says wrong! Flash red
-                _registerWrongHit(detectedNote: decision.detectedMidi!, now: now);
+                _registerWrongHit(
+                  detectedNote: decision.detectedMidi!,
+                  now: now,
+                );
               }
             } else {
               // OLD SYSTEM: Flash wrong note
               _registerWrongHit(detectedNote: decision.detectedMidi!, now: now);
             }
-            
+
             _accuracy = NoteAccuracy.wrong;
             _updateDetectedNote(
               decision.detectedMidi,
@@ -3692,9 +3701,12 @@ class _PracticePageState extends ConsumerState<PracticePage>
       if (_useNewScoringSystem && _newController != null) {
         // Capture state BEFORE to detect what changed
         final stateBefore = _newController!.currentScoringState;
-        final correctCountBefore = stateBefore.perfectCount + stateBefore.goodCount + stateBefore.okCount;
+        final correctCountBefore =
+            stateBefore.perfectCount +
+            stateBefore.goodCount +
+            stateBefore.okCount;
         final wrongCountBefore = stateBefore.wrongCount;
-        
+
         final playedEvent = PracticeController.createPlayedEvent(
           midi: note,
           tPlayedMs: elapsed * 1000.0, // Convert sec to ms
@@ -3704,19 +3716,16 @@ class _PracticePageState extends ConsumerState<PracticePage>
 
         // Also update time for miss detection
         _newController!.onTimeUpdate(elapsed * 1000.0);
-        
+
         // Check what NEW SYSTEM decided
         final stateAfter = _newController!.currentScoringState;
-        final correctCountAfter = stateAfter.perfectCount + stateAfter.goodCount + stateAfter.okCount;
+        final correctCountAfter =
+            stateAfter.perfectCount + stateAfter.goodCount + stateAfter.okCount;
         final wrongCountAfter = stateAfter.wrongCount;
-        
+
         if (correctCountAfter > correctCountBefore) {
           // NEW SYSTEM says correct! Flash green
-          _registerCorrectHit(
-            targetNote: note,
-            detectedNote: note,
-            now: now,
-          );
+          _registerCorrectHit(targetNote: note, detectedNote: note, now: now);
         } else if (wrongCountAfter > wrongCountBefore) {
           // NEW SYSTEM says wrong! Flash red
           _registerWrongHit(detectedNote: note, now: now);
@@ -3752,9 +3761,9 @@ class _PracticePageState extends ConsumerState<PracticePage>
               detectedNote: note,
               now: now,
             );
-          break;
+            break;
+          }
         }
-      }
 
         if (!matched && activeIndices.isNotEmpty) {
           // PATCH: Only trigger wrongFlash if there's an active note to play
