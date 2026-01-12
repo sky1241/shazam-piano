@@ -209,7 +209,8 @@ class PracticeController extends StateNotifier<PracticeViewState> {
       // Avant: currentTimeMs > expected.tExpectedMs + windowMs
       // Après: currentTimeMs > expected.tExpectedMs + windowMs + _micLatencyMs
       // Raison: event micro stable arrive ~300ms après note jouée
-      if (currentTimeMs > expected.tExpectedMs + _matcher.windowMs + _micLatencyMs) {
+      if (currentTimeMs >
+          expected.tExpectedMs + _matcher.windowMs + _micLatencyMs) {
         // Check if it was already matched
         final wasMatched = _consumedPlayedIds.any((id) {
           return _playedBuffer

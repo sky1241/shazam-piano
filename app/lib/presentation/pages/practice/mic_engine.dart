@@ -368,7 +368,6 @@ class MicEngine {
 
       // Find best match in event buffer with DETAILED REJECT LOGGING
       PitchEvent? bestEvent;
-      int? bestTestMidi;
       double bestDistance = double.infinity;
       String? rejectReason; // Track why events were rejected
 
@@ -401,31 +400,12 @@ class MicEngine {
           continue;
         }
 
-        // Now we have pitch class match, find closest octave
-        // Test direct midi
+        // Now we have pitch class match, test direct midi ONLY
+        // (octave shifts ±12/±24 disabled to prevent harmonics false hits)
         final distDirect = (event.midi - note.pitch).abs().toDouble();
         if (distDirect < bestDistance) {
           bestDistance = distDirect;
           bestEvent = event;
-          bestTestMidi = event.midi;
-        }
-
-        // P0 FIX SESSION4: DISABLE octave shifts in practice mode
-        // Reason: Microphone harmoniques (e.g. C#3 for C#4) create false hits
-        // with low confidence → blocked by gating BUT pollute matching logic
-        // Enable shifts ONLY if explicitly needed (disabled by default)
-        final enableOctaveShifts = false; // TODO: make configurable if needed
-        if (enableOctaveShifts) {
-          // Test octave shifts: ±12, ±24 semitones
-          for (final shift in [-24, -12, 12, 24]) {
-            final testMidi = event.midi + shift;
-            final distOctave = (testMidi - note.pitch).abs().toDouble();
-            if (distOctave < bestDistance) {
-              bestDistance = distOctave;
-              bestEvent = event;
-              bestTestMidi = testMidi;
-            }
-          }
         }
       }
 
@@ -434,7 +414,7 @@ class MicEngine {
           (bestEventAcrossAll == null ||
               bestEvent.conf > bestEventAcrossAll.conf)) {
         bestEventAcrossAll = bestEvent;
-        bestMidiAcrossAll = bestTestMidi;
+        bestMidiAcrossAll = bestEvent.midi;
       }
 
       // Check HIT with very tolerant distance (≤3 semitones for real piano+mic)
@@ -445,7 +425,7 @@ class MicEngine {
             type: DecisionType.hit,
             noteIndex: idx,
             expectedMidi: note.pitch,
-            detectedMidi: bestTestMidi,
+            detectedMidi: bestEvent.midi,
             confidence: bestEvent.conf,
             dtSec: bestEvent.tSec - note.start,
             window: (windowStart, windowEnd),
@@ -453,17 +433,13 @@ class MicEngine {
         );
 
         if (kDebugMode) {
-          final octaveShift = ((bestTestMidi! - bestEvent.midi) / 12).abs();
-          final reason = octaveShift >= 1
-              ? 'pitch_match_octave_shift=${octaveShift.toInt()}'
-              : 'pitch_match_direct';
           debugPrint(
             'HIT_DECISION sessionId=$_sessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
-            'expectedMidi=${note.pitch} expectedPC=$expectedPitchClass detectedMidi=$bestTestMidi '
-            'detectedRaw=${bestEvent.midi} freq=${bestEvent.freq.toStringAsFixed(1)} '
-            'conf=${bestEvent.conf.toStringAsFixed(2)} stability=${bestEvent.stabilityFrames} '
-            'distance=${bestDistance.toStringAsFixed(1)} dt=${(bestEvent.tSec - note.start).toStringAsFixed(3)}s '
-            'window=[${windowStart.toStringAsFixed(3)}..${windowEnd.toStringAsFixed(3)}] result=HIT reason=$reason',
+            'expectedMidi=${note.pitch} expectedPC=$expectedPitchClass detectedMidi=${bestEvent.midi} '
+            'freq=${bestEvent.freq.toStringAsFixed(1)} conf=${bestEvent.conf.toStringAsFixed(2)} '
+            'stability=${bestEvent.stabilityFrames} distance=${bestDistance.toStringAsFixed(1)} '
+            'dt=${(bestEvent.tSec - note.start).toStringAsFixed(3)}s '
+            'window=[${windowStart.toStringAsFixed(3)}..${windowEnd.toStringAsFixed(3)}] result=HIT',
           );
         }
       } else {

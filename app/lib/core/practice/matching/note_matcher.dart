@@ -107,31 +107,25 @@ class NoteMatcher {
 // PITCH COMPARATORS (REUSED FROM EXISTING SYSTEM)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Mic pitch comparator (existing MicEngine logic)
+/// Mic pitch comparator (MicEngine logic)
+/// P0 SESSION4 FIX: Octave shifts DISABLED (harmonics prevention)
 ///
 /// Comparison logic:
 /// 1. Pitch class must match (midi % 12)
-/// 2. Test octave shifts: direct, ±12, ±24 semitones
-/// 3. Accept if any octave shift gives distance ≤3 semitones
+/// 2. Accept direct match if distance ≤3 semitones
 ///
 /// Example:
-/// - C4 (midi 60) matches C3 (48), C4 (60), C5 (72)
-/// - C4 (60) does NOT match C#4 (61) — different pitch class
+/// - C4 (midi 60) matches C4 (60), C4±3 (57-63)
+/// - C4 (60) does NOT match C#4 (61>3) or C3 (48, octave disabled)
 bool micPitchMatch(int detected, int expected) {
   // Pitch class must match
   final detectedPC = detected % 12;
   final expectedPC = expected % 12;
   if (detectedPC != expectedPC) return false;
 
-  // Test direct + octave shifts
-  final shifts = [0, -12, 12, -24, 24];
-  for (final shift in shifts) {
-    final testMidi = detected + shift;
-    final dist = (testMidi - expected).abs();
-    if (dist <= 3) return true;
-  }
-
-  return false;
+  // Test direct match ONLY (no octave shifts)
+  final dist = (detected - expected).abs();
+  return dist <= 3;
 }
 
 /// MIDI pitch comparator (existing MIDI handler logic)

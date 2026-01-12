@@ -36,10 +36,11 @@ import 'controller/practice_controller.dart';
 import 'pitch_detector.dart';
 import 'mic_engine.dart' as mic;
 
-/// Pitch comparator for microphone mode (wraps existing mic_engine.dart logic)
+/// Pitch comparator for microphone mode (wraps MicEngine logic)
+/// P0 SESSION4 FIX: Octave shifts DISABLED (harmonics prevention)
 ///
-/// Matches pitch class with octave shifts tolerance (±12, ±24 semitones)
-/// and accepts if distance ≤ 3 semitones (real piano micro-detuning)
+/// Matches pitch class (midi % 12) and accepts direct match ≤3 semitones
+/// (real piano micro-detuning tolerance)
 bool micPitchComparator(int detected, int expected) {
   final detectedPC = detected % 12;
   final expectedPC = expected % 12;
@@ -47,14 +48,8 @@ bool micPitchComparator(int detected, int expected) {
   // Reject if pitch class mismatch
   if (detectedPC != expectedPC) return false;
 
-  // Test direct + octave shifts
-  final shifts = [0, -12, 12, -24, 24];
-  for (final shift in shifts) {
-    if ((detected + shift - expected).abs() <= 3) {
-      return true;
-    }
-  }
-  return false;
+  // Test direct match ONLY (no octave shifts)
+  return (detected - expected).abs() <= 3;
 }
 
 /// Pitch comparator for MIDI mode (wraps existing practice_page.dart logic)
@@ -339,8 +334,10 @@ class _PracticePageState extends ConsumerState<PracticePage>
 
   // Constantes gating audio (FIX BUG #6: single source of truth)
   final double _absMinRms = 0.0020;
-  final double _minConfHit = 0.08;    // P0 #1 FIX: 0.12 too strict, piano conf=0.08-0.15 naturally
-  final double _minConfWrong = 0.45;  // BUG #3 FANTÔMES: 0.35→0.45 (strict anti-fantômes)
+  final double _minConfHit =
+      0.08; // P0 #1 FIX: 0.12 too strict, piano conf=0.08-0.15 naturally
+  final double _minConfWrong =
+      0.45; // BUG #3 FANTÔMES: 0.35→0.45 (strict anti-fantômes)
 
   // FIX BUG P1 (SESSION4): Anti-spam wrong plus permissif que hit
   // Hit: 200ms (piano rapide OK)
@@ -2283,7 +2280,10 @@ class _PracticePageState extends ConsumerState<PracticePage>
       final pitchComparator = _useMidi
           ? midiPitchComparator
           : micPitchComparator;
-      final matcher = NoteMatcher(windowMs: 300, pitchEquals: pitchComparator); // P0 SESSION4: 200→300ms (observed dt=+259ms)
+      final matcher = NoteMatcher(
+        windowMs: 300,
+        pitchEquals: pitchComparator,
+      ); // P0 SESSION4: 200→300ms (observed dt=+259ms)
 
       final debugConfig = DebugLogConfig(enableLogs: kDebugMode);
       final logger = PracticeDebugLogger(config: debugConfig);
@@ -2474,10 +2474,15 @@ class _PracticePageState extends ConsumerState<PracticePage>
       score: score,
       accuracy: accuracy,
       notesTotal: total,
-      notesCorrect: matched, // P0 fix: Send NEW system matched count (not OLD _correctNotes=0)
+      notesCorrect:
+          matched, // P0 fix: Send NEW system matched count (not OLD _correctNotes=0)
       startedAt: startedAtIso ?? finishedAt,
       endedAt: finishedAt,
     );
+
+    // FIX CASCADE CRITIQUE: Set flags AVANT setState pour bloquer callbacks
+    _practiceRunning = false;
+    _isListening = false;
 
     setState(() {
       _detectedNote = null;
@@ -2650,6 +2655,8 @@ class _PracticePageState extends ConsumerState<PracticePage>
     if (_practiceState == _PracticeState.countdown) {
       return;
     }
+
+    // FIX CASCADE: Update timestamp APRÈS guards (consistent pattern)
     _lastMicFrameAt = now;
 
     // ═══════════════════════════════════════════════════════════════
@@ -2659,6 +2666,13 @@ class _PracticePageState extends ConsumerState<PracticePage>
     if (elapsed != null && _micEngine != null) {
       final prevAccuracy = _accuracy;
       final decisions = _micEngine!.onAudioChunk(samples, now, elapsed);
+
+      // FIX CASCADE CRITIQUE: Update mic state IMMEDIATELY après onAudioChunk
+      // (decisions loop utilise _micRms/_micConfidence pour gating)
+      _micFrequency = _micEngine!.lastFreqHz;
+      _micNote = _micEngine!.lastMidi;
+      _micConfidence = _micEngine!.lastConfidence ?? 0.0;
+      _micRms = _micEngine!.lastRms ?? 0.0;
 
       // Apply decisions (HIT/MISS/wrongFlash)
       for (final decision in decisions) {
@@ -2672,13 +2686,15 @@ class _PracticePageState extends ConsumerState<PracticePage>
                 decision.detectedMidi != null) {
               // FIX BUG #11 (CASCADE): Gating confidence - accepter seulement si suffisamment confiant
               // P0 SESSION4 FIX: RMS guard for low-confidence hits
-              // - If conf >= 0.12: accept (normal piano notes)
-              // - If conf < 0.12 BUT rms >= 0.010: accept (real piano with weak detection)
-              // - If conf < 0.12 AND rms < 0.010: REJECT (harmonics/noise)
-              final hasStrongConf = _micConfidence >= _minConfHit;
-              final hasStrongRms = _micRms >= (_absMinRms * 5.0); // 0.0020 * 5 = 0.010
-              
-              if (!hasStrongConf && !hasStrongRms) {
+              // - Strong conf (>= 0.08): accept if rms >= 0.0020 (absMinRms minimum)
+              // - Weak conf (< 0.08): accept ONLY if rms >= 0.010 (strong piano)
+              // - Both weak: REJECT (harmonics/noise)
+              final hasGoodConf = _micConfidence >= _minConfHit; // 0.08
+              final hasStrongRms = _micRms >= (_absMinRms * 5.0); // 0.010
+              final hasMinRms = _micRms >= _absMinRms; // 0.0020
+
+              // Reject if: (weak conf AND weak rms) OR (rms below absMin)
+              if ((!hasGoodConf && !hasStrongRms) || !hasMinRms) {
                 if (kDebugMode) {
                   debugPrint(
                     'SESSION4_GATING_HIT: Skip low-confidence hit midi=${decision.detectedMidi} rms=${_micRms.toStringAsFixed(3)} conf=${_micConfidence.toStringAsFixed(2)} (need conf>=0.12 OR rms>=0.010)',
@@ -2799,7 +2815,8 @@ class _PracticePageState extends ConsumerState<PracticePage>
               // FIX BUG P1 (SESSION4): Wrong anti-spam plus permissif (350ms vs 200ms)
               if (_lastWrongMidi == decision.detectedMidi &&
                   _lastWrongAt != null &&
-                  now.difference(_lastWrongAt!).inMilliseconds < _antiSpamWrongMs) {
+                  now.difference(_lastWrongAt!).inMilliseconds <
+                      _antiSpamWrongMs) {
                 if (kDebugMode) {
                   debugPrint(
                     'SESSION4_ANTISPAM_WRONG: Skip duplicate midi=${decision.detectedMidi} (< ${_antiSpamWrongMs}ms)',
@@ -2873,12 +2890,6 @@ class _PracticePageState extends ConsumerState<PracticePage>
       final accuracyChanged = prevAccuracy != _accuracy;
       _updateDetectedNote(uiMidi, now, accuracyChanged: accuracyChanged);
     }
-
-    // Mirror MicEngine state to HUD
-    _micFrequency = _micEngine?.lastFreqHz;
-    _micNote = _micEngine?.lastMidi;
-    _micConfidence = _micEngine?.lastConfidence ?? 0.0;
-    _micRms = _micEngine?.lastRms ?? 0.0;
 
     _logMicDebug(now);
   }
@@ -4509,12 +4520,13 @@ class _PracticePageState extends ConsumerState<PracticePage>
   }) async {
     if (!mounted) return;
     final total = _totalNotes;
-    
+
     // SESSION 4: Compute stats from NEW system
     final state = _newController!.currentScoringState;
-    final int correctNotes = state.perfectCount + state.goodCount + state.okCount;
+    final int correctNotes =
+        state.perfectCount + state.goodCount + state.okCount;
     final int wrongNotes = state.wrongCount + state.missCount;
-    
+
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
