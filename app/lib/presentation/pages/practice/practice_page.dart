@@ -2671,11 +2671,17 @@ class _PracticePageState extends ConsumerState<PracticePage>
                 _newController != null &&
                 decision.detectedMidi != null) {
               // FIX BUG #11 (CASCADE): Gating confidence - accepter seulement si suffisamment confiant
-              // P1 SESSION4: Hits utilisent _minConfHit=0.12 (piano conf 0.12-0.15 est réel, pas noise)
-              if (_micRms < _absMinRms || _micConfidence < _minConfHit) {
+              // P0 SESSION4 FIX: RMS guard for low-confidence hits
+              // - If conf >= 0.12: accept (normal piano notes)
+              // - If conf < 0.12 BUT rms >= 0.010: accept (real piano with weak detection)
+              // - If conf < 0.12 AND rms < 0.010: REJECT (harmonics/noise)
+              final hasStrongConf = _micConfidence >= _minConfHit;
+              final hasStrongRms = _micRms >= (_absMinRms * 5.0); // 0.0020 * 5 = 0.010
+              
+              if (!hasStrongConf && !hasStrongRms) {
                 if (kDebugMode) {
                   debugPrint(
-                    'SESSION4_GATING_HIT: Skip low-confidence hit midi=${decision.detectedMidi} rms=${_micRms.toStringAsFixed(3)} conf=${_micConfidence.toStringAsFixed(2)}',
+                    'SESSION4_GATING_HIT: Skip low-confidence hit midi=${decision.detectedMidi} rms=${_micRms.toStringAsFixed(3)} conf=${_micConfidence.toStringAsFixed(2)} (need conf>=0.12 OR rms>=0.010)',
                   );
                 }
                 break; // Ignore détection incertaine

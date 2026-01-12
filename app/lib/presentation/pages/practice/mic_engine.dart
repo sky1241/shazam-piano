@@ -410,14 +410,21 @@ class MicEngine {
           bestTestMidi = event.midi;
         }
 
-        // Test octave shifts: ±12, ±24 semitones
-        for (final shift in [-24, -12, 12, 24]) {
-          final testMidi = event.midi + shift;
-          final distOctave = (testMidi - note.pitch).abs().toDouble();
-          if (distOctave < bestDistance) {
-            bestDistance = distOctave;
-            bestEvent = event;
-            bestTestMidi = testMidi;
+        // P0 FIX SESSION4: DISABLE octave shifts in practice mode
+        // Reason: Microphone harmoniques (e.g. C#3 for C#4) create false hits
+        // with low confidence → blocked by gating BUT pollute matching logic
+        // Enable shifts ONLY if explicitly needed (disabled by default)
+        final enableOctaveShifts = false; // TODO: make configurable if needed
+        if (enableOctaveShifts) {
+          // Test octave shifts: ±12, ±24 semitones
+          for (final shift in [-24, -12, 12, 24]) {
+            final testMidi = event.midi + shift;
+            final distOctave = (testMidi - note.pitch).abs().toDouble();
+            if (distOctave < bestDistance) {
+              bestDistance = distOctave;
+              bestEvent = event;
+              bestTestMidi = testMidi;
+            }
           }
         }
       }
