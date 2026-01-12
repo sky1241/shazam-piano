@@ -342,7 +342,7 @@ class _PracticePageState extends ConsumerState<PracticePage>
 
   // Constantes gating audio (FIX BUG #6: single source of truth)
   final double _absMinRms = 0.0020;
-  final double _minConfHit = 0.12;    // P1 SESSION4: Permissif pour hits (piano conf=0.12-0.15 is real)
+  final double _minConfHit = 0.08;    // P0 #1 FIX: 0.12 too strict, piano conf=0.08-0.15 naturally
   final double _minConfWrong = 0.45;  // BUG #3 FANTÔMES: 0.35→0.45 (strict anti-fantômes)
 
   // FIX BUG P1 (SESSION4): Anti-spam wrong plus permissif que hit
@@ -2779,17 +2779,20 @@ class _PracticePageState extends ConsumerState<PracticePage>
               }
             } else {
               // OLD SYSTEM: Score based on timing precision
-              final timingErrorMs = (decision.dtSec?.abs() ?? 0.0) * 1000.0;
-              final timingScore = _calculateTimingScore(timingErrorMs);
+              // P0 #2 FIX: Désactiver OLD flashs si NEW system actif
+              if (!_useNewScoringSystem) {
+                final timingErrorMs = (decision.dtSec?.abs() ?? 0.0) * 1000.0;
+                final timingScore = _calculateTimingScore(timingErrorMs);
 
-              _correctNotes += 1;
-              _score +=
-                  timingScore; // BUG 5 FIX: Add weighted score instead of +1
-              _registerCorrectHit(
-                targetNote: decision.expectedMidi!,
-                detectedNote: decision.detectedMidi!,
-                now: now,
-              );
+                _correctNotes += 1;
+                _score +=
+                    timingScore; // BUG 5 FIX: Add weighted score instead of +1
+                _registerCorrectHit(
+                  targetNote: decision.expectedMidi!,
+                  detectedNote: decision.detectedMidi!,
+                  now: now,
+                );
+              }
             }
 
             _accuracy = NoteAccuracy.correct;
@@ -2894,7 +2897,10 @@ class _PracticePageState extends ConsumerState<PracticePage>
               }
             } else {
               // OLD SYSTEM: Flash wrong note
-              _registerWrongHit(detectedNote: decision.detectedMidi!, now: now);
+              // P0 #2 FIX: Désactiver OLD flashs si NEW system actif
+              if (!_useNewScoringSystem) {
+                _registerWrongHit(detectedNote: decision.detectedMidi!, now: now);
+              }
             }
 
             _accuracy = NoteAccuracy.wrong;
