@@ -272,48 +272,48 @@ void main() {
 
     group('Pitch comparators', () {
       test('micPitchMatch: pitch class must match', () {
-        // Same pitch class, same octave
+        // Octave shifts DISABLED (Session 4 changes)
+        // Direct match only, ±3 semitone tolerance
+
+        // Exact match
         expect(micPitchMatch(60, 60), isTrue); // C4 == C4
 
-        // Same pitch class, different octave (within tolerance)
-        expect(micPitchMatch(60, 72), isTrue); // C4 vs C5 (+12)
-        expect(micPitchMatch(72, 60), isTrue); // C5 vs C4 (-12)
-        expect(micPitchMatch(60, 48), isTrue); // C4 vs C3 (-12)
-        expect(micPitchMatch(60, 84), isTrue); // C4 vs C6 (+24)
+        // Within ±3 semitones
+        expect(micPitchMatch(60, 57), isTrue); // C4 vs A3 (distance 3)
+        expect(micPitchMatch(60, 63), isTrue); // C4 vs D#4 (distance 3)
+        expect(micPitchMatch(60, 59), isTrue); // C4 vs B3 (distance 1)
+        expect(micPitchMatch(60, 61), isTrue); // C4 vs C#4 (distance 1)
 
-        // Different pitch class
-        expect(micPitchMatch(60, 61), isFalse); // C4 vs C#4
-        expect(micPitchMatch(60, 62), isFalse); // C4 vs D4
+        // Outside ±3 semitones
+        expect(micPitchMatch(60, 56), isFalse); // C4 vs G#3 (distance 4)
+        expect(micPitchMatch(60, 64), isFalse); // C4 vs E4 (distance 4)
+        expect(
+          micPitchMatch(60, 72),
+          isFalse,
+        ); // C4 vs C5 (octave, distance 12)
+        expect(
+          micPitchMatch(60, 48),
+          isFalse,
+        ); // C4 vs C3 (octave, distance 12)
       });
 
       test('micPitchMatch: distance ≤3 tolerance (same pitch class only)', () {
-        // Tolerance is applied AFTER pitch class match
-        // C4 (60, PC=0) can match other C notes (PC=0) with distance ≤3
+        // Octave shifts DISABLED
+        // Direct distance check: |detected - expected| ≤ 3
 
-        // Direct: C4 (60) with tolerance ±3
-        expect(micPitchMatch(60, 57), isFalse); // A3 (PC=9) → different PC
-        expect(micPitchMatch(60, 63), isFalse); // D#4 (PC=3) → different PC
+        // Edge case: exactly 3 semitones
+        expect(micPitchMatch(60, 57), isTrue); // -3 (inclusive)
+        expect(micPitchMatch(60, 63), isTrue); // +3 (inclusive)
 
-        // C4 (60) vs C3 (48): distance = 12, but with octave shift → 0
-        expect(micPitchMatch(60, 48), isTrue); // C3, exact octave match
+        // Just outside tolerance
+        expect(micPitchMatch(60, 56), isFalse); // -4
+        expect(micPitchMatch(60, 64), isFalse); // +4
 
-        // C4 (60) vs B2 (47): PC=11 ≠ 0 → false
-        expect(micPitchMatch(60, 47), isFalse);
-
-        // C4 (60) vs C#3 (49): PC=1 ≠ 0 → false
-        expect(micPitchMatch(60, 49), isFalse);
-
-        // C4 (60) vs C2 (36): distance = 24, with -24 shift → 0, exact
-        expect(micPitchMatch(60, 36), isTrue);
-
-        // Edge case: C4 (60) vs G2 (43)
-        // PC: 43%12=7 ≠ 0 → false
-        expect(micPitchMatch(60, 43), isFalse);
-
-        // The ±3 tolerance allows slight detuning in real piano
-        // but this is tested at the MIDI level, not frequency
-        // In practice, detected MIDI is already rounded, so tolerance
-        // comes from the mic_engine's distance check
+        // Far outside (octaves)
+        expect(micPitchMatch(60, 48), isFalse); // -12
+        expect(micPitchMatch(60, 72), isFalse); // +12
+        expect(micPitchMatch(60, 36), isFalse); // -24
+        expect(micPitchMatch(60, 84), isFalse); // +24
       });
 
       test('midiPitchMatch: distance ≤1 semitone', () {
@@ -334,6 +334,8 @@ void main() {
 
     group('Integration: matcher with micPitchMatch', () {
       test('Matches across octaves with pitch class comparator', () {
+        // UPDATED: Octave shifts DISABLED
+        // Test now verifies direct match with ±3 tolerance
         final matcherMic = NoteMatcher(
           windowMs: 200,
           pitchEquals: micPitchMatch,
@@ -347,18 +349,20 @@ void main() {
 
         final buffer = [
           PlayedNoteEvent(
-            midi: 72, // C5 (octave higher)
+            midi: 72, // C5 (octave higher, distance 12 > 3)
             tPlayedMs: 1000.0,
             source: NoteSource.microphone,
           ),
         ];
 
+        // Should NOT match (octave shifts disabled)
         final match = matcherMic.findBestMatch(expected, buffer, {});
-        expect(match, isNotNull);
-        expect(match!.absDtMs, 0.0); // Perfect timing
+        expect(match, isNull);
       });
 
       test('Rejects different pitch class', () {
+        // UPDATED: With ±3 tolerance, C#4 (61) is within range of C4 (60)
+        // Test now uses distance > 3 to verify rejection
         final matcherMic = NoteMatcher(
           windowMs: 200,
           pitchEquals: micPitchMatch,
@@ -372,7 +376,7 @@ void main() {
 
         final buffer = [
           PlayedNoteEvent(
-            midi: 61, // C#4 (different pitch class)
+            midi: 64, // E4 (distance 4 > 3)
             tPlayedMs: 1000.0,
             source: NoteSource.microphone,
           ),

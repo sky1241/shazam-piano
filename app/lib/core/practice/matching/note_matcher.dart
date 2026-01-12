@@ -116,14 +116,10 @@ class NoteMatcher {
 ///
 /// Example:
 /// - C4 (midi 60) matches C4 (60), C4±3 (57-63)
-/// - C4 (60) does NOT match C#4 (61>3) or C3 (48, octave disabled)
+/// - C4 (60) does NOT match C#4 (64>3) or C3 (48, octave disabled)
 bool micPitchMatch(int detected, int expected) {
-  // Pitch class must match
-  final detectedPC = detected % 12;
-  final expectedPC = expected % 12;
-  if (detectedPC != expectedPC) return false;
-
   // Test direct match ONLY (no octave shifts)
+  // Direct distance check: |detected - expected| ≤ 3
   final dist = (detected - expected).abs();
   return dist <= 3;
 }
