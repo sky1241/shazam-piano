@@ -752,13 +752,6 @@ class _PracticePageState extends ConsumerState<PracticePage>
           );
         }
       }
-    } else {
-      // Original scoring system
-      final precisionValue = _totalNotes > 0
-          ? '${(_correctNotes / _totalNotes * 100).toStringAsFixed(1)}%'
-          : '0%';
-      statsText =
-          'Précision: $precisionValue   Notes justes: $_correctNotes/$_totalNotes   Score: $_score';
     }
 
     return Container(
@@ -2777,22 +2770,6 @@ class _PracticePageState extends ConsumerState<PracticePage>
                 // FIX BUG #2 (CASCADE): Trigger rebuild pour mettre à jour HUD
                 setState(() {});
               }
-            } else {
-              // OLD SYSTEM: Score based on timing precision
-              // P0 #2 FIX: Désactiver OLD flashs si NEW system actif
-              if (!_useNewScoringSystem) {
-                final timingErrorMs = (decision.dtSec?.abs() ?? 0.0) * 1000.0;
-                final timingScore = _calculateTimingScore(timingErrorMs);
-
-                _correctNotes += 1;
-                _score +=
-                    timingScore; // BUG 5 FIX: Add weighted score instead of +1
-                _registerCorrectHit(
-                  targetNote: decision.expectedMidi!,
-                  detectedNote: decision.detectedMidi!,
-                  now: now,
-                );
-              }
             }
 
             _accuracy = NoteAccuracy.correct;
@@ -2894,12 +2871,6 @@ class _PracticePageState extends ConsumerState<PracticePage>
                 );
                 // FIX BUG #2 (CASCADE): Trigger rebuild pour mettre à jour HUD
                 setState(() {});
-              }
-            } else {
-              // OLD SYSTEM: Flash wrong note
-              // P0 #2 FIX: Désactiver OLD flashs si NEW system actif
-              if (!_useNewScoringSystem) {
-                _registerWrongHit(detectedNote: decision.detectedMidi!, now: now);
               }
             }
 
@@ -3905,49 +3876,6 @@ class _PracticePageState extends ConsumerState<PracticePage>
           // FIX BUG #2 (CASCADE): Trigger rebuild pour mettre à jour HUD
           setState(() {});
         }
-      } else {
-        // OLD SYSTEM: Find active expected notes
-        final activeIndices = <int>[];
-        for (var i = 0; i < _noteEvents.length; i++) {
-          final n = _noteEvents[i];
-          if (elapsed >= n.start && elapsed <= n.end + _targetWindowTailSec) {
-            activeIndices.add(i);
-          }
-          // BUG FIX #10: Bounds check to prevent RangeError if _hitNotes desync
-          if (elapsed > n.end + _targetWindowTailSec &&
-              i < _hitNotes.length &&
-              !_hitNotes[i]) {
-            _hitNotes[i] = true; // mark as processed
-          }
-        }
-
-        bool matched = false;
-        for (final idx in activeIndices) {
-          // BUG FIX #10: Bounds check to prevent RangeError
-          if (idx >= _hitNotes.length || _hitNotes[idx]) continue;
-          if ((note - _noteEvents[idx].pitch).abs() <= 1) {
-            matched = true;
-            _hitNotes[idx] = true;
-            _correctNotes += 1;
-            _score += 1;
-            _accuracy = NoteAccuracy.correct;
-            _registerCorrectHit(
-              targetNote: _noteEvents[idx].pitch,
-              detectedNote: note,
-              now: now,
-            );
-            break;
-          }
-        }
-
-        if (!matched && activeIndices.isNotEmpty) {
-          // PATCH: Only trigger wrongFlash if there's an active note to play
-          final impactNotes = _computeImpactNotes(elapsedSec: elapsed);
-          if (impactNotes.isNotEmpty) {
-            _accuracy = NoteAccuracy.wrong;
-            _registerWrongHit(detectedNote: note, now: now);
-          }
-        }
       }
       // ═══════════════════════════════════════════════════════════════
 
@@ -4622,18 +4550,10 @@ class _PracticePageState extends ConsumerState<PracticePage>
     if (!mounted) return;
     final total = _totalNotes;
     
-    // SESSION 4: Compute stats from NEW system if active
-    final int wrongNotes;
-    final int correctNotes;
-    if (_useNewScoringSystem && _newController != null) {
-      final state = _newController!.currentScoringState;
-      correctNotes = state.perfectCount + state.goodCount + state.okCount;
-      wrongNotes = state.wrongCount + state.missCount;
-    } else {
-      // CASCADE FIX #1: Use _correctNotes instead of score.toInt() (score is now weighted)
-      correctNotes = _correctNotes;
-      wrongNotes = total - _correctNotes;
-    }
+    // SESSION 4: Compute stats from NEW system
+    final state = _newController!.currentScoringState;
+    final int correctNotes = state.perfectCount + state.goodCount + state.okCount;
+    final int wrongNotes = state.wrongCount + state.missCount;
     
     await showDialog<void>(
       context: context,
