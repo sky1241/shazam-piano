@@ -313,10 +313,7 @@ class _PracticePageState extends ConsumerState<PracticePage>
   late double _effectiveLeadInSec = max(_practiceLeadInSec, _fallLeadSec) + 1.0;
   double? _earliestNoteStartSec; // Clamped to >= 0, used for effective lead-in
 
-  // TYPE FIX: Changed from int to double to support timing-weighted scoring (BUG 5)
-  double _score = 0.0;
   int _totalNotes = 0;
-  int _correctNotes = 0;
   DateTime? _startTime;
   StreamSubscription<List<int>>? _micSub;
   final RecorderStream _recorder = RecorderStream();
@@ -736,22 +733,6 @@ class _PracticePageState extends ConsumerState<PracticePage>
           : '0%';
       statsText =
           'Précision: $precisionValue   Notes justes: $matched/$_totalNotes   Score: ${newState.totalScore}   Combo: ${newState.combo}';
-
-      // Debug: Compare old vs new in debug mode
-      if (kDebugMode) {
-        final oldPrecision = _totalNotes > 0
-            ? (_correctNotes / _totalNotes * 100)
-            : 0.0;
-        final newPrecision = _totalNotes > 0
-            ? (matched / _totalNotes * 100)
-            : 0.0;
-        if ((oldPrecision - newPrecision).abs() > 5.0 ||
-            (_score - newState.totalScore).abs() > 10) {
-          debugPrint(
-            'SESSION4_SCORING_DIFF: old=(prec=${oldPrecision.toStringAsFixed(1)}% score=$_score) new=(prec=${newPrecision.toStringAsFixed(1)}% score=${newState.totalScore})',
-          );
-        }
-      }
     }
 
     return Container(
@@ -2082,8 +2063,6 @@ class _PracticePageState extends ConsumerState<PracticePage>
     _practiceStarting = false;
     _countdownStartTime = null;
     _videoEndFired = false;
-    _score = 0;
-    _correctNotes = 0;
     _totalNotes = 0;
     // BUG FIX #12: Use clear() instead of reassignment to maintain MicEngine reference
     _hitNotes.clear();
@@ -2253,8 +2232,6 @@ class _PracticePageState extends ConsumerState<PracticePage>
         );
       }
     }
-    _score = 0;
-    _correctNotes = 0;
     _totalNotes = _noteEvents.length;
     // BUG FIX #12: Rebuild list in-place to maintain MicEngine reference
     _hitNotes.clear();
@@ -2473,39 +2450,31 @@ class _PracticePageState extends ConsumerState<PracticePage>
     final finishedAt = DateTime.now().toIso8601String();
 
     // FIX BUG 4 (DIALOG): Brancher sur nouveau système si actif
-    final double score;
-    final double accuracy;
     // CASCADE FIX: Remove fallback total=1 to keep consistency with HUD (line 734)
     final int total = _totalNotes;
 
-    if (_useNewScoringSystem && _newController != null) {
-      // NEW SYSTEM: Use PracticeScoringState
-      _newController!.stopPractice();
-      final newState = _newController!.currentScoringState;
-      final matched =
-          newState.perfectCount + newState.goodCount + newState.okCount;
-      score = newState.totalScore.toDouble();
-      accuracy = total > 0 ? (matched / total * 100.0) : 0.0;
+    // SESSION 4: Always use NEW scoring system (_useNewScoringSystem=true hard-coded)
+    _newController!.stopPractice();
+    final newState = _newController!.currentScoringState;
+    final matched =
+        newState.perfectCount + newState.goodCount + newState.okCount;
+    final score = newState.totalScore.toDouble();
+    final accuracy = total > 0 ? (matched / total * 100.0) : 0.0;
 
-      if (kDebugMode) {
-        debugPrint(
-          'SESSION4_CONTROLLER: Stopped. Final score=${newState.totalScore}, combo=${newState.combo}, p95=${newState.timingP95AbsMs.toStringAsFixed(1)}ms',
-        );
-        debugPrint(
-          'SESSION4_FINAL: perfect=${newState.perfectCount} good=${newState.goodCount} ok=${newState.okCount} miss=${newState.missCount} wrong=${newState.wrongCount}',
-        );
-      }
-    } else {
-      // OLD SYSTEM: Use legacy scoring
-      score = _score;
-      accuracy = total > 0 ? (_score / total) * 100.0 : 0.0;
+    if (kDebugMode) {
+      debugPrint(
+        'SESSION4_CONTROLLER: Stopped. Final score=${newState.totalScore}, combo=${newState.combo}, p95=${newState.timingP95AbsMs.toStringAsFixed(1)}ms',
+      );
+      debugPrint(
+        'SESSION4_FINAL: perfect=${newState.perfectCount} good=${newState.goodCount} ok=${newState.okCount} miss=${newState.missCount} wrong=${newState.wrongCount}',
+      );
     }
 
     await _sendPracticeSession(
       score: score,
       accuracy: accuracy,
       notesTotal: total,
-      notesCorrect: _correctNotes,
+      notesCorrect: matched, // P0 fix: Send NEW system matched count (not OLD _correctNotes=0)
       startedAt: startedAtIso ?? finishedAt,
       endedAt: finishedAt,
     );
