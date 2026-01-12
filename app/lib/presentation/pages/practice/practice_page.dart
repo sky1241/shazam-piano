@@ -725,7 +725,7 @@ class _PracticePageState extends ConsumerState<PracticePage>
       return SizedBox.shrink();
     }
 
-    String statsText;
+    String statsText = ''; // P0 fix: Initialize to avoid non-nullable error
     if (_useNewScoringSystem && _newController != null) {
       // SESSION 4: Display NEW scoring system stats
       final newState = _newController!.currentScoringState;
@@ -2955,21 +2955,6 @@ class _PracticePageState extends ConsumerState<PracticePage>
     HapticFeedback.selectionClick();
     if (mounted) {
       setState(() {});
-    }
-  }
-
-  // BUG 5 FIX: Calculate timing-based score (perfect timing = 1.0, late = 0.4, very late = 0.0)
-  double _calculateTimingScore(double timingErrorMs) {
-    if (timingErrorMs <= 10) {
-      return 1.0; // Perfect (±10ms)
-    } else if (timingErrorMs <= 50) {
-      return 0.8; // Great (±50ms)
-    } else if (timingErrorMs <= 100) {
-      return 0.6; // Good (±100ms)
-    } else if (timingErrorMs <= 200) {
-      return 0.4; // OK (±200ms)
-    } else {
-      return 0.0; // Too late (>200ms)
     }
   }
 
