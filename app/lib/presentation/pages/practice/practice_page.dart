@@ -2482,7 +2482,8 @@ class _PracticePageState extends ConsumerState<PracticePage>
     // FIX BUG 4 (DIALOG): Brancher sur nouveau système si actif
     final double score;
     final double accuracy;
-    final int total = _totalNotes == 0 ? 1 : _totalNotes;
+    // CASCADE FIX: Remove fallback total=1 to keep consistency with HUD (line 734)
+    final int total = _totalNotes;
 
     if (_useNewScoringSystem && _newController != null) {
       // NEW SYSTEM: Use PracticeScoringState
@@ -4614,16 +4615,28 @@ class _PracticePageState extends ConsumerState<PracticePage>
   }) async {
     if (!mounted) return;
     final total = _totalNotes;
-    // CASCADE FIX #1: Use _correctNotes instead of score.toInt() (score is now weighted)
-    final wrongNotes = total - _correctNotes;
+    
+    // SESSION 4: Compute stats from NEW system if active
+    final int wrongNotes;
+    final int correctNotes;
+    if (_useNewScoringSystem && _newController != null) {
+      final state = _newController!.currentScoringState;
+      correctNotes = state.perfectCount + state.goodCount + state.okCount;
+      wrongNotes = state.wrongCount + state.missCount;
+    } else {
+      // CASCADE FIX #1: Use _correctNotes instead of score.toInt() (score is now weighted)
+      correctNotes = _correctNotes;
+      wrongNotes = total - _correctNotes;
+    }
+    
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Session terminée'),
         content: Text(
-          'Notes fausses: $wrongNotes\n' // BUG 3 FIX: Replaced "Score" with "Notes fausses"
-          'Précision: ${accuracy.toStringAsFixed(1)}%\n'
-          'Notes jouées: $total',
+          'Notes justes: $correctNotes/$total\n'
+          'Notes fausses: $wrongNotes\n'
+          'Précision: ${accuracy.toStringAsFixed(1)}%',
         ),
         actions: [
           TextButton(
