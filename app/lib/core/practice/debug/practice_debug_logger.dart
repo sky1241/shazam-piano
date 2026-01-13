@@ -80,6 +80,37 @@ class WrongNoteLog {
   };
 }
 
+/// Log entry for near-miss played note (SESSION4)
+///
+/// Near-miss = pitch-class matches expected note but distance/timing rejected
+/// (often octave/harmonic artifact). NOT counted as WRONG for scoring.
+class NearMissLog {
+  NearMissLog({
+    required this.timestamp,
+    required this.sessionId,
+    required this.playedId,
+    required this.pitchKey,
+    required this.tPlayedMs,
+    required this.reason,
+  });
+
+  final DateTime timestamp;
+  final String sessionId;
+  final String playedId;
+  final int pitchKey;
+  final double tPlayedMs;
+  final String reason;
+
+  Map<String, dynamic> toJson() => {
+    'timestamp': timestamp.toIso8601String(),
+    'sessionId': sessionId,
+    'playedId': playedId,
+    'pitchKey': pitchKey,
+    'tPlayedMs': tPlayedMs,
+    'reason': reason,
+  };
+}
+
 /// Debug logger for practice scoring system
 ///
 /// Features:
@@ -95,6 +126,7 @@ class PracticeDebugLogger {
 
   final List<NoteResolutionLog> _resolutionLogs = [];
   final List<WrongNoteLog> _wrongNoteLogs = [];
+  final List<NearMissLog> _nearMissLogs = [];
 
   /// Log a note resolution (hit/miss/wrong)
   ///
@@ -170,6 +202,39 @@ class PracticeDebugLogger {
     }
   }
 
+  /// Log a near-miss note (SESSION4)
+  ///
+  /// Near-miss = pitch-class matches expected but rejected for technical reasons.
+  /// NOT counted as WRONG penalty (helps identify octave/harmonic artifacts).
+  void logNearMissPlayed({
+    required String sessionId,
+    required String playedId,
+    required int pitchKey,
+    required double tPlayedMs,
+    required String reason,
+  }) {
+    if (!config.enableLogs) return;
+
+    final log = NearMissLog(
+      timestamp: DateTime.now(),
+      sessionId: sessionId,
+      playedId: playedId,
+      pitchKey: pitchKey,
+      tPlayedMs: tPlayedMs,
+      reason: reason,
+    );
+
+    _nearMissLogs.add(log);
+    _trimLogs(_nearMissLogs);
+
+    if (kDebugMode) {
+      debugPrint(
+        'NEAR_MISS_NOTE session=$sessionId playedId=${playedId.substring(0, 8)} '
+        'pitch=$pitchKey t=${tPlayedMs.toStringAsFixed(1)}ms reason=$reason',
+      );
+    }
+  }
+
   /// Export all logs as JSON string
   ///
   /// Useful for offline analysis or debugging
@@ -182,6 +247,7 @@ class PracticeDebugLogger {
       'exportedAt': DateTime.now().toIso8601String(),
       'resolutionLogs': _resolutionLogs.map((e) => e.toJson()).toList(),
       'wrongNoteLogs': _wrongNoteLogs.map((e) => e.toJson()).toList(),
+      'nearMissLogs': _nearMissLogs.map((e) => e.toJson()).toList(),
     };
 
     return const JsonEncoder.withIndent('  ').convert(data);
@@ -191,6 +257,7 @@ class PracticeDebugLogger {
   void clearLogs() {
     _resolutionLogs.clear();
     _wrongNoteLogs.clear();
+    _nearMissLogs.clear();
   }
 
   /// Get resolution logs for a specific session
@@ -203,10 +270,16 @@ class PracticeDebugLogger {
     return _wrongNoteLogs.where((log) => log.sessionId == sessionId).toList();
   }
 
+  /// Get near-miss logs for a specific session (SESSION4)
+  List<NearMissLog> getNearMissLogsForSession(String sessionId) {
+    return _nearMissLogs.where((log) => log.sessionId == sessionId).toList();
+  }
+
   /// Get summary statistics for a session
   Map<String, dynamic> getSessionSummary(String sessionId) {
     final resolutions = getResolutionLogsForSession(sessionId);
     final wrongs = getWrongNoteLogsForSession(sessionId);
+    final nearMisses = getNearMissLogsForSession(sessionId);
 
     final perfectCount = resolutions
         .where((r) => r.grade == HitGrade.perfect)
@@ -237,6 +310,7 @@ class PracticeDebugLogger {
       'okCount': okCount,
       'missCount': missCount,
       'wrongCount': wrongs.length,
+      'nearMissCount': nearMisses.length,
       'totalScore': totalScore,
       'maxCombo': maxCombo,
       'avgTimingMs': avgTiming,
@@ -254,5 +328,6 @@ class PracticeDebugLogger {
   Map<String, int> get logCounts => {
     'resolutions': _resolutionLogs.length,
     'wrongNotes': _wrongNoteLogs.length,
+    'nearMissNotes': _nearMissLogs.length,
   };
 }

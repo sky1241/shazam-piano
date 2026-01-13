@@ -151,3 +151,4 @@ logs/
 # --- IDE cache fallback ---
 **/.idea/
 **/.vscode/
+.claude/

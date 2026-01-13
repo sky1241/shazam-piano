@@ -332,16 +332,12 @@ class _PracticePageState extends ConsumerState<PracticePage>
   int? _lastWrongMidi;
   DateTime? _lastWrongAt;
 
-  // Constantes gating audio (FIX BUG #6: single source of truth)
-  final double _absMinRms = 0.0020;
-  final double _minConfHit =
-      0.08; // P0 #1 FIX: 0.12 too strict, piano conf=0.08-0.15 naturally
-  final double _minConfWrong =
-      0.45; // BUG #3 FANTÔMES: 0.35→0.45 (strict anti-fantômes)
+  // Constantes gating audio
+  final double _absMinRms = 0.0020; // Kept for potential future use
 
-  // FIX BUG P1 (SESSION4): Anti-spam wrong plus permissif que hit
-  // Hit: 200ms (piano rapide OK)
-  // Wrong: 500ms (BUG #3 FANTÔMES: 350→500ms empêche "sapin Noël" plus agressif)
+  // Anti-spam timing (prevent duplicate detections)
+  // Hit: 200ms (allow rapid piano playing)
+  // Wrong: 500ms (prevent "Christmas tree" effect of too many red notes)
   static const _antiSpamHitMs = 200;
   static const _antiSpamWrongMs = 500;
   // ══════════════════════════════════════════════════════════════════════
@@ -2281,9 +2277,11 @@ class _PracticePageState extends ConsumerState<PracticePage>
           ? midiPitchComparator
           : micPitchComparator;
       final matcher = NoteMatcher(
-        windowMs: 300,
+        // CRITICAL: Must be >= ScoringEngine.okThresholdMs (450ms)
+        // Previous: 300ms caused events at 300-450ms to be rejected
+        windowMs: 450, // Matches MicEngine tailWindowSec
         pitchEquals: pitchComparator,
-      ); // P0 SESSION4: 200→300ms (observed dt=+259ms)
+      );
 
       final debugConfig = DebugLogConfig(enableLogs: kDebugMode);
       final logger = PracticeDebugLogger(config: debugConfig);
@@ -2296,11 +2294,12 @@ class _PracticePageState extends ConsumerState<PracticePage>
 
       // Convert _noteEvents to ExpectedNote format
       final expectedNotes = _noteEvents.asMap().entries.map((entry) {
+        final duration = (entry.value.end - entry.value.start) * 1000.0;
         return ExpectedNote(
           index: entry.key,
           midi: entry.value.pitch,
           tExpectedMs: entry.value.start * 1000.0, // Convert sec to ms
-          durationMs: (entry.value.end - entry.value.start) * 1000.0,
+          durationMs: duration > 0 ? duration : null, // Null if invalid
         );
       }).toList();
 
@@ -2684,83 +2683,37 @@ class _PracticePageState extends ConsumerState<PracticePage>
             if (_useNewScoringSystem &&
                 _newController != null &&
                 decision.detectedMidi != null) {
-              // FIX BUG #11 (CASCADE): Gating confidence - accepter seulement si suffisamment confiant
-              // P0 SESSION4 FIX: RMS guard for low-confidence hits
-              // - Strong conf (>= 0.08): accept if rms >= 0.0020 (absMinRms minimum)
-              // - Weak conf (< 0.08): accept ONLY if rms >= 0.010 (strong piano)
-              // - Both weak: REJECT (harmonics/noise)
-              final hasGoodConf = _micConfidence >= _minConfHit; // 0.08
-              final hasStrongRms = _micRms >= (_absMinRms * 5.0); // 0.010
-              final hasMinRms = _micRms >= _absMinRms; // 0.0020
-
-              // Reject if: (weak conf AND weak rms) OR (rms below absMin)
-              if ((!hasGoodConf && !hasStrongRms) || !hasMinRms) {
-                if (kDebugMode) {
-                  debugPrint(
-                    'SESSION4_GATING_HIT: Skip low-confidence hit midi=${decision.detectedMidi} rms=${_micRms.toStringAsFixed(3)} conf=${_micConfidence.toStringAsFixed(2)} (need conf>=0.12 OR rms>=0.010)',
-                  );
-                }
-                break; // Ignore détection incertaine
-              }
-
-              // FIX BUG #1 (CASCADE): Anti-spam séparé pour hits (éviter bloquer notes correctes)
+              // Anti-spam check (avoid duplicate hits)
               if (_lastHitMidi == decision.detectedMidi &&
                   _lastHitAt != null &&
                   now.difference(_lastHitAt!).inMilliseconds < _antiSpamHitMs) {
-                if (kDebugMode) {
-                  debugPrint(
-                    'SESSION4_ANTISPAM_HIT: Skip duplicate midi=${decision.detectedMidi} (< ${_antiSpamHitMs}ms)',
-                  );
-                }
-                break; // Skip duplicate
+                break;
               }
 
               _lastHitMidi = decision.detectedMidi;
               _lastHitAt = now;
-
-              // Capture state BEFORE to detect what changed
-              final stateBefore = _newController!.currentScoringState;
-              final correctCountBefore =
-                  stateBefore.perfectCount +
-                  stateBefore.goodCount +
-                  stateBefore.okCount;
-
-              if (kDebugMode) {
-                debugPrint(
-                  'SESSION4_DEBUG_HIT: Before onPlayedNote - midi=${decision.detectedMidi} rms=${_micRms.toStringAsFixed(3)} conf=${_micConfidence.toStringAsFixed(2)} correctCount=$correctCountBefore',
-                );
-              }
 
               final playedEvent = PracticeController.createPlayedEvent(
                 midi: decision.detectedMidi!,
                 tPlayedMs: elapsed * 1000.0, // Convert sec to ms
                 source: NoteSource.microphone,
               );
-              _newController!.onPlayedNote(playedEvent);
+              
+              // BRIDGE: OLD system validated HIT, force match in NEW controller
+              // Pass dtSec from MicEngine (calculated in its window context)
+              _newController!.onPlayedNote(
+                playedEvent,
+                forceMatchExpectedIndex: decision.noteIndex,
+                micEngineDtMs: decision.dtSec! * 1000.0, // Use MicEngine's dt
+              );
 
-              // Check if NEW SYSTEM registered a correct hit
-              final stateAfter = _newController!.currentScoringState;
-              final correctCountAfter =
-                  stateAfter.perfectCount +
-                  stateAfter.goodCount +
-                  stateAfter.okCount;
-
-              if (kDebugMode) {
-                debugPrint(
-                  'SESSION4_DEBUG_HIT: After onPlayedNote - correctCount=$correctCountAfter score=${stateAfter.totalScore} combo=${stateAfter.combo}',
-                );
-              }
-
-              if (correctCountAfter > correctCountBefore) {
-                // NEW SYSTEM says correct! Flash green
-                _registerCorrectHit(
-                  targetNote: decision.expectedMidi!,
-                  detectedNote: decision.detectedMidi!,
-                  now: now,
-                );
-                // FIX BUG #2 (CASCADE): Trigger rebuild pour mettre à jour HUD
-                setState(() {});
-              }
+              // Flash green (forceMatch guarantees hit registered)
+              _registerCorrectHit(
+                targetNote: decision.expectedMidi!,
+                detectedNote: decision.detectedMidi!,
+                now: now,
+              );
+              setState(() {}); // Rebuild HUD
             }
 
             _accuracy = NoteAccuracy.correct;
@@ -2800,19 +2753,7 @@ class _PracticePageState extends ConsumerState<PracticePage>
                 break; // Ignore sustain check fail, note déjà traitée
               }
 
-              // FIX BUG 2 (FANTÔMES): Gating strict - ne jamais générer wrong si RMS ou conf trop bas
-              // FIX BUG #6 (CASCADE): Utiliser constantes instance au lieu de hardcoded
-              if (_micRms < _absMinRms || _micConfidence < _minConfWrong) {
-                if (kDebugMode) {
-                  debugPrint(
-                    'SESSION4_GATING: Skip wrongFlash midi=${decision.detectedMidi} rms=${_micRms.toStringAsFixed(3)} conf=${_micConfidence.toStringAsFixed(2)} (below threshold)',
-                  );
-                }
-                break; // Ignore détection fantôme
-              }
-
-              // FIX BUG #1 (CASCADE): Anti-spam séparé pour wrongs
-              // FIX BUG P1 (SESSION4): Wrong anti-spam plus permissif (350ms vs 200ms)
+              // Anti-spam check (avoid duplicate wrongs)
               if (_lastWrongMidi == decision.detectedMidi &&
                   _lastWrongAt != null &&
                   now.difference(_lastWrongAt!).inMilliseconds <
@@ -2822,21 +2763,14 @@ class _PracticePageState extends ConsumerState<PracticePage>
                     'SESSION4_ANTISPAM_WRONG: Skip duplicate midi=${decision.detectedMidi} (< ${_antiSpamWrongMs}ms)',
                   );
                 }
-                break; // Skip duplicate
+                break;
               }
 
               _lastWrongMidi = decision.detectedMidi;
               _lastWrongAt = now;
 
-              // Capture state BEFORE to detect what changed
               final stateBefore = _newController!.currentScoringState;
               final wrongCountBefore = stateBefore.wrongCount;
-
-              if (kDebugMode) {
-                debugPrint(
-                  'SESSION4_DEBUG_WRONG: Before onPlayedNote - midi=${decision.detectedMidi} rms=${_micRms.toStringAsFixed(3)} conf=${_micConfidence.toStringAsFixed(2)} wrongCount=$wrongCountBefore',
-                );
-              }
 
               final playedEvent = PracticeController.createPlayedEvent(
                 midi: decision.detectedMidi!,
@@ -2845,23 +2779,14 @@ class _PracticePageState extends ConsumerState<PracticePage>
               );
               _newController!.onPlayedNote(playedEvent);
 
-              // Check if NEW SYSTEM registered a wrong hit
               final stateAfter = _newController!.currentScoringState;
               final wrongCountAfter = stateAfter.wrongCount;
 
-              if (kDebugMode) {
-                debugPrint(
-                  'SESSION4_DEBUG_WRONG: After onPlayedNote - wrongCount=$wrongCountAfter score=${stateAfter.totalScore} combo=${stateAfter.combo}',
-                );
-              }
-
               if (wrongCountAfter > wrongCountBefore) {
-                // NEW SYSTEM says wrong! Flash red
                 _registerWrongHit(
                   detectedNote: decision.detectedMidi!,
                   now: now,
                 );
-                // FIX BUG #2 (CASCADE): Trigger rebuild pour mettre à jour HUD
                 setState(() {});
               }
             }
@@ -3800,7 +3725,6 @@ class _PracticePageState extends ConsumerState<PracticePage>
         _lastHitMidi = note;
         _lastHitAt = now;
 
-        // Capture state BEFORE to detect what changed
         final stateBefore = _newController!.currentScoringState;
         final correctCountBefore =
             stateBefore.perfectCount +
@@ -3808,43 +3732,24 @@ class _PracticePageState extends ConsumerState<PracticePage>
             stateBefore.okCount;
         final wrongCountBefore = stateBefore.wrongCount;
 
-        if (kDebugMode) {
-          debugPrint(
-            'SESSION4_DEBUG_MIDI: Before onPlayedNote - midi=$note correctCount=$correctCountBefore wrongCount=$wrongCountBefore',
-          );
-        }
-
         final playedEvent = PracticeController.createPlayedEvent(
           midi: note,
-          tPlayedMs: elapsed * 1000.0, // Convert sec to ms
+          tPlayedMs: elapsed * 1000.0,
           source: NoteSource.midi,
         );
         _newController!.onPlayedNote(playedEvent);
-
-        // Also update time for miss detection
         _newController!.onTimeUpdate(elapsed * 1000.0);
 
-        // Check what NEW SYSTEM decided
         final stateAfter = _newController!.currentScoringState;
         final correctCountAfter =
             stateAfter.perfectCount + stateAfter.goodCount + stateAfter.okCount;
         final wrongCountAfter = stateAfter.wrongCount;
 
-        if (kDebugMode) {
-          debugPrint(
-            'SESSION4_DEBUG_MIDI: After onPlayedNote - correctCount=$correctCountAfter wrongCount=$wrongCountAfter score=${stateAfter.totalScore}',
-          );
-        }
-
         if (correctCountAfter > correctCountBefore) {
-          // NEW SYSTEM says correct! Flash green
           _registerCorrectHit(targetNote: note, detectedNote: note, now: now);
-          // FIX BUG #2 (CASCADE): Trigger rebuild pour mettre à jour HUD
           setState(() {});
         } else if (wrongCountAfter > wrongCountBefore) {
-          // NEW SYSTEM says wrong! Flash red
           _registerWrongHit(detectedNote: note, now: now);
-          // FIX BUG #2 (CASCADE): Trigger rebuild pour mettre à jour HUD
           setState(() {});
         }
       }

@@ -6,7 +6,7 @@ class ScoringConfig {
   const ScoringConfig({
     this.perfectThresholdMs = 40,
     this.goodThresholdMs = 100,
-    this.okThresholdMs = 300, // P0 #1 FIX: 200→300ms pour matcher windowMs=300
+    this.okThresholdMs = 450, // Must match MicEngine tailWindowSec (450ms)
     this.enableWrongPenalty = false,
     this.wrongPenaltyPoints = -10,
     this.sustainMinFactor = 0.7,

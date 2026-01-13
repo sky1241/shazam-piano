@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
@@ -70,12 +71,23 @@ class PracticeController extends StateNotifier<PracticeViewState> {
   // Solution: Ajouter latence micro (~300ms) avant de déclarer miss
   // ChatGPT analysis: dt observés = 0.259-0.485s (moyenne ~300ms)
   static const double _micLatencyMs = 300.0;
+  
+  // Tail window for timeout detection (matches MicEngine tailWindowSec)
+  static const double _tailWindowMs = 450.0;
+
+  // FIX BUG P0-B (SESSION4): Octave subharmonic correction
+  // Problème: Micro détecte octave basse (ex: C3=48 au lieu de C4=60)
+  // Solution: Correction ciblée +12/+24 SI pitch-class match ET distance finale ≤3
+  // IMPORTANT: Octave shifts globaux restent désactivés dans NoteMatcher
+  static const int _octaveSemitones = 12;
+  static const int _maxOctaveFixSemitoneDistance = 3;
 
   // Session state
   String? _currentSessionId;
   List<ExpectedNote> _expectedNotes = [];
   List<PlayedNoteEvent> _playedBuffer = [];
   Set<String> _consumedPlayedIds = {};
+  Set<int> _resolvedExpectedIndices = {}; // Track resolved notes to prevent double-resolve
   int _nextExpectedIndex = 0;
 
   // Scoring state (mutable, updated in-place)
@@ -99,6 +111,7 @@ class PracticeController extends StateNotifier<PracticeViewState> {
     _expectedNotes = expectedNotes;
     _playedBuffer = [];
     _consumedPlayedIds = {};
+    _resolvedExpectedIndices = {};
     _nextExpectedIndex = 0;
     _scoringState = PracticeScoringState();
     _allAbsDtMs.clear();
@@ -119,6 +132,11 @@ class PracticeController extends StateNotifier<PracticeViewState> {
   void stopPractice() {
     if (!state.isActive) return;
 
+    // FIX BUG #8 (SESSION4): Finalize remaining unresolved notes as MISS
+    // Problème: idx=7 détecté MISS mais jamais RESOLVE avant video_end stop
+    // Solution: Forcer résolution de toutes notes non résolues avant metrics finaux
+    _finalizeRemainingNotes();
+
     // Finalize p95 timing metric
     if (_allAbsDtMs.isNotEmpty && _allAbsDtMs.length > 1) {
       final sorted = List<double>.from(_allAbsDtMs)..sort();
@@ -131,6 +149,35 @@ class PracticeController extends StateNotifier<PracticeViewState> {
     _currentSessionId = null;
   }
 
+  /// Finalize all unresolved expected notes as MISS
+  /// Called at stopPractice() to ensure all notes are accounted for
+  void _finalizeRemainingNotes() {
+    final unresolvedIndices = <int>[];
+    for (int i = 0; i < _expectedNotes.length; i++) {
+      if (!_resolvedExpectedIndices.contains(i)) {
+        unresolvedIndices.add(i);
+      }
+    }
+
+    if (unresolvedIndices.isEmpty) return;
+
+    if (kDebugMode) {
+      debugPrint(
+        'FINALIZE: Marking ${unresolvedIndices.length} unresolved notes as MISS at stop (indices: ${unresolvedIndices.join(",")})',
+      );
+    }
+
+    // Resolve each unresolved note as MISS
+    for (final idx in unresolvedIndices) {
+      _resolvedExpectedIndices.add(idx);
+      _resolveExpectedNote(
+        expectedIndex: idx,
+        matchedEvent: null,
+        dtMs: null,
+      );
+    }
+  }
+
   /// Handle a played note event (mic or MIDI)
   ///
   /// This is the core matching + scoring logic:
@@ -139,29 +186,96 @@ class PracticeController extends StateNotifier<PracticeViewState> {
   /// 3. Try to match with expected notes
   /// 4. If matched: resolve hit/miss, update score
   /// 5. If no match: mark as wrong (with caution)
-  void onPlayedNote(PlayedNoteEvent event) {
+  ///
+  /// [forceMatchExpectedIndex]: If provided, skip matching and directly resolve
+  /// the expected note at this index. Used when external system (OLD) already
+  /// validated the match (bridge between OLD/NEW systems).
+  void onPlayedNote(
+    PlayedNoteEvent event, {
+    int? forceMatchExpectedIndex,
+    double? micEngineDtMs, // dt from MicEngine (for bridge)
+  }) {
     if (!state.isActive || _currentSessionId != state.currentSessionId) {
       // Stale event from previous session, ignore
       return;
     }
 
-    // Add to buffer
-    _playedBuffer.add(event);
+    // BRIDGE: If OLD system already validated match, skip our matching
+    if (forceMatchExpectedIndex != null) {
+      if (forceMatchExpectedIndex >= 0 &&
+          forceMatchExpectedIndex < _expectedNotes.length &&
+          !_resolvedExpectedIndices.contains(forceMatchExpectedIndex)) {
+        final expectedNote = _expectedNotes[forceMatchExpectedIndex];
+        
+        // Apply octave fix if needed
+        // CRITICAL: Include the forced note itself in activeExpected for octave fix
+        // Handle both forward and backward matches (forced index can be < _nextExpectedIndex)
+        final lookahead = 10;
+        final scanStartIndex = forceMatchExpectedIndex < _nextExpectedIndex
+            ? forceMatchExpectedIndex
+            : _nextExpectedIndex;
+        final naturalEnd = _nextExpectedIndex + lookahead;
+        final forcedEnd = forceMatchExpectedIndex + 1;
+        final scanEndIndex = (naturalEnd > forcedEnd ? naturalEnd : forcedEnd)
+            .clamp(scanStartIndex, _expectedNotes.length);
+        final activeExpected = _expectedNotes.sublist(scanStartIndex, scanEndIndex);
+        final playedEvent = _maybeFixDownOctave(event, activeExpected);
+        
+        // Add to buffer
+        _playedBuffer.add(playedEvent);
+        
+        // Mark consumed immediately
+        _consumedPlayedIds.add(playedEvent.id);
+        
+        // FIX BUG #6 (SESSION4): Use MicEngine's dtMs instead of recalculating
+        // MicEngine window: [start-120ms ... end+450ms] (can be 2s+ for long notes)
+        // PracticeController would calculate dt from note.start only (≤450ms threshold)
+        // These are INCOMPATIBLE - HITs at 570ms+ after start are valid in MicEngine
+        // but rejected by PracticeController. Use MicEngine's dt (calculated correctly).
+        final dtMs = micEngineDtMs ?? (playedEvent.tPlayedMs - expectedNote.tExpectedMs);
+        
+        // Mark as resolved BEFORE calling _resolveExpectedNote to prevent recursion
+        _resolvedExpectedIndices.add(forceMatchExpectedIndex);
+        
+        // Resolve with MicEngine's dt
+        _resolveExpectedNote(
+          expectedIndex: forceMatchExpectedIndex,
+          matchedEvent: playedEvent,
+          dtMs: dtMs,
+        );
+        
+        return;
+      }
+    }
 
     // Try to match with upcoming expected notes
     // We scan from _nextExpectedIndex up to a reasonable lookahead
     // (e.g., 10 notes ahead) to handle early hits
     final lookahead = 10;
     final scanEndIndex = (_nextExpectedIndex + lookahead).clamp(
-      0,
+      _nextExpectedIndex,
       _expectedNotes.length,
     );
+
+    // FIX BUG #1 (SESSION4): Octave subharmonic correction AVANT buffering
+    // CRITICAL: Buffer DOIT stocker event corrigé, sinon _isMatchForExpected
+    // classifiera les HIT comme MISS plus tard dans wasMatched checks
+    final activeExpected = _expectedNotes.sublist(_nextExpectedIndex, scanEndIndex);
+    final playedEvent = _maybeFixDownOctave(event, activeExpected);
+
+    // Add to buffer (corrected event)
+    _playedBuffer.add(playedEvent);
 
     for (var i = _nextExpectedIndex; i < scanEndIndex; i++) {
       final expected = _expectedNotes[i];
 
+      // Skip if already resolved (by bridge)
+      if (_resolvedExpectedIndices.contains(i)) {
+        continue;
+      }
+
       // Check if this expected note is in range of the played event
-      final dt = event.tPlayedMs - expected.tExpectedMs;
+      final dt = playedEvent.tPlayedMs - expected.tExpectedMs;
       if (dt < -_matcher.windowMs) {
         // Played note is too early for this expected note
         // (and all subsequent ones), stop scanning
@@ -171,22 +285,36 @@ class PracticeController extends StateNotifier<PracticeViewState> {
       // Try to match
       final candidate = _matcher.findBestMatch(
         expected,
-        [event], // Only check this new event
+        [playedEvent], // Possibly corrected event
         _consumedPlayedIds,
       );
 
       if (candidate != null) {
         // Match found!
+        _resolvedExpectedIndices.add(i);
+        
         _resolveExpectedNote(
           expectedIndex: i,
-          matchedEvent: event,
+          matchedEvent: playedEvent,
           dtMs: candidate.dtMs,
         );
 
         // Mark as consumed
-        _consumedPlayedIds.add(event.id);
+        _consumedPlayedIds.add(playedEvent.id);
         return; // Done processing this event
       }
+    }
+
+    // FIX BUG #3 (SESSION4): Log match failure avec détails filtrage
+    if (kDebugMode && _nextExpectedIndex < _expectedNotes.length) {
+      final nextExpected = _expectedNotes[_nextExpectedIndex];
+      debugPrint(
+        'SESSION4_MATCH_FAIL: '
+        'rawMidi=${event.midi} usedMidi=${playedEvent.midi} '
+        't=${playedEvent.tPlayedMs.toStringAsFixed(1)} '
+        'nextExpectedMidi=${nextExpected.midi} '
+        'dist=${(playedEvent.midi - nextExpected.midi).abs()}',
+      );
     }
 
     // No match found
@@ -204,27 +332,34 @@ class PracticeController extends StateNotifier<PracticeViewState> {
     // Process all expected notes that are now "late" (missed)
     while (_nextExpectedIndex < _expectedNotes.length) {
       final expected = _expectedNotes[_nextExpectedIndex];
+      
+      // CRITICAL: Timeout must match MicEngine logic: note.end + tailWindow + latency
+      // = (tExpected + duration) + tailWindow + latency
+      // This ensures controller doesn't mark MISS before MicEngine for long notes
+      final timeoutMs = expected.tExpectedMs + 
+                       (expected.durationMs ?? 0) + 
+                       _tailWindowMs + 
+                       _micLatencyMs;
 
-      // FIX BUG P0-A (SESSION4): Ne déclarer miss que si latence + window dépassés
-      // Avant: currentTimeMs > expected.tExpectedMs + windowMs
-      // Après: currentTimeMs > expected.tExpectedMs + windowMs + _micLatencyMs
-      // Raison: event micro stable arrive ~300ms après note jouée
-      if (currentTimeMs >
-          expected.tExpectedMs + _matcher.windowMs + _micLatencyMs) {
-        // Check if it was already matched
-        final wasMatched = _consumedPlayedIds.any((id) {
-          return _playedBuffer
-              .where((e) => e.id == id)
-              .any((e) => _isMatchForExpected(e, expected));
-        });
+      if (currentTimeMs > timeoutMs) {
+        // Skip if already resolved (by bridge or normal matching)
+        if (!_resolvedExpectedIndices.contains(_nextExpectedIndex)) {
+          // Check if it was matched
+          final wasMatched = _consumedPlayedIds.any((id) {
+            return _playedBuffer
+                .where((e) => e.id == id)
+                .any((e) => _isMatchForExpected(e, expected));
+          });
 
-        if (!wasMatched) {
-          // Miss!
-          _resolveExpectedNote(
-            expectedIndex: _nextExpectedIndex,
-            matchedEvent: null,
-            dtMs: null,
-          );
+          if (!wasMatched) {
+            // Miss!
+            _resolvedExpectedIndices.add(_nextExpectedIndex);
+            _resolveExpectedNote(
+              expectedIndex: _nextExpectedIndex,
+              matchedEvent: null,
+              dtMs: null,
+            );
+          }
         }
 
         _nextExpectedIndex++;
@@ -333,6 +468,21 @@ class PracticeController extends StateNotifier<PracticeViewState> {
 
   /// Handle a wrong note (played but never matched)
   void _handleWrongNote(PlayedNoteEvent event) {
+    // FIX BUG #2 (SESSION4): Éviter punir artefacts techniques
+    // Si pitch-class match note attendue proche temporellement → near-miss
+    // (pas de pénalité WRONG)
+    if (_isNearMissPitchClass(event)) {
+      _logger.logNearMissPlayed(
+        sessionId: _currentSessionId!,
+        playedId: event.id,
+        pitchKey: event.midi,
+        tPlayedMs: event.tPlayedMs,
+        reason: 'Pitch-class matches expected near same time (likely octave/harmonic artifact)',
+      );
+      return;
+    }
+
+    // Vrai WRONG (note complètement hors contexte)
     _scoringEngine.applyWrongNotePenalty(_scoringState);
 
     _logger.logWrongPlayed(
@@ -348,6 +498,99 @@ class PracticeController extends StateNotifier<PracticeViewState> {
       lastGrade: HitGrade.wrong,
       scoringState: _scoringState,
     );
+  }
+
+  /// FIX BUG #1 (SESSION4): Octave subharmonic correction ciblée
+  ///
+  /// Corrige UNIQUEMENT si:
+  /// - Source = microphone (pas MIDI)
+  /// - Pitch-class match avec expected active
+  /// - Distance originale >3 demi-tons
+  /// - Après correction (+12 ou +24), distance ≤3
+  ///
+  /// IMPORTANT: N'active PAS octave shifts globaux (restent désactivés NoteMatcher)
+  PlayedNoteEvent _maybeFixDownOctave(
+    PlayedNoteEvent event,
+    List<ExpectedNote> activeExpected,
+  ) {
+    if (event.source != NoteSource.microphone) return event;
+    if (activeExpected.isEmpty) return event;
+
+    final pitchClasses = activeExpected.map((e) => e.midi % 12).toSet();
+    final playedPc = event.midi % 12;
+    if (!pitchClasses.contains(playedPc)) return event;
+
+    // Helper: distance minimale à expected notes avec même pitch-class
+    int minDist(int midi) {
+      var best = 1 << 30;
+      for (final e in activeExpected) {
+        if ((e.midi % 12) != playedPc) continue;
+        final d = (midi - e.midi).abs();
+        if (d < best) best = d;
+      }
+      return best;
+    }
+
+    final originalDist = minDist(event.midi);
+    if (originalDist <= _maxOctaveFixSemitoneDistance) return event;
+
+    // Tester +12 et +24 (corrections octave basse)
+    final candidates = <int>[
+      event.midi + _octaveSemitones,
+      event.midi + (_octaveSemitones * 2),
+    ].where((m) => m >= 0 && m <= 127).toList();
+
+    var bestMidi = event.midi;
+    var bestDist = originalDist;
+
+    for (final m in candidates) {
+      final d = minDist(m);
+      if (d < bestDist) {
+        bestDist = d;
+        bestMidi = m;
+      }
+    }
+
+    if (bestMidi != event.midi && bestDist <= _maxOctaveFixSemitoneDistance) {
+      if (kDebugMode) {
+        debugPrint(
+          'SESSION4_OCTAVE_FIX: '
+          'playedId=${event.id.substring(0, 8)} '
+          'rawMidi=${event.midi} correctedMidi=$bestMidi '
+          'bestDist=$bestDist',
+        );
+      }
+      return PlayedNoteEvent(
+        id: event.id,
+        midi: bestMidi,
+        tPlayedMs: event.tPlayedMs,
+        durationMs: event.durationMs,
+        source: event.source,
+      );
+    }
+
+    return event;
+  }
+
+  /// FIX BUG #2 (SESSION4): Check si pitch-class match expected note proche
+  ///
+  /// Utilisé pour éviter pénalité WRONG sur artefacts techniques
+  /// (octave/harmonique détecté mais distance >3)
+  bool _isNearMissPitchClass(PlayedNoteEvent event) {
+    if (_expectedNotes.isEmpty) return false;
+    final playedPc = event.midi % 12;
+
+    // Scanner autour pointer expected (±6 notes) avec window temporelle large
+    final start = (_nextExpectedIndex - 6).clamp(0, _expectedNotes.length);
+    final end = (_nextExpectedIndex + 6).clamp(0, _expectedNotes.length);
+    final checkWindowMs = (_matcher.windowMs * 2) + _micLatencyMs;
+
+    for (final e in _expectedNotes.sublist(start, end)) {
+      final dt = (e.tExpectedMs - event.tPlayedMs).abs();
+      if (dt > checkWindowMs) continue;
+      if ((e.midi % 12) == playedPc) return true;
+    }
+    return false;
   }
 
   /// Helper: check if a played event corresponds to an expected note
@@ -394,7 +637,10 @@ final practiceControllerProvider =
 
       // Use existing pitch matching logic (to be injected from practice_page)
       final matcher = NoteMatcher(
-        windowMs: 300, // P0 SESSION4: 200→300ms (observed dt=+259ms)
+        // CRITICAL: Must be >= ScoringEngine.okThresholdMs (450ms) to allow "ok" grades
+        // Previous: 300ms caused events at 300-450ms to be rejected by matcher
+        // but accepted by scorer, resulting in unmatched hits marked as MISS
+        windowMs: 450, // Matches MicEngine tailWindowSec and ScoringEngine okThreshold
         pitchEquals: (p1, p2) => p1 == p2, // Placeholder, will use real logic
       );
 

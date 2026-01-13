@@ -420,6 +420,22 @@ class MicEngine {
       // Check HIT with very tolerant distance (≤3 semitones for real piano+mic)
       if (bestEvent != null && bestDistance <= 3.0) {
         hitNotes[idx] = true;
+        
+        // FIX BUG #7 (SESSION4): Calculate dt correctly for long notes
+        // For long notes (>500ms), playing DURING the note should be perfect (dt=0)
+        // Only penalize if played before note.start or after note.end
+        final double dtSec;
+        if (bestEvent.tSec < note.start) {
+          // Played before note started (early)
+          dtSec = bestEvent.tSec - note.start; // negative
+        } else if (bestEvent.tSec <= note.end) {
+          // Played DURING the note (perfect timing for long notes)
+          dtSec = 0.0;
+        } else {
+          // Played after note ended (late)
+          dtSec = bestEvent.tSec - note.end; // positive
+        }
+        
         decisions.add(
           NoteDecision(
             type: DecisionType.hit,
@@ -427,7 +443,7 @@ class MicEngine {
             expectedMidi: note.pitch,
             detectedMidi: bestEvent.midi,
             confidence: bestEvent.conf,
-            dtSec: bestEvent.tSec - note.start,
+            dtSec: dtSec,
             window: (windowStart, windowEnd),
           ),
         );
@@ -438,7 +454,7 @@ class MicEngine {
             'expectedMidi=${note.pitch} expectedPC=$expectedPitchClass detectedMidi=${bestEvent.midi} '
             'freq=${bestEvent.freq.toStringAsFixed(1)} conf=${bestEvent.conf.toStringAsFixed(2)} '
             'stability=${bestEvent.stabilityFrames} distance=${bestDistance.toStringAsFixed(1)} '
-            'dt=${(bestEvent.tSec - note.start).toStringAsFixed(3)}s '
+            'dt=${dtSec.toStringAsFixed(3)}s '
             'window=[${windowStart.toStringAsFixed(3)}..${windowEnd.toStringAsFixed(3)}] result=HIT',
           );
         }
@@ -460,9 +476,21 @@ class MicEngine {
     }
 
     // Wrong flash: if best event exists but no hit, trigger wrong flash (throttled)
+    // FIX: Only trigger wrongFlash if there was at least one active note in window
+    // (prevents phantom red keys after all notes have been played)
+    final hasActiveNoteInWindow = noteEvents.asMap().entries.any((entry) {
+      final idx = entry.key;
+      final note = entry.value;
+      if (hitNotes[idx]) return false; // Already hit
+      final windowStart = note.start - headWindowSec;
+      final windowEnd = note.end + tailWindowSec;
+      return elapsed >= windowStart && elapsed <= windowEnd;
+    });
+
     if (bestEventAcrossAll != null &&
         bestEventAcrossAll.conf >= minConfForWrong &&
-        decisions.where((d) => d.type == DecisionType.hit).isEmpty) {
+        decisions.where((d) => d.type == DecisionType.hit).isEmpty &&
+        hasActiveNoteInWindow) {
       final canFlash =
           _lastWrongFlashAt == null ||
           now.difference(_lastWrongFlashAt!).inMilliseconds >
