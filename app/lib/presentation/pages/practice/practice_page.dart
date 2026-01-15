@@ -450,7 +450,8 @@ class _PracticePageState extends ConsumerState<PracticePage>
   DateTime? _devTapStartAt;
   DateTime? _lastCorrectHitAt;
   int? _lastCorrectNote;
-  int? _lastCorrectNoteIndex; // FIX BUG SESSION-005 #1+2: Track which NOTE INDEX was hit
+  int?
+  _lastCorrectNoteIndex; // FIX BUG SESSION-005 #1+2: Track which NOTE INDEX was hit
   DateTime? _lastWrongHitAt;
   int? _lastWrongNote;
   // FIX BUG SESSION-005 #4: Track MISS notes for red keyboard feedback
@@ -1779,7 +1780,9 @@ class _PracticePageState extends ConsumerState<PracticePage>
     final successFlashActive = _isSuccessFlashActive(now);
     final wrongFlashActive = _isWrongFlashActive(now);
     final missFlashActive = _isMissFlashActive(now); // FIX BUG SESSION-005 #4
-    final recentlyHitNotes = _getRecentlyHitNotes(now); // FIX: Get recently validated notes
+    final recentlyHitNotes = _getRecentlyHitNotes(
+      now,
+    ); // FIX: Get recently validated notes
     return PracticeKeyboard(
       key: const Key('practice_keyboard'),
       totalWidth: totalWidth,
@@ -1802,7 +1805,8 @@ class _PracticePageState extends ConsumerState<PracticePage>
       noteToXFn: noteToXFn,
       showDebugLabels: showDebugLabels,
       showMidiNumbers: showMidiNumbers,
-      recentlyHitNotes: recentlyHitNotes, // FIX: Pass recently hit notes to prevent false reds
+      recentlyHitNotes:
+          recentlyHitNotes, // FIX: Pass recently hit notes to prevent false reds
     );
   }
 
@@ -2096,7 +2100,8 @@ class _PracticePageState extends ConsumerState<PracticePage>
     _lastWrongNote = null;
     _lastMissNote = null; // FIX BUG SESSION-005 #4
     _lastMissHitAt = null; // FIX BUG SESSION-005 #4
-    _recentlyHitNotes.clear(); // FIX BUG P0: Clear recently hit notes for new session
+    _recentlyHitNotes
+        .clear(); // FIX BUG P0: Clear recently hit notes for new session
     if (_videoController != null && _videoController!.value.isInitialized) {
       await _videoController!.pause();
       await _videoController!.seekTo(Duration.zero);
@@ -2492,7 +2497,9 @@ class _PracticePageState extends ConsumerState<PracticePage>
     final score = newState.totalScore.toDouble();
     // SUSTAIN SCORING: Use cumulative sustain ratio for precision
     // Each note contributes its sustainRatio (0.0-1.0) based on held duration
-    final accuracy = total > 0 ? (_cumulativeSustainRatio / total * 100.0) : 0.0;
+    final accuracy = total > 0
+        ? (_cumulativeSustainRatio / total * 100.0)
+        : 0.0;
 
     if (kDebugMode) {
       debugPrint(
@@ -2735,7 +2742,7 @@ class _PracticePageState extends ConsumerState<PracticePage>
                 tPlayedMs: elapsed * 1000.0, // Convert sec to ms
                 source: NoteSource.microphone,
               );
-              
+
               // BRIDGE: OLD system validated HIT, force match in NEW controller
               // Pass dtSec from MicEngine (calculated in its window context)
               _newController!.onPlayedNote(
@@ -4727,7 +4734,8 @@ class _FallingNotesPainter extends CustomPainter {
   final int lastKey;
   final Set<int> targetNotes;
   final int? successNote;
-  final int? successNoteIndex; // FIX BUG SESSION-005 #1+2: Flash by index, not pitch
+  final int?
+  successNoteIndex; // FIX BUG SESSION-005 #1+2: Flash by index, not pitch
   final bool successFlashActive;
   final int? wrongNote;
   final bool wrongFlashActive;
@@ -4964,7 +4972,8 @@ class _FallingNotesPainter extends CustomPainter {
       final isTarget = isCrossingKeyboard && targetNotes.contains(n.pitch);
       // FIX BUG SESSION-005 #1+2: Use noteIndex for flash matching (not pitch)
       // This prevents ALL notes with same pitch from flashing when ONE is hit
-      final isSuccessFlash = successFlashActive &&
+      final isSuccessFlash =
+          successFlashActive &&
           successNoteIndex != null &&
           noteIdx == successNoteIndex;
       final isWrongFlash =
@@ -5066,7 +5075,8 @@ class _FallingNotesPainter extends CustomPainter {
         oldDelegate.firstKey != firstKey ||
         oldDelegate.lastKey != lastKey ||
         oldDelegate.successNote != successNote ||
-        oldDelegate.successNoteIndex != successNoteIndex || // FIX BUG SESSION-005 #1+2
+        oldDelegate.successNoteIndex !=
+            successNoteIndex || // FIX BUG SESSION-005 #1+2
         oldDelegate.successFlashActive != successFlashActive ||
         oldDelegate.wrongNote != wrongNote ||
         oldDelegate.wrongFlashActive != wrongFlashActive ||

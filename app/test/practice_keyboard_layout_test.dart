@@ -95,8 +95,9 @@ void main() {
     expect(xCSharp, xD - (blackWidth / 2));
   });
 
-  testWidgets('PracticeKeyboard prevents false red notes when recently hit',
-      (tester) async {
+  testWidgets('PracticeKeyboard prevents false red notes when recently hit', (
+    tester,
+  ) async {
     // BUG FIX TEST: Regression test for "false red notes" bug
     // Scenario: Note was played correctly (HIT), but timing window moved forward
     // Result: targetNotes no longer contains the MIDI, but detectedNote still holds it
@@ -194,7 +195,9 @@ void main() {
     // Test passes if no exceptions thrown (visual verification would need golden tests)
   });
 
-  testWidgets('PracticeKeyboard shows green for expected notes', (tester) async {
+  testWidgets('PracticeKeyboard shows green for expected notes', (
+    tester,
+  ) async {
     const firstKey = 36;
     const lastKey = 96;
     const blackKeys = [1, 3, 6, 8, 10];

@@ -460,7 +460,8 @@ class MicEngine {
         if (matchingEvents.length >= 2) {
           // Sort by time and calculate duration from first to last detection
           matchingEvents.sort((a, b) => a.tSec.compareTo(b.tSec));
-          heldDurationSec = matchingEvents.last.tSec - matchingEvents.first.tSec;
+          heldDurationSec =
+              matchingEvents.last.tSec - matchingEvents.first.tSec;
         } else if (matchingEvents.length == 1) {
           // Single event = minimal held duration (use debounce as minimum)
           heldDurationSec = eventDebounceSec;
@@ -650,7 +651,9 @@ class NoteDecision {
   /// Solution: A HIT note gets minimum 0.7 sustainRatio (played correctly but
   /// held duration unmeasurable), scaling up to 1.0 based on actual held time.
   double get sustainRatio {
-    if (heldDurationSec == null || expectedDurationSec == null || expectedDurationSec! <= 0) {
+    if (heldDurationSec == null ||
+        expectedDurationSec == null ||
+        expectedDurationSec! <= 0) {
       return 1.0; // Default to 100% if no duration data
     }
 
@@ -661,7 +664,8 @@ class NoteDecision {
     // This ensures a correctly played note doesn't get penalized unfairly
     // Scale: 0.7 (minimum) to 1.0 (full sustain detected)
     const minSustainForHit = 0.7;
-    final scaledRatio = minSustainForHit + (rawRatio * (1.0 - minSustainForHit));
+    final scaledRatio =
+        minSustainForHit + (rawRatio * (1.0 - minSustainForHit));
 
     return scaledRatio.clamp(0.0, 1.0);
   }

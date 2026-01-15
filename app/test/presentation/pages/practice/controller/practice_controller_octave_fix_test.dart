@@ -17,53 +17,49 @@ void main() {
       );
 
       controller = PracticeController(
-        scoringEngine: PracticeScoringEngine(
-          config: const ScoringConfig(),
-        ),
-        matcher: NoteMatcher(
-          windowMs: 300,
-          pitchEquals: micPitchMatch,
-        ),
+        scoringEngine: PracticeScoringEngine(config: const ScoringConfig()),
+        matcher: NoteMatcher(windowMs: 300, pitchEquals: micPitchMatch),
         logger: logger,
       );
     });
 
-    test('BUG #1: corrects microphone subharmonic (48 -> 60) to allow match', () {
-      const sessionId = 's1';
-      final expected = [
-        ExpectedNote(index: 0, midi: 60, tExpectedMs: 1000),
-      ];
+    test(
+      'BUG #1: corrects microphone subharmonic (48 -> 60) to allow match',
+      () {
+        const sessionId = 's1';
+        final expected = [ExpectedNote(index: 0, midi: 60, tExpectedMs: 1000)];
 
-      controller.startPractice(sessionId: sessionId, expectedNotes: expected);
+        controller.startPractice(sessionId: sessionId, expectedNotes: expected);
 
-      // Micro detects C3 (48) while expected is C4 (60)
-      // Octave fix should correct 48→60 since pitch-class matches
-      controller.onPlayedNote(
-        PracticeController.createPlayedEvent(
-          midi: 48,
-          tPlayedMs: 1000,
-          source: NoteSource.microphone,
-        ),
-      );
+        // Micro detects C3 (48) while expected is C4 (60)
+        // Octave fix should correct 48→60 since pitch-class matches
+        controller.onPlayedNote(
+          PracticeController.createPlayedEvent(
+            midi: 48,
+            tPlayedMs: 1000,
+            source: NoteSource.microphone,
+          ),
+        );
 
-      // Should match and score as HIT (perfect/good/ok)
-      expect(
-        controller.state.scoringState.perfectCount +
-            controller.state.scoringState.goodCount +
-            controller.state.scoringState.okCount,
-        1,
-        reason: 'Octave fix should enable match',
-      );
-      expect(controller.state.scoringState.wrongCount, 0);
-      expect(controller.state.scoringState.totalScore, greaterThan(0));
+        // Should match and score as HIT (perfect/good/ok)
+        expect(
+          controller.state.scoringState.perfectCount +
+              controller.state.scoringState.goodCount +
+              controller.state.scoringState.okCount,
+          1,
+          reason: 'Octave fix should enable match',
+        );
+        expect(controller.state.scoringState.wrongCount, 0);
+        expect(controller.state.scoringState.totalScore, greaterThan(0));
 
-      final resolutions = logger.getResolutionLogsForSession(sessionId);
-      expect(resolutions.length, 1);
-      expect(
-        resolutions.first.grade,
-        isIn([HitGrade.perfect, HitGrade.good, HitGrade.ok]),
-      );
-    });
+        final resolutions = logger.getResolutionLogsForSession(sessionId);
+        expect(resolutions.length, 1);
+        expect(
+          resolutions.first.grade,
+          isIn([HitGrade.perfect, HitGrade.good, HitGrade.ok]),
+        );
+      },
+    );
 
     test('BUG #1: does NOT correct octave if pitch-class does not match', () {
       const sessionId = 's2';
@@ -92,9 +88,7 @@ void main() {
 
     test('BUG #1: does NOT correct MIDI source events (only microphone)', () {
       const sessionId = 's3';
-      final expected = [
-        ExpectedNote(index: 0, midi: 60, tExpectedMs: 1000),
-      ];
+      final expected = [ExpectedNote(index: 0, midi: 60, tExpectedMs: 1000)];
 
       controller.startPractice(sessionId: sessionId, expectedNotes: expected);
 

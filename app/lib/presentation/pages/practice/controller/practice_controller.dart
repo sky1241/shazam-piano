@@ -71,7 +71,7 @@ class PracticeController extends StateNotifier<PracticeViewState> {
   // Solution: Ajouter latence micro (~300ms) avant de déclarer miss
   // ChatGPT analysis: dt observés = 0.259-0.485s (moyenne ~300ms)
   static const double _micLatencyMs = 300.0;
-  
+
   // Tail window for timeout detection (matches MicEngine tailWindowSec)
   static const double _tailWindowMs = 450.0;
 
@@ -87,7 +87,8 @@ class PracticeController extends StateNotifier<PracticeViewState> {
   List<ExpectedNote> _expectedNotes = [];
   List<PlayedNoteEvent> _playedBuffer = [];
   Set<String> _consumedPlayedIds = {};
-  Set<int> _resolvedExpectedIndices = {}; // Track resolved notes to prevent double-resolve
+  Set<int> _resolvedExpectedIndices =
+      {}; // Track resolved notes to prevent double-resolve
   int _nextExpectedIndex = 0;
 
   // Scoring state (mutable, updated in-place)
@@ -170,11 +171,7 @@ class PracticeController extends StateNotifier<PracticeViewState> {
     // Resolve each unresolved note as MISS
     for (final idx in unresolvedIndices) {
       _resolvedExpectedIndices.add(idx);
-      _resolveExpectedNote(
-        expectedIndex: idx,
-        matchedEvent: null,
-        dtMs: null,
-      );
+      _resolveExpectedNote(expectedIndex: idx, matchedEvent: null, dtMs: null);
     }
   }
 
@@ -206,7 +203,7 @@ class PracticeController extends StateNotifier<PracticeViewState> {
           forceMatchExpectedIndex < _expectedNotes.length &&
           !_resolvedExpectedIndices.contains(forceMatchExpectedIndex)) {
         final expectedNote = _expectedNotes[forceMatchExpectedIndex];
-        
+
         // Apply octave fix if needed
         // CRITICAL: Include the forced note itself in activeExpected for octave fix
         // Handle both forward and backward matches (forced index can be < _nextExpectedIndex)
@@ -218,32 +215,36 @@ class PracticeController extends StateNotifier<PracticeViewState> {
         final forcedEnd = forceMatchExpectedIndex + 1;
         final scanEndIndex = (naturalEnd > forcedEnd ? naturalEnd : forcedEnd)
             .clamp(scanStartIndex, _expectedNotes.length);
-        final activeExpected = _expectedNotes.sublist(scanStartIndex, scanEndIndex);
+        final activeExpected = _expectedNotes.sublist(
+          scanStartIndex,
+          scanEndIndex,
+        );
         final playedEvent = _maybeFixDownOctave(event, activeExpected);
-        
+
         // Add to buffer
         _playedBuffer.add(playedEvent);
-        
+
         // Mark consumed immediately
         _consumedPlayedIds.add(playedEvent.id);
-        
+
         // FIX BUG #6 (SESSION4): Use MicEngine's dtMs instead of recalculating
         // MicEngine window: [start-120ms ... end+450ms] (can be 2s+ for long notes)
         // PracticeController would calculate dt from note.start only (≤450ms threshold)
         // These are INCOMPATIBLE - HITs at 570ms+ after start are valid in MicEngine
         // but rejected by PracticeController. Use MicEngine's dt (calculated correctly).
-        final dtMs = micEngineDtMs ?? (playedEvent.tPlayedMs - expectedNote.tExpectedMs);
-        
+        final dtMs =
+            micEngineDtMs ?? (playedEvent.tPlayedMs - expectedNote.tExpectedMs);
+
         // Mark as resolved BEFORE calling _resolveExpectedNote to prevent recursion
         _resolvedExpectedIndices.add(forceMatchExpectedIndex);
-        
+
         // Resolve with MicEngine's dt
         _resolveExpectedNote(
           expectedIndex: forceMatchExpectedIndex,
           matchedEvent: playedEvent,
           dtMs: dtMs,
         );
-        
+
         return;
       }
     }
@@ -260,7 +261,10 @@ class PracticeController extends StateNotifier<PracticeViewState> {
     // FIX BUG #1 (SESSION4): Octave subharmonic correction AVANT buffering
     // CRITICAL: Buffer DOIT stocker event corrigé, sinon _isMatchForExpected
     // classifiera les HIT comme MISS plus tard dans wasMatched checks
-    final activeExpected = _expectedNotes.sublist(_nextExpectedIndex, scanEndIndex);
+    final activeExpected = _expectedNotes.sublist(
+      _nextExpectedIndex,
+      scanEndIndex,
+    );
     final playedEvent = _maybeFixDownOctave(event, activeExpected);
 
     // Add to buffer (corrected event)
@@ -292,7 +296,7 @@ class PracticeController extends StateNotifier<PracticeViewState> {
       if (candidate != null) {
         // Match found!
         _resolvedExpectedIndices.add(i);
-        
+
         _resolveExpectedNote(
           expectedIndex: i,
           matchedEvent: playedEvent,
@@ -332,14 +336,15 @@ class PracticeController extends StateNotifier<PracticeViewState> {
     // Process all expected notes that are now "late" (missed)
     while (_nextExpectedIndex < _expectedNotes.length) {
       final expected = _expectedNotes[_nextExpectedIndex];
-      
+
       // CRITICAL: Timeout must match MicEngine logic: note.end + tailWindow + latency
       // = (tExpected + duration) + tailWindow + latency
       // This ensures controller doesn't mark MISS before MicEngine for long notes
-      final timeoutMs = expected.tExpectedMs + 
-                       (expected.durationMs ?? 0) + 
-                       _tailWindowMs + 
-                       _micLatencyMs;
+      final timeoutMs =
+          expected.tExpectedMs +
+          (expected.durationMs ?? 0) +
+          _tailWindowMs +
+          _micLatencyMs;
 
       if (currentTimeMs > timeoutMs) {
         // Skip if already resolved (by bridge or normal matching)
@@ -477,7 +482,8 @@ class PracticeController extends StateNotifier<PracticeViewState> {
         playedId: event.id,
         pitchKey: event.midi,
         tPlayedMs: event.tPlayedMs,
-        reason: 'Pitch-class matches expected near same time (likely octave/harmonic artifact)',
+        reason:
+            'Pitch-class matches expected near same time (likely octave/harmonic artifact)',
       );
       return;
     }
@@ -640,7 +646,8 @@ final practiceControllerProvider =
         // CRITICAL: Must be >= ScoringEngine.okThresholdMs (450ms) to allow "ok" grades
         // Previous: 300ms caused events at 300-450ms to be rejected by matcher
         // but accepted by scorer, resulting in unmatched hits marked as MISS
-        windowMs: 450, // Matches MicEngine tailWindowSec and ScoringEngine okThreshold
+        windowMs:
+            450, // Matches MicEngine tailWindowSec and ScoringEngine okThreshold
         pitchEquals: (p1, p2) => p1 == p2, // Placeholder, will use real logic
       );
 
