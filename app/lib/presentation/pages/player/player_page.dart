@@ -272,11 +272,11 @@ class _PlayerPageState extends State<PlayerPage> {
                           'Durée',
                           widget.isUnlocked
                               ? 'Vidéo complète'
-                              : 'Aperçu gratuit (16 secondes)',
+                              : 'Aperçu gratuit (12 secondes)',
                           subLabel: _expertMode
                               ? (widget.isUnlocked
                                     ? 'tech: full video'
-                                    : 'tech: 16s preview')
+                                    : 'tech: 12s preview')
                               : null,
                         ),
                         if (!widget.isUnlocked) ...[

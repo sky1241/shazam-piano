@@ -20,7 +20,7 @@ class AppConstants {
   static const int maxUploadSizeMB = 10;
 
   // Video
-  static const int previewDurationSec = 16;
+  static const int previewDurationSec = 12;
 
   // IAP
   static const String iapProductId = 'piano_all_levels_1usd';

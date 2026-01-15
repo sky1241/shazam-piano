@@ -21,9 +21,13 @@ class PracticeKeyboard extends StatelessWidget {
   final bool successFlashActive;
   final int? wrongFlashNote;
   final bool wrongFlashActive;
+  // FIX BUG SESSION-005 #4: Miss flash for red keyboard feedback
+  final int? missFlashNote;
+  final bool missFlashActive;
   final double Function(int) noteToXFn;
   final bool showDebugLabels;
   final bool showMidiNumbers;
+  final Set<int> recentlyHitNotes; // FIX: Track recently validated HIT notes
 
   const PracticeKeyboard({
     super.key,
@@ -41,9 +45,12 @@ class PracticeKeyboard extends StatelessWidget {
     this.successFlashActive = false,
     this.wrongFlashNote,
     this.wrongFlashActive = false,
+    this.missFlashNote, // FIX BUG SESSION-005 #4
+    this.missFlashActive = false, // FIX BUG SESSION-005 #4
     required this.noteToXFn,
     this.showDebugLabels = false,
     this.showMidiNumbers = false,
+    this.recentlyHitNotes = const {}, // FIX: Default to empty set
   });
 
   static double noteToX({
@@ -165,10 +172,9 @@ class PracticeKeyboard extends StatelessWidget {
   }) {
     final isExpected = targetNotes.contains(note);
     final isDetected = note == detectedNote;
-
-    // BUG 3 FIX: Red color for wrong note WHILE playing (not just flash)
-    final isWrong =
-        isDetected && !isExpected; // Detected but not expected = wrong
+    // FIX BUG SESSION-004 #1: Check if note was recently validated as HIT
+    // This prevents the "green switch" when uiDetectedMidi expires but note is still active
+    final wasRecentlyHit = recentlyHitNotes.contains(note);
 
     Color keyColor;
     if (successFlashActive &&
@@ -178,14 +184,26 @@ class PracticeKeyboard extends StatelessWidget {
     } else if (wrongFlashActive &&
         wrongFlashNote != null &&
         note == wrongFlashNote) {
+      // FIX BUG P0 (PHANTOM RED): Only show red via wrongFlash (scored as wrong)
+      // Removed standalone isWrong condition - it caused phantom reds from mic noise
       keyColor = AppColors.error.withValues(alpha: 0.9);
-    } else if (isWrong) {
-      // BUG 3 FIX: Red while playing wrong note
-      keyColor = AppColors.error.withValues(alpha: 0.85);
+    } else if (missFlashActive &&
+        missFlashNote != null &&
+        note == missFlashNote) {
+      // FIX BUG SESSION-005 #4: Show red for missed notes (expected but not played)
+      keyColor = AppColors.error.withValues(alpha: 0.9);
     } else if (isDetected && isExpected) {
+      // FIX BUG (GHOST GREEN): Only show green if note is CURRENTLY expected
+      keyColor = AppColors.success;
+    } else if (isExpected && wasRecentlyHit) {
+      // FIX BUG SESSION-004 #1: Note was hit and is still expected = keep solid green
+      // This prevents the visual "switch" between solid green and semi-transparent
       keyColor = AppColors.success;
     } else if (isExpected) {
-      keyColor = AppColors.primary.withValues(alpha: 0.5);
+      // FIX BUG SESSION-006: Unify green color with falling notes
+      // Use same alpha (0.85) as falling notes for visual consistency
+      // Before: alpha 0.5 caused different shade of green on white keys
+      keyColor = AppColors.success.withValues(alpha: 0.85);
     } else if (isBlack) {
       keyColor = AppColors.blackKey;
     } else {

@@ -125,7 +125,7 @@ class VideoTile extends StatelessWidget {
                     ),
                   ),
                   child: Text(
-                    '16s preview',
+                    '12s preview',
                     style: AppTextStyles.caption.copyWith(
                       color: Colors.white,
                       fontWeight: FontWeight.w600,
