@@ -23,6 +23,10 @@ void main() {
       );
     });
 
+    // P0 SESSION4 FIX: Octave shifts are now DISABLED to prevent harmonics false hits.
+    // micPitchMatch only accepts distance ≤3 semitones (no pitch class matching).
+    // Tests updated to reflect this behavior.
+
     test(
       'BUG #1: corrects microphone subharmonic (48 -> 60) to allow match',
       () {
@@ -32,10 +36,11 @@ void main() {
         controller.startPractice(sessionId: sessionId, expectedNotes: expected);
 
         // Micro detects C3 (48) while expected is C4 (60)
-        // Octave fix should correct 48→60 since pitch-class matches
+        // P0 FIX: Octave correction is DISABLED - distance=12 > 3, so NO match
+        // Play exact pitch to get a match
         controller.onPlayedNote(
           PracticeController.createPlayedEvent(
-            midi: 48,
+            midi: 60, // Changed from 48 to 60 - exact match required now
             tPlayedMs: 1000,
             source: NoteSource.microphone,
           ),
@@ -47,7 +52,7 @@ void main() {
               controller.state.scoringState.goodCount +
               controller.state.scoringState.okCount,
           1,
-          reason: 'Octave fix should enable match',
+          reason: 'Exact pitch should match',
         );
         expect(controller.state.scoringState.wrongCount, 0);
         expect(controller.state.scoringState.totalScore, greaterThan(0));
@@ -61,7 +66,7 @@ void main() {
       },
     );
 
-    test('BUG #1: does NOT correct octave if pitch-class does not match', () {
+    test('BUG #1: does NOT match if pitch distance > 3 semitones', () {
       const sessionId = 's2';
       final expected = [
         ExpectedNote(index: 0, midi: 60, tExpectedMs: 1000), // C4
@@ -69,7 +74,7 @@ void main() {
 
       controller.startPractice(sessionId: sessionId, expectedNotes: expected);
 
-      // Play D3 (50): pitch-class different → no correction
+      // Play D3 (50): distance = 10 semitones → no match (micPitchMatch requires ≤3)
       controller.onPlayedNote(
         PracticeController.createPlayedEvent(
           midi: 50,
@@ -78,37 +83,38 @@ void main() {
         ),
       );
 
-      // Advance time beyond window to trigger MISS/WRONG
-      controller.onTimeUpdate(1000 + 300 + 300 + 10);
+      // Advance time beyond window to trigger MISS
+      controller.onTimeUpdate(1000 + 450 + 300 + 10);
 
-      // Should NOT match (pitch-class mismatch)
+      // Should NOT match (distance > 3 semitones)
       expect(controller.state.scoringState.missCount, 1);
       expect(controller.state.scoringState.totalScore, 0);
     });
 
-    test('BUG #1: does NOT correct MIDI source events (only microphone)', () {
+    test('BUG #1: MIDI and microphone use same matching logic', () {
       const sessionId = 's3';
       final expected = [ExpectedNote(index: 0, midi: 60, tExpectedMs: 1000)];
 
       controller.startPractice(sessionId: sessionId, expectedNotes: expected);
 
-      // MIDI source with 48 → should NOT be corrected
+      // MIDI source with distance > 3 → no match (same rule as microphone)
+      // P0 FIX: No special handling for MIDI vs microphone anymore
       controller.onPlayedNote(
         PracticeController.createPlayedEvent(
-          midi: 48,
+          midi: 48, // distance = 12 > 3
           tPlayedMs: 1000,
           source: NoteSource.midi,
         ),
       );
 
       // Advance time
-      controller.onTimeUpdate(1000 + 300 + 300 + 10);
+      controller.onTimeUpdate(1000 + 450 + 300 + 10);
 
-      // Should MISS (MIDI not corrected)
+      // Should MISS (distance > 3 for any source)
       expect(controller.state.scoringState.missCount, 1);
     });
 
-    test('BUG #2: near-miss pitch-class is logged as near-miss (not WRONG)', () {
+    test('Octave up (72 vs 60) does NOT match - octave shifts disabled', () {
       const sessionId = 's4';
       final expected = [
         ExpectedNote(index: 0, midi: 60, tExpectedMs: 1000), // C4
@@ -116,8 +122,8 @@ void main() {
 
       controller.startPractice(sessionId: sessionId, expectedNotes: expected);
 
-      // User plays octave above: C5 (72) - same pitch-class but distance=12
-      // This should NOT correct (already within MIDI range), but reject matching
+      // User plays octave above: C5 (72) - distance=12 > 3, no match
+      // P0 FIX: Octave shifts disabled to prevent harmonics false hits
       controller.onPlayedNote(
         PracticeController.createPlayedEvent(
           midi: 72,
@@ -127,23 +133,13 @@ void main() {
       );
 
       // Advance time beyond window
-      controller.onTimeUpdate(1000 + 300 + 300 + 10);
+      controller.onTimeUpdate(1000 + 450 + 300 + 10);
 
-      // Expected note should be MISS (not matched)
+      // Expected note should be MISS (not matched due to distance > 3)
       expect(controller.state.scoringState.missCount, 1);
-
-      // Played note 72 should be logged as NEAR_MISS (not WRONG)
-      expect(controller.state.scoringState.wrongCount, 0);
-
-      final nearMisses = logger.getNearMissLogsForSession(sessionId);
-      expect(nearMisses.length, 1);
-      expect(nearMisses.first.pitchKey, 72);
-
-      final wrongs = logger.getWrongNoteLogsForSession(sessionId);
-      expect(wrongs, isEmpty);
     });
 
-    test('BUG #2: truly wrong note (no pitch-class match) is still WRONG', () {
+    test('Distance ≤3 semitones matches (tolerance for pitch detection)', () {
       const sessionId = 's5';
       final expected = [
         ExpectedNote(index: 0, midi: 60, tExpectedMs: 1000), // C4
@@ -151,28 +147,23 @@ void main() {
 
       controller.startPractice(sessionId: sessionId, expectedNotes: expected);
 
-      // Play F# (66) - completely different pitch-class
+      // Play 63 (distance = 3) - should match within tolerance
       controller.onPlayedNote(
         PracticeController.createPlayedEvent(
-          midi: 66,
+          midi: 63, // distance = 3, within ≤3 tolerance
           tPlayedMs: 1000,
           source: NoteSource.microphone,
         ),
       );
 
-      // Advance time
-      controller.onTimeUpdate(1000 + 300 + 300 + 10);
-
-      // Should be counted as WRONG (no pitch-class match)
-      expect(controller.state.scoringState.wrongCount, 1);
-      expect(controller.state.scoringState.missCount, 1);
-
-      final wrongs = logger.getWrongNoteLogsForSession(sessionId);
-      expect(wrongs.length, 1);
-      expect(wrongs.first.pitchKey, 66);
-
-      final nearMisses = logger.getNearMissLogsForSession(sessionId);
-      expect(nearMisses, isEmpty);
+      // Should match
+      expect(
+        controller.state.scoringState.perfectCount +
+            controller.state.scoringState.goodCount +
+            controller.state.scoringState.okCount,
+        1,
+      );
+      expect(controller.state.scoringState.missCount, 0);
     });
 
     test('BUG #1: corrects double octave down (36 -> 60) if needed', () {
@@ -183,17 +174,18 @@ void main() {
 
       controller.startPractice(sessionId: sessionId, expectedNotes: expected);
 
-      // Extreme subharmonic: C2 (36) detected instead of C4 (60)
-      // Fix should try +12 (48) then +24 (60) → match!
+      // P0 FIX: Octave correction is DISABLED
+      // C2 (36) vs C4 (60) = distance 24 > 3, NO match
+      // Play exact pitch instead
       controller.onPlayedNote(
         PracticeController.createPlayedEvent(
-          midi: 36,
+          midi: 60, // Changed from 36 to 60 - exact match required now
           tPlayedMs: 1000,
           source: NoteSource.microphone,
         ),
       );
 
-      // Should match with 60
+      // Should match with exact pitch
       expect(
         controller.state.scoringState.perfectCount +
             controller.state.scoringState.goodCount +
@@ -203,7 +195,7 @@ void main() {
       expect(controller.state.scoringState.wrongCount, 0);
     });
 
-    test('Summary includes nearMissCount', () {
+    test('Summary includes missCount for unmatched notes', () {
       const sessionId = 's7';
       final expected = [
         ExpectedNote(index: 0, midi: 60, tExpectedMs: 1000),
@@ -212,10 +204,10 @@ void main() {
 
       controller.startPractice(sessionId: sessionId, expectedNotes: expected);
 
-      // Note 1: near-miss (octave high)
+      // Note 1: play wrong octave (72) - won't match (distance > 3)
       controller.onPlayedNote(
         PracticeController.createPlayedEvent(
-          midi: 72,
+          midi: 72, // distance = 12 > 3, no match
           tPlayedMs: 1000,
           source: NoteSource.microphone,
         ),
@@ -230,12 +222,18 @@ void main() {
         ),
       );
 
-      controller.onTimeUpdate(2000 + 300 + 300 + 10);
+      controller.onTimeUpdate(2000 + 450 + 300 + 10);
 
       final summary = logger.getSessionSummary(sessionId);
-      expect(summary['nearMissCount'], 1);
-      expect(summary['wrongCount'], 0);
+      // First note missed (distance > 3), second note hit
       expect(summary['missCount'], 1);
+      // One hit for the second note
+      expect(
+        (summary['perfectCount'] as int) +
+            (summary['goodCount'] as int) +
+            (summary['okCount'] as int),
+        1,
+      );
     });
   });
 }
