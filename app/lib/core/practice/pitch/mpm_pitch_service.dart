@@ -1,48 +1,53 @@
 import 'dart:math';
 import 'dart:typed_data';
 
-/// Enhanced Pitch Detector using MPM (McLeod Pitch Method)
-/// Détecte la fréquence fondamentale d'un signal audio monophonique
+import 'pitch_detection_service.dart';
+
+/// MPM (McLeod Pitch Method) implementation of PitchDetectionService.
 ///
-/// SESSION-008 Improvements:
-/// - Anti-subharmonic filtering (rejects octave-down false detections)
-/// - Higher clarity threshold for better accuracy
-/// - RMS-based confidence scoring
-/// - Expected pitch hint for smarter octave selection
-class PitchDetector {
-  static const int sampleRate = 44100;
-  static const int bufferSize = 2048;
-  // SESSION-008: Increased from 0.75 to 0.80 for better accuracy
-  // Reduces false positives from harmonics/noise
-  static const double clarityThreshold = 0.80;
-  static const double minUsefulHz = 50.0;
-  // FIX PASS1: Max tau for piano range (A0 = 27.5Hz => tau ~1603)
-  // Piano lowest note: A0 (27.5Hz) => maxTau = 44100/27.5 = 1603
-  // Add 10% margin => 1763
-  static const int maxTauPiano = 1763;
+/// Wraps the existing PitchDetector logic behind the abstract interface.
+/// This allows easy swapping with YIN or other algorithms.
+///
+/// STEP 1 (YIN Integration): MPM implementation behind stable interface.
+/// STEP 3: Uses extends to inherit detectPitchAsync default implementation.
+class MpmPitchService extends PitchDetectionService {
+  MpmPitchService({
+    this.clarityThreshold = 0.80,
+    this.subharmonicClarityRatio = 0.85,
+  });
 
-  // SESSION-008: Anti-subharmonic thresholds
-  // If a peak at 2x frequency has clarity within this ratio, prefer the higher octave
-  static const double subharmonicClarityRatio = 0.85;
+  /// Clarity threshold for accepting a pitch (0.0 to 1.0).
+  /// Higher = stricter, fewer false positives.
+  final double clarityThreshold;
 
-  /// Detect pitch from audio samples
-  /// Returns frequency in Hz, or null if no clear pitch
-  /// [sampleRate] - Optional runtime sample rate (defaults to 44100)
+  /// Ratio for anti-subharmonic filtering.
+  /// If octave-up peak has clarity >= this * bestClarity, prefer higher octave.
+  final double subharmonicClarityRatio;
+
+  @override
+  String get algorithmName => 'MPM';
+
+  @override
+  int get defaultSampleRate => 44100;
+
+  @override
+  int get requiredBufferSize => 2048;
+
+  // Max tau for piano range (A0 = 27.5Hz => tau ~1603, +10% margin)
+  static const int _maxTauPiano = 1763;
+  static const double _minUsefulHz = 50.0;
+
+  @override
   double? detectPitch(Float32List samples, {int? sampleRate}) {
-    if (samples.length < bufferSize) {
+    if (samples.length < requiredBufferSize) {
       return null;
     }
 
-    // Use MPM algorithm with runtime sample rate
-    final frequency = _mpmPitch(
-      samples,
-      sampleRate ?? PitchDetector.sampleRate,
-    );
-
-    return frequency;
+    final effectiveSampleRate = sampleRate ?? defaultSampleRate;
+    return _mpmPitch(samples, effectiveSampleRate);
   }
 
-  /// McLeod Pitch Method with anti-subharmonic filtering
+  /// McLeod Pitch Method with anti-subharmonic filtering.
   double? _mpmPitch(Float32List samples, int effectiveSampleRate) {
     // Step 1: Normalized Square Difference Function (NSDF)
     final nsdf = _normalizedSquareDifference(samples, effectiveSampleRate);
@@ -80,10 +85,8 @@ class PitchDetector {
       return null;
     }
 
-    // SESSION-008: Anti-subharmonic correction
+    // Anti-subharmonic correction
     // Check if there's a peak at half the lag (2x frequency = octave up)
-    // Piano often detects subharmonic (octave down) due to rich harmonics
-    // If the octave-up peak has similar clarity, prefer it
     final halfLag = bestPeak ~/ 2;
     if (halfLag > 10 && halfLag < nsdf.length) {
       // Look for a peak near halfLag (±5% tolerance)
@@ -103,8 +106,10 @@ class PitchDetector {
       // prefer the higher frequency (it's likely the true fundamental)
       if (octaveUpPeak != null &&
           octaveUpClarity >= subharmonicClarityRatio * maxClarity) {
-        final octaveUpInterpolated =
-            _parabolicInterpolation(nsdf, octaveUpPeak);
+        final octaveUpInterpolated = _parabolicInterpolation(
+          nsdf,
+          octaveUpPeak,
+        );
         final octaveUpFreq = effectiveSampleRate / octaveUpInterpolated;
 
         // Verify it's roughly 2x the original (within 10% tolerance)
@@ -118,16 +123,15 @@ class PitchDetector {
     return frequency;
   }
 
-  /// Normalized Square Difference Function
+  /// Normalized Square Difference Function.
   List<double> _normalizedSquareDifference(
     Float32List samples,
     int effectiveSampleRate,
   ) {
     final n = samples.length;
-    // FIX PASS1: Bound NSDF loop to maxTauPiano instead of full n
-    // Reduces O(n²) ops from ~4M to ~1.5M per chunk (60% reduction)
-    final maxTauByFreq = ((effectiveSampleRate / minUsefulHz) * 1.1).floor();
-    final maxTau = min(n, min(maxTauPiano, maxTauByFreq));
+    // Bound NSDF loop to maxTauPiano instead of full n
+    final maxTauByFreq = ((effectiveSampleRate / _minUsefulHz) * 1.1).floor();
+    final maxTau = min(n, min(_maxTauPiano, maxTauByFreq));
     final nsdf = List<double>.filled(maxTau, 0);
 
     // Autocorrelation
@@ -147,7 +151,7 @@ class PitchDetector {
     return nsdf;
   }
 
-  /// Find peaks in NSDF
+  /// Find peaks in NSDF.
   List<int> _pickPeaks(List<double> nsdf) {
     final peaks = <int>[];
     int pos = 0;
@@ -173,7 +177,6 @@ class PitchDetector {
         }
 
         // Is this a significant peak?
-        // Relaxed from 0.8 to 0.65 for better piano harmonic detection
         if (curMaxPos > 0 && nsdf[curMaxPos] > 0.65) {
           peaks.add(curMaxPos);
         }
@@ -183,7 +186,7 @@ class PitchDetector {
     return peaks;
   }
 
-  /// Parabolic interpolation for sub-sample accuracy
+  /// Parabolic interpolation for sub-sample accuracy.
   double _parabolicInterpolation(List<double> nsdf, int peak) {
     if (peak < 1 || peak >= nsdf.length - 1) {
       return peak.toDouble();
@@ -198,38 +201,13 @@ class PitchDetector {
     return peak + adjustment;
   }
 
-  /// Convert frequency to MIDI note number
+  @override
   int frequencyToMidiNote(double frequency) {
     return (69 + 12 * log(frequency / 440) / log(2)).round();
   }
 
-  /// Convert MIDI note to frequency
+  @override
   double midiNoteToFrequency(int note) {
     return (440 * pow(2, (note - 69) / 12)).toDouble();
   }
-
-  /// Calculate cents difference between two frequencies
-  double centsDifference(double freq1, double freq2) {
-    return 1200 * log(freq2 / freq1) / log(2);
-  }
-
-  /// Classify note accuracy
-  NoteAccuracy classifyAccuracy(double centsError) {
-    final absError = centsError.abs();
-
-    if (absError <= 25) {
-      return NoteAccuracy.correct;
-    } else if (absError <= 50) {
-      return NoteAccuracy.close;
-    } else {
-      return NoteAccuracy.wrong;
-    }
-  }
-}
-
-enum NoteAccuracy {
-  correct, // ±25 cents
-  close, // ±25-50 cents
-  wrong, // >50 cents
-  miss, // No note detected
 }

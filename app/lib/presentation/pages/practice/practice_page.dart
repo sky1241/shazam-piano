@@ -2778,12 +2778,10 @@ class _PracticePageState extends ConsumerState<PracticePage>
             if (_accuracy != NoteAccuracy.correct) {
               _accuracy = NoteAccuracy.wrong;
             }
-            // FIX BUG SESSION-005 #4: Show red on keyboard for missed notes
-            if (decision.expectedMidi != null) {
-              _lastMissNote = decision.expectedMidi;
-              _lastMissHitAt = now;
-              if (mounted) setState(() {});
-            }
+            // FIX BUG SESSION-007 #2: REMOVED red keyboard flash for missed notes
+            // Miss = note NOT played → keyboard should stay BLACK (no feedback)
+            // Keyboard reflects only PLAYED notes, not expected unplayed notes
+            // Previous behavior incorrectly showed red for notes user didn't play
             break;
 
           case mic.DecisionType.wrongFlash:
@@ -2824,9 +2822,6 @@ class _PracticePageState extends ConsumerState<PracticePage>
               _lastWrongMidi = decision.detectedMidi;
               _lastWrongAt = now;
 
-              final stateBefore = _newController!.currentScoringState;
-              final wrongCountBefore = stateBefore.wrongCount;
-
               final playedEvent = PracticeController.createPlayedEvent(
                 midi: decision.detectedMidi!,
                 tPlayedMs: elapsed * 1000.0,
@@ -2834,16 +2829,17 @@ class _PracticePageState extends ConsumerState<PracticePage>
               );
               _newController!.onPlayedNote(playedEvent);
 
-              final stateAfter = _newController!.currentScoringState;
-              final wrongCountAfter = stateAfter.wrongCount;
-
-              if (wrongCountAfter > wrongCountBefore) {
-                _registerWrongHit(
-                  detectedNote: decision.detectedMidi!,
-                  now: now,
-                );
-                setState(() {});
-              }
+              // FIX BUG SESSION-008 #3: Always trigger red keyboard flash for wrongFlash
+              // Before: Only called _registerWrongHit if wrongCount increased
+              // Problem: PracticeController.onPlayedNote() doesn't immediately mark
+              // notes as "wrong" - detection happens later in onTimeUpdate()
+              // Result: wrongCount didn't increase → no red flash on keyboard
+              // Now: Always show red feedback when MicEngine detects a wrong note
+              _registerWrongHit(
+                detectedNote: decision.detectedMidi!,
+                now: now,
+              );
+              setState(() {});
             }
 
             _accuracy = NoteAccuracy.wrong;
@@ -4418,8 +4414,10 @@ class _PracticePageState extends ConsumerState<PracticePage>
     // Previous condition blocked countdown rendering, causing "notes pop mid-screen" bug
     // FIX BUG 4: Wait 100ms after countdown start for layout to stabilize
     // Prevents notes appearing "en bas" with incorrect overlayHeight
+    // FIX BUG SESSION-007 #4: Also check !_videoEndFired to prevent notes respawning after session end
     final shouldPaintNotes =
         (_practiceRunning || _practiceState == _PracticeState.countdown) &&
+        !_videoEndFired && // SESSION-007: Block painting after video ends
         elapsed != null &&
         _noteEvents.isNotEmpty &&
         _isLayoutStable(); // Only paint when layout is stable

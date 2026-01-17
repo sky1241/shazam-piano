@@ -42,6 +42,14 @@ class _HomePageState extends ConsumerState<HomePage>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _processNotifier = ref.read(processProvider.notifier);
+
+    // SESSION-008: Pre-request microphone permission at app load
+    // This ensures the permission popup appears immediately, not when tapping Record
+    // Result: stable recording start timing (no variable 1-2s delay)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(recordingProvider.notifier).preflightMicrophonePermission();
+    });
+
     _recordingSubscription = ref.listenManual(recordingProvider, (prev, next) {
       final wasRecording = prev?.isRecording ?? false;
       if (!wasRecording || next.isRecording) {

@@ -81,6 +81,9 @@ dependencies:
   flutter_midi_command: ^0.5.3
   sound_stream: ^0.4.2
 
+  # Pitch Detection (YIN algorithm)
+  pitch_detector_dart: ^0.0.7
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

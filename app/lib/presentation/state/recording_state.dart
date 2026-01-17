@@ -9,6 +9,9 @@ class RecordingState {
   final Duration? recordingDuration;
   final File? recordedFile;
   final String? error;
+  // SESSION-008: Track microphone permission status
+  // null = not yet checked, true = granted, false = denied
+  final bool? micPermissionGranted;
 
   const RecordingState({
     this.isRecording = false,
@@ -16,6 +19,7 @@ class RecordingState {
     this.recordingDuration,
     this.recordedFile,
     this.error,
+    this.micPermissionGranted,
   });
 
   RecordingState copyWith({
@@ -24,6 +28,7 @@ class RecordingState {
     Duration? recordingDuration,
     File? recordedFile,
     String? error,
+    bool? micPermissionGranted,
   }) {
     return RecordingState(
       isRecording: isRecording ?? this.isRecording,
@@ -31,10 +36,13 @@ class RecordingState {
       recordingDuration: recordingDuration ?? this.recordingDuration,
       recordedFile: recordedFile ?? this.recordedFile,
       error: error ?? this.error,
+      micPermissionGranted: micPermissionGranted ?? this.micPermissionGranted,
     );
   }
 
   bool get isIdle => !isRecording && !isProcessing;
   bool get hasRecording => recordedFile != null;
   bool get hasError => error != null;
+  // SESSION-008: Helper to check if permission is granted
+  bool get hasMicPermission => micPermissionGranted == true;
 }

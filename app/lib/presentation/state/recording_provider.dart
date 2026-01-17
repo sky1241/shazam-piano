@@ -27,14 +27,44 @@ class RecordingNotifier extends StateNotifier<RecordingState> {
   DateTime? _startTime;
   bool _isStopping = false;
   bool _recommendedLogged = false;
+  // SESSION-008: Track if permission was already checked
+  bool _permissionChecked = false;
+
+  /// SESSION-008: Pre-request microphone permission at app load
+  /// Call this from HomePage.initState() to avoid popup at record time
+  /// This stabilizes the recording start timing
+  Future<void> preflightMicrophonePermission() async {
+    // Avoid multiple calls
+    if (_permissionChecked) {
+      return;
+    }
+    _permissionChecked = true;
+
+    try {
+      final granted = await _recorder.hasPermission();
+      state = state.copyWith(micPermissionGranted: granted);
+      _logInfo('Preflight mic permission: ${granted ? "granted" : "denied"}');
+    } catch (e) {
+      _logWarning('Preflight mic permission failed: $e');
+      state = state.copyWith(micPermissionGranted: false);
+    }
+  }
 
   /// Start recording
   Future<void> startRecording() async {
     try {
-      // Check and request permission
-      if (!await _recorder.hasPermission()) {
-        state = state.copyWith(error: 'Microphone permission denied');
-        return;
+      // SESSION-008: Check cached permission status instead of prompting
+      // Permission should have been requested via preflightMicrophonePermission()
+      if (state.micPermissionGranted != true) {
+        // If permission not yet checked, check now (fallback)
+        if (state.micPermissionGranted == null) {
+          await preflightMicrophonePermission();
+        }
+        // If still not granted, abort
+        if (state.micPermissionGranted != true) {
+          state = state.copyWith(error: 'Microphone permission denied');
+          return;
+        }
       }
 
       // Get temp directory
@@ -143,9 +173,11 @@ class RecordingNotifier extends StateNotifier<RecordingState> {
     }
   }
 
-  /// Reset state
+  /// Reset state (preserves permission status)
   void reset() {
-    state = const RecordingState();
+    // SESSION-008: Preserve permission status across resets
+    final permissionStatus = state.micPermissionGranted;
+    state = RecordingState(micPermissionGranted: permissionStatus);
   }
 
   @override

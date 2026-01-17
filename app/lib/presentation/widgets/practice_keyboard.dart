@@ -187,24 +187,28 @@ class PracticeKeyboard extends StatelessWidget {
       // FIX BUG P0 (PHANTOM RED): Only show red via wrongFlash (scored as wrong)
       // Removed standalone isWrong condition - it caused phantom reds from mic noise
       keyColor = AppColors.error.withValues(alpha: 0.9);
-    } else if (missFlashActive &&
-        missFlashNote != null &&
-        note == missFlashNote) {
-      // FIX BUG SESSION-005 #4: Show red for missed notes (expected but not played)
-      keyColor = AppColors.error.withValues(alpha: 0.9);
-    } else if (isDetected && isExpected) {
+    }
+    // FIX BUG SESSION-007 #2: REMOVED missFlash red for missed notes
+    // Miss = note NOT played → keyboard stays BLACK (no feedback)
+    // Keyboard reflects only PLAYED notes, not unplayed expected notes
+    // Previously: missFlashActive && missFlashNote == note → red
+    // Now: removed - keyboard only shows feedback for PLAYED notes
+    else if (isDetected && isExpected) {
       // FIX BUG (GHOST GREEN): Only show green if note is CURRENTLY expected
       keyColor = AppColors.success;
     } else if (isExpected && wasRecentlyHit) {
       // FIX BUG SESSION-004 #1: Note was hit and is still expected = keep solid green
       // This prevents the visual "switch" between solid green and semi-transparent
       keyColor = AppColors.success;
-    } else if (isExpected) {
-      // FIX BUG SESSION-006: Unify green color with falling notes
-      // Use same alpha (0.85) as falling notes for visual consistency
-      // Before: alpha 0.5 caused different shade of green on white keys
-      keyColor = AppColors.success.withValues(alpha: 0.85);
-    } else if (isBlack) {
+    }
+    // FIX BUG SESSION-008 #1+2: REMOVED green highlight for unplayed expected notes
+    // Before: isExpected alone would light keyboard green even if note wasn't played
+    // This caused:
+    //   - BUG 1: Missed notes showing green keyboard (should stay black)
+    //   - BUG 2: "Double green" illusion when miss + next note same pitch
+    // Now: Keyboard only shows green if note is DETECTED or was RECENTLY HIT
+    // Expected-but-unplayed notes stay at their natural color (black/white)
+    else if (isBlack) {
       keyColor = AppColors.blackKey;
     } else {
       keyColor = AppColors.whiteKey;

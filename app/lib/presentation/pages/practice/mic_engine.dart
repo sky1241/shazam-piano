@@ -9,14 +9,19 @@ class MicEngine {
     required this.noteEvents,
     required this.hitNotes,
     required this.detectPitch,
-    this.headWindowSec = 0.12,
-    this.tailWindowSec = 0.45,
+    this.headWindowSec = 0.15, // SESSION-009: Increased for low-end tolerance
+    this.tailWindowSec = 0.60, // SESSION-009: Increased from 0.45 for high latency devices
     this.absMinRms = 0.0008,
     // FIX BUG SESSION-005: Réduire seuil confidence pour détecter fausses notes plus faibles
     // 0.35 → 0.25 permet de capter notes jouées doucement
     this.minConfForWrong = 0.25,
+    // SESSION-008: Minimum confidence to accept any pitch detection
+    // Ignores weak/noisy detections that are likely subharmonics or noise
+    this.minConfForPitch = 0.40,
     this.eventDebounceSec = 0.05,
     this.wrongFlashCooldownSec = 0.15,
+    // SESSION-009: Sustain filter - ignore previous note's pitch for wrong detection
+    this.sustainFilterMs = 600.0,
     this.uiHoldMs = 200,
     this.pitchWindowSize = 2048,
     this.minPitchIntervalMs = 40,
@@ -31,8 +36,10 @@ class MicEngine {
   final double tailWindowSec;
   final double absMinRms;
   final double minConfForWrong;
+  final double minConfForPitch; // SESSION-008: Minimum confidence for pitch detection
   final double eventDebounceSec;
   final double wrongFlashCooldownSec;
+  final double sustainFilterMs; // SESSION-009: Time to ignore previous note's pitch
   final int uiHoldMs;
   final int pitchWindowSize;
   final int minPitchIntervalMs;
@@ -71,6 +78,10 @@ class MicEngine {
   // Wrong flash throttle
   DateTime? _lastWrongFlashAt;
 
+  // SESSION-009: Track recently hit pitch classes to filter sustain/reverb
+  // Maps pitchClass (0-11) to timestamp when it was last hit
+  final Map<int, DateTime> _recentlyHitPitchClasses = {};
+
   // Stability tracking: pitchClass → consecutive count
   final Map<int, int> _pitchClassStability = {};
   int? _lastDetectedPitchClass;
@@ -94,6 +105,7 @@ class MicEngine {
     _sampleRateEmaHz = null;
     _lastPitchAt = null;
     _sampleBuffer.clear();
+    _recentlyHitPitchClasses.clear(); // SESSION-009
     _pitchWindow = null;
     _lastFreqHz = null;
     _lastRms = null;
@@ -174,6 +186,14 @@ class MicEngine {
         _lastFreqHz = freq;
         _lastConfidence = conf;
         _lastMidi = midi;
+
+        // SESSION-008: Skip weak detections (likely subharmonics or noise)
+        if (conf < minConfForPitch) {
+          _events.removeWhere((e) => elapsedSec - e.tSec > 2.0);
+          decisions.addAll(_matchNotes(elapsedSec, now));
+          _lastChunkTime = now;
+          return decisions;
+        }
 
         // Track pitch class stability (consecutive detections)
         final pitchClass = midi % 12;
@@ -483,6 +503,9 @@ class MicEngine {
           ),
         );
 
+        // SESSION-009: Track this pitch class as recently hit for sustain filtering
+        _recentlyHitPitchClasses[expectedPitchClass] = now;
+
         if (kDebugMode) {
           debugPrint(
             'HIT_DECISION sessionId=$_sessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
@@ -542,7 +565,18 @@ class MicEngine {
       final eventPitchClass = event.midi % 12;
       final isWrongNote = !activeExpectedPitchClasses.contains(eventPitchClass);
 
-      if (isWrongNote && hasActiveNoteInWindow) {
+      // SESSION-009: Sustain filter - ignore pitch classes that were recently hit
+      // This prevents sustain/reverb of previous note from triggering false "wrong"
+      bool isSustainOfPreviousNote = false;
+      final recentHitTime = _recentlyHitPitchClasses[eventPitchClass];
+      if (recentHitTime != null) {
+        final msSinceHit = now.difference(recentHitTime).inMilliseconds;
+        if (msSinceHit < sustainFilterMs) {
+          isSustainOfPreviousNote = true;
+        }
+      }
+
+      if (isWrongNote && hasActiveNoteInWindow && !isSustainOfPreviousNote) {
         // This event doesn't match any expected note = WRONG
         if (bestWrongEvent == null || event.conf > bestWrongEvent.conf) {
           bestWrongEvent = event;
