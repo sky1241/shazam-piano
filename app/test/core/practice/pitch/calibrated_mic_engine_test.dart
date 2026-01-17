@@ -6,7 +6,9 @@ void main() {
   group('CalibratedMicEngineConfig', () {
     group('fromDeviceTier', () {
       test('creates config for lowEnd tier', () {
-        final config = CalibratedMicEngineConfig.fromDeviceTier(DeviceTier.lowEnd);
+        final config = CalibratedMicEngineConfig.fromDeviceTier(
+          DeviceTier.lowEnd,
+        );
 
         expect(config.headWindowSec, 0.15);
         expect(config.tailWindowSec, 0.60);
@@ -15,7 +17,9 @@ void main() {
       });
 
       test('creates config for midRange tier', () {
-        final config = CalibratedMicEngineConfig.fromDeviceTier(DeviceTier.midRange);
+        final config = CalibratedMicEngineConfig.fromDeviceTier(
+          DeviceTier.midRange,
+        );
 
         expect(config.headWindowSec, 0.12);
         expect(config.tailWindowSec, 0.45);
@@ -23,7 +27,9 @@ void main() {
       });
 
       test('creates config for highEnd tier', () {
-        final config = CalibratedMicEngineConfig.fromDeviceTier(DeviceTier.highEnd);
+        final config = CalibratedMicEngineConfig.fromDeviceTier(
+          DeviceTier.highEnd,
+        );
 
         expect(config.headWindowSec, 0.10);
         expect(config.tailWindowSec, 0.35);
@@ -104,26 +110,38 @@ void main() {
         );
 
         final lowConfig = CalibratedMicEngineConfig.fromCalibration(lowSuccess);
-        final highConfig = CalibratedMicEngineConfig.fromCalibration(highSuccess);
+        final highConfig = CalibratedMicEngineConfig.fromCalibration(
+          highSuccess,
+        );
 
-        expect(lowConfig.clarityThreshold, lessThan(highConfig.clarityThreshold));
+        expect(
+          lowConfig.clarityThreshold,
+          lessThan(highConfig.clarityThreshold),
+        );
       });
     });
 
     group('defaultConfig', () {
       test('returns lowEnd config', () {
         final defaultConfig = CalibratedMicEngineConfig.defaultConfig();
-        final lowEndConfig = CalibratedMicEngineConfig.fromDeviceTier(DeviceTier.lowEnd);
+        final lowEndConfig = CalibratedMicEngineConfig.fromDeviceTier(
+          DeviceTier.lowEnd,
+        );
 
         expect(defaultConfig.headWindowSec, lowEndConfig.headWindowSec);
         expect(defaultConfig.tailWindowSec, lowEndConfig.tailWindowSec);
-        expect(defaultConfig.latencyCompensationMs, lowEndConfig.latencyCompensationMs);
+        expect(
+          defaultConfig.latencyCompensationMs,
+          lowEndConfig.latencyCompensationMs,
+        );
       });
     });
 
     group('createPitchService', () {
       test('creates MPM service for MPM algorithm', () {
-        final config = CalibratedMicEngineConfig.fromDeviceTier(DeviceTier.lowEnd);
+        final config = CalibratedMicEngineConfig.fromDeviceTier(
+          DeviceTier.lowEnd,
+        );
         final service = config.createPitchService();
 
         expect(service, isA<MpmPitchService>());
@@ -171,7 +189,9 @@ void main() {
 
     group('adjustedWindowStart', () {
       test('subtracts head window and latency compensation', () {
-        final config = CalibratedMicEngineConfig.fromDeviceTier(DeviceTier.lowEnd);
+        final config = CalibratedMicEngineConfig.fromDeviceTier(
+          DeviceTier.lowEnd,
+        );
 
         // noteStart = 1.0s
         // headWindowSec = 0.15s
@@ -185,7 +205,9 @@ void main() {
 
     group('adjustedWindowEnd', () {
       test('adds tail window', () {
-        final config = CalibratedMicEngineConfig.fromDeviceTier(DeviceTier.lowEnd);
+        final config = CalibratedMicEngineConfig.fromDeviceTier(
+          DeviceTier.lowEnd,
+        );
 
         // noteEnd = 1.0s
         // tailWindowSec = 0.60s
@@ -215,14 +237,22 @@ void main() {
       test('handles invalid values', () {
         expect(CalibratedMicEngineConfig.freqOffsetToSemitones(0), 0.0);
         expect(CalibratedMicEngineConfig.freqOffsetToSemitones(-1), 0.0);
-        expect(CalibratedMicEngineConfig.freqOffsetToSemitones(double.nan), 0.0);
-        expect(CalibratedMicEngineConfig.freqOffsetToSemitones(double.infinity), 0.0);
+        expect(
+          CalibratedMicEngineConfig.freqOffsetToSemitones(double.nan),
+          0.0,
+        );
+        expect(
+          CalibratedMicEngineConfig.freqOffsetToSemitones(double.infinity),
+          0.0,
+        );
       });
     });
 
     group('toString', () {
       test('formats config correctly', () {
-        final config = CalibratedMicEngineConfig.fromDeviceTier(DeviceTier.lowEnd);
+        final config = CalibratedMicEngineConfig.fromDeviceTier(
+          DeviceTier.lowEnd,
+        );
         final str = config.toString();
 
         expect(str, contains('algo='));

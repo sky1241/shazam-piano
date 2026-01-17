@@ -82,7 +82,12 @@ void main() {
       final strict = MpmPitchService(clarityThreshold: 0.95);
 
       // Noisy sine wave (lower clarity)
-      final samples = _generateNoisySineWave(440.0, 2048, 44100, noiseLevel: 0.3);
+      final samples = _generateNoisySineWave(
+        440.0,
+        2048,
+        44100,
+        noiseLevel: 0.3,
+      );
 
       final permissiveResult = permissive.detectPitch(samples);
       final strictResult = strict.detectPitch(samples);

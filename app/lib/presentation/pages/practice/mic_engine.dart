@@ -10,7 +10,8 @@ class MicEngine {
     required this.hitNotes,
     required this.detectPitch,
     this.headWindowSec = 0.15, // SESSION-009: Increased for low-end tolerance
-    this.tailWindowSec = 0.60, // SESSION-009: Increased from 0.45 for high latency devices
+    this.tailWindowSec =
+        0.60, // SESSION-009: Increased from 0.45 for high latency devices
     this.absMinRms = 0.0008,
     // FIX BUG SESSION-005: Réduire seuil confidence pour détecter fausses notes plus faibles
     // 0.35 → 0.25 permet de capter notes jouées doucement
@@ -36,10 +37,12 @@ class MicEngine {
   final double tailWindowSec;
   final double absMinRms;
   final double minConfForWrong;
-  final double minConfForPitch; // SESSION-008: Minimum confidence for pitch detection
+  final double
+  minConfForPitch; // SESSION-008: Minimum confidence for pitch detection
   final double eventDebounceSec;
   final double wrongFlashCooldownSec;
-  final double sustainFilterMs; // SESSION-009: Time to ignore previous note's pitch
+  final double
+  sustainFilterMs; // SESSION-009: Time to ignore previous note's pitch
   final int uiHoldMs;
   final int pitchWindowSize;
   final int minPitchIntervalMs;

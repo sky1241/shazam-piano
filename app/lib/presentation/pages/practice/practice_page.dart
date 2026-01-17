@@ -2835,10 +2835,7 @@ class _PracticePageState extends ConsumerState<PracticePage>
               // notes as "wrong" - detection happens later in onTimeUpdate()
               // Result: wrongCount didn't increase → no red flash on keyboard
               // Now: Always show red feedback when MicEngine detects a wrong note
-              _registerWrongHit(
-                detectedNote: decision.detectedMidi!,
-                now: now,
-              );
+              _registerWrongHit(detectedNote: decision.detectedMidi!, now: now);
               setState(() {});
             }
 

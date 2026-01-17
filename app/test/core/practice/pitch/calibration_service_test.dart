@@ -148,9 +148,15 @@ void main() {
     test('has matching note names', () {
       expect(CalibrationService.noteNames.length, 9);
       expect(CalibrationService.noteNames, [
-        'C3', 'E3', 'G3',
-        'C4', 'E4', 'G4',
-        'C5', 'E5', 'G5',
+        'C3',
+        'E3',
+        'G3',
+        'C4',
+        'E4',
+        'G4',
+        'C5',
+        'E5',
+        'G5',
       ]);
     });
 
@@ -159,58 +165,65 @@ void main() {
       expect(service.state, CalibrationState.idle);
     });
 
-    test('calibrate with silent audio stream returns poor result', () async {
-      final service = CalibrationService();
+    test(
+      'calibrate with silent audio stream returns poor result',
+      () async {
+        final service = CalibrationService();
 
-      // Create a stream that emits silent audio
-      final controller = StreamController<Float32List>();
-      final states = <CalibrationState>[];
+        // Create a stream that emits silent audio
+        final controller = StreamController<Float32List>();
+        final states = <CalibrationState>[];
 
-      // Start calibration
-      final resultFuture = service.calibrate(
-        onProgress: (state, current, total, message) {
-          states.add(state);
-        },
-        audioStream: controller.stream,
-      );
+        // Start calibration
+        final resultFuture = service.calibrate(
+          onProgress: (state, current, total, message) {
+            states.add(state);
+          },
+          audioStream: controller.stream,
+        );
 
-      // Emit silent audio frames periodically
-      for (int i = 0; i < 100; i++) {
-        await Future.delayed(const Duration(milliseconds: 50));
-        if (!controller.isClosed) {
-          controller.add(Float32List(2048)); // All zeros = silent
+        // Emit silent audio frames periodically
+        for (int i = 0; i < 100; i++) {
+          await Future.delayed(const Duration(milliseconds: 50));
+          if (!controller.isClosed) {
+            controller.add(Float32List(2048)); // All zeros = silent
+          }
         }
-      }
 
-      // Wait for calibration to complete (will timeout on each note)
-      final result = await resultFuture.timeout(
-        const Duration(seconds: 60),
-        onTimeout: () {
-          controller.close();
-          return CalibrationResult(
-            measurements: [],
-            avgLatencyMs: 500.0,
-            latencyStdDev: 0.0,
-            avgFreqOffset: 1.0,
-            minRmsThreshold: 0.001,
-            successRate: 0.0,
-            recommendedAlgorithm: PitchAlgorithm.mpm,
-          );
-        },
-      );
+        // Wait for calibration to complete (will timeout on each note)
+        final result = await resultFuture.timeout(
+          const Duration(seconds: 60),
+          onTimeout: () {
+            controller.close();
+            return CalibrationResult(
+              measurements: [],
+              avgLatencyMs: 500.0,
+              latencyStdDev: 0.0,
+              avgFreqOffset: 1.0,
+              minRmsThreshold: 0.001,
+              successRate: 0.0,
+              recommendedAlgorithm: PitchAlgorithm.mpm,
+            );
+          },
+        );
 
-      controller.close();
+        controller.close();
 
-      // Should have 0% success rate with silent audio
-      expect(result.successRate, 0.0);
-      expect(result.isUsable, isFalse);
-      expect(result.grade, 'Poor');
-    }, skip: 'Long-running test - enable for integration testing');
+        // Should have 0% success rate with silent audio
+        expect(result.successRate, 0.0);
+        expect(result.isUsable, isFalse);
+        expect(result.grade, 'Poor');
+      },
+      skip: 'Long-running test - enable for integration testing',
+    );
 
     test('CalibrationState has all expected values', () {
       expect(CalibrationState.values, contains(CalibrationState.idle));
       expect(CalibrationState.values, contains(CalibrationState.preparing));
-      expect(CalibrationState.values, contains(CalibrationState.waitingForNote));
+      expect(
+        CalibrationState.values,
+        contains(CalibrationState.waitingForNote),
+      );
       expect(CalibrationState.values, contains(CalibrationState.listening));
       expect(CalibrationState.values, contains(CalibrationState.processing));
       expect(CalibrationState.values, contains(CalibrationState.complete));

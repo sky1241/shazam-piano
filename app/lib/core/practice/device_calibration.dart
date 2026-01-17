@@ -141,20 +141,17 @@ class PracticeCalibration {
       headWindowSec: 0.15, // 150ms early tolerance
       tailWindowSec: 0.60, // 600ms late tolerance (SESSION-009: was 0.45)
       micLatencyMs: 200.0, // Assume 200ms mic latency (SESSION-009: was 100)
-
       // Pitch detection: stricter to reduce false positives
       clarityThreshold: 0.82, // SESSION-009: increased from 0.80
       minConfForPitch: 0.45, // SESSION-009: increased from 0.40
       minConfForWrong: 0.35, // SESSION-009: increased from 0.25
-
       // RMS: slightly higher to filter phone mic noise
       absMinRms: 0.0012, // SESSION-009: increased from 0.0008
-
       // Anti-ghost: aggressive sustain filtering
-      sustainFilterMs: 600.0, // SESSION-009: NEW - ignore previous note for 600ms
+      sustainFilterMs:
+          600.0, // SESSION-009: NEW - ignore previous note for 600ms
       eventDebounceSec: 0.08, // 80ms debounce (SESSION-009: was 0.05)
       wrongFlashCooldownSec: 0.25, // 250ms cooldown (SESSION-009: was 0.15)
-
       // Stability: prioritize reliability over speed
       minStabilityFrames: 1, // Keep at 1 (piano needs fast response)
       pitchWindowSize: 2048, // Standard buffer

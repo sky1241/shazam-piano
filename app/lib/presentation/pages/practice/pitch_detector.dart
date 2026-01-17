@@ -103,8 +103,10 @@ class PitchDetector {
       // prefer the higher frequency (it's likely the true fundamental)
       if (octaveUpPeak != null &&
           octaveUpClarity >= subharmonicClarityRatio * maxClarity) {
-        final octaveUpInterpolated =
-            _parabolicInterpolation(nsdf, octaveUpPeak);
+        final octaveUpInterpolated = _parabolicInterpolation(
+          nsdf,
+          octaveUpPeak,
+        );
         final octaveUpFreq = effectiveSampleRate / octaveUpInterpolated;
 
         // Verify it's roughly 2x the original (within 10% tolerance)
