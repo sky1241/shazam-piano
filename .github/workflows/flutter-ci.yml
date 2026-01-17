@@ -95,7 +95,9 @@ jobs:
       working-directory: ./app
       env:
         GRADLE_USER_HOME: /home/runner/.gradle
-      run: flutter build apk --debug --verbose 2>&1 | tee build.log
+      run: |
+        set -o pipefail
+        flutter build apk --debug --verbose 2>&1 | tee build.log
     
     - name: Upload build log on failure
       if: failure()
@@ -103,6 +105,7 @@ jobs:
       with:
         name: build-log
         path: app/build.log
+        if-no-files-found: ignore
     
     - name: Upload APK
       uses: actions/upload-artifact@v4
