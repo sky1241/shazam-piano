@@ -2708,7 +2708,8 @@ class _PracticePageState extends ConsumerState<PracticePage>
     final elapsed = _guidanceElapsedSec();
     if (elapsed != null && _micEngine != null) {
       final prevAccuracy = _accuracy;
-      final decisions = _micEngine!.onAudioChunk(samples, now, elapsed);
+      final elapsedMs = elapsed * 1000.0;
+      final decisions = _micEngine!.onAudioChunk(samples, now, elapsedMs);
 
       // FIX CASCADE CRITIQUE: Update mic state IMMEDIATELY après onAudioChunk
       // (decisions loop utilise _micRms/_micConfidence pour gating)

@@ -315,7 +315,8 @@ class PracticeController extends StateNotifier<PracticeViewState> {
       debugPrint(
         'SESSION4_MATCH_FAIL: '
         'rawMidi=${event.midi} usedMidi=${playedEvent.midi} '
-        't=${playedEvent.tPlayedMs.toStringAsFixed(1)} '
+        'tPlayedMs=${playedEvent.tPlayedMs.toStringAsFixed(1)} '
+        'tPlayedSec=${(playedEvent.tPlayedMs / 1000.0).toStringAsFixed(3)} '
         'nextExpectedMidi=${nextExpected.midi} '
         'dist=${(playedEvent.midi - nextExpected.midi).abs()}',
       );

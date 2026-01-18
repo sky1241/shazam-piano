@@ -1,6 +1,13 @@
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 
+import 'package:shazapiano/core/practice/pitch/practice_pitch_router.dart';
+
+/// Feature flag: Enable hybrid YIN/Goertzel detection.
+/// - OFF (default): Use existing MPM path (zero regression).
+/// - ON: Use YIN for mono notes, Goertzel for chords.
+const bool kUseHybridDetector = false;
+
 /// MicEngine: Robust scoring engine for Practice mode
 /// Handles: pitch detection → event buffer → note matching → decisions
 /// ZERO dependency on "nextDetected" stability gates
@@ -48,11 +55,16 @@ class MicEngine {
   final int minPitchIntervalMs;
   final bool verboseDebug;
 
+  /// Hybrid pitch router (YIN for mono, Goertzel for chords).
+  /// Only used when kUseHybridDetector is true.
+  final PracticePitchRouter _router = PracticePitchRouter();
+
   String? _sessionId;
   final List<PitchEvent> _events = [];
   int _detectedChannels = 1;
   int _detectedSampleRate = 44100;
   bool _configLogged = false;
+  bool _eventTimeLogged = false;
 
   DateTime? _lastChunkTime;
   double? _sampleRateEmaHz;
@@ -104,6 +116,7 @@ class MicEngine {
     _detectedChannels = 1;
     _detectedSampleRate = 44100;
     _configLogged = false;
+    _eventTimeLogged = false;
     _lastChunkTime = null;
     _sampleRateEmaHz = null;
     _lastPitchAt = null;
@@ -134,8 +147,10 @@ class MicEngine {
   List<NoteDecision> onAudioChunk(
     List<double> rawSamples,
     DateTime now,
-    double elapsedSec,
+    double elapsedMs,
   ) {
+    // Normalize input timebase to seconds for matching/window logic.
+    final elapsedSec = elapsedMs / 1000.0;
     // Update audio config (sampleRate/channels) using real callback cadence.
     _detectAudioConfig(rawSamples, now);
 
@@ -172,70 +187,190 @@ class MicEngine {
         window[i] = _sampleBuffer[start + i];
       }
 
-      final freqRaw = detectPitch(window, _detectedSampleRate.toDouble());
-      // FIX BUG 3 CRITICAL: Compensate frequency for sampleRate mismatch
-      // If device records at 49344 Hz but algorithm expects 44100 Hz,
-      // detected frequency is off by ratio 49344/44100 = 1.119 → +1.95 semitones
-      // Correction: freq_real = freq_detected * (44100 / detectedSampleRate)
-      const expectedSampleRate = 44100;
-      final freq = freqRaw > 0
-          ? freqRaw * (expectedSampleRate / _detectedSampleRate)
-          : 0.0;
-
-      if (freq > 0 && freq >= 50.0 && freq <= 2000.0) {
-        final midi = _freqToMidi(freq);
-        final conf = (rms / 0.05).clamp(0.0, 1.0);
-
-        _lastFreqHz = freq;
-        _lastConfidence = conf;
-        _lastMidi = midi;
-
-        // SESSION-008: Skip weak detections (likely subharmonics or noise)
-        if (conf < minConfForPitch) {
-          _events.removeWhere((e) => elapsedSec - e.tSec > 2.0);
-          decisions.addAll(_matchNotes(elapsedSec, now));
-          _lastChunkTime = now;
-          return decisions;
+      // ─────────────────────────────────────────────────────────────────────
+      // HYBRID PATH: Use YIN for mono-note, Goertzel for chords
+      // ─────────────────────────────────────────────────────────────────────
+      if (kUseHybridDetector) {
+        // Compute active expected MIDIs (notes in current window)
+        final activeExpectedMidis = <int>[];
+        for (var idx = 0; idx < noteEvents.length; idx++) {
+          if (hitNotes[idx]) continue;
+          final note = noteEvents[idx];
+          final windowStart = note.start - headWindowSec;
+          final windowEnd = note.end + tailWindowSec;
+          if (elapsedSec >= windowStart && elapsedSec <= windowEnd) {
+            activeExpectedMidis.add(note.pitch);
+          }
         }
 
-        // Track pitch class stability (consecutive detections)
-        final pitchClass = midi % 12;
-        if (_lastDetectedPitchClass == pitchClass) {
-          _pitchClassStability[pitchClass] =
-              (_pitchClassStability[pitchClass] ?? 0) + 1;
-        } else {
-          _pitchClassStability.clear();
-          _pitchClassStability[pitchClass] = 1;
-          _lastDetectedPitchClass = pitchClass;
+        // Call router to decide YIN vs Goertzel
+        final routerEvents = _router.decide(
+          samples: window,
+          sampleRate: _detectedSampleRate,
+          activeExpectedMidis: activeExpectedMidis,
+          rms: rms,
+          tSec: elapsedSec,
+        );
+
+        // Debug log
+        if (kDebugMode) {
+          PracticePitchRouter.debugLog(
+            tSec: elapsedSec,
+            expectedCount: activeExpectedMidis.length,
+            eventsCount: routerEvents.length,
+            mode: _router.lastMode,
+          );
         }
 
-        // Anti-spam: skip if same midi within debounce window
-        if (_events.isNotEmpty) {
-          final last = _events.last;
-          if ((elapsedSec - last.tSec).abs() < eventDebounceSec &&
-              last.midi == midi) {
+        // Add router events to buffer (with sustain filter + debounce)
+        for (final re in routerEvents) {
+          final pitchClass = re.midi % 12;
+
+          // Sustain filter: skip recently hit pitch classes
+          final recentHitTime = _recentlyHitPitchClasses[pitchClass];
+          if (recentHitTime != null) {
+            final msSinceHit = now.difference(recentHitTime).inMilliseconds;
+            if (msSinceHit < sustainFilterMs) {
+              continue; // Skip sustain/reverb
+            }
+          }
+
+          // Anti-spam: skip if same midi within debounce window
+          if (_events.isNotEmpty) {
+            final last = _events.last;
+            if ((elapsedSec - last.tSec).abs() < eventDebounceSec &&
+                last.midi == re.midi) {
+              continue;
+            }
+          }
+
+          // Track stability
+          if (_lastDetectedPitchClass == pitchClass) {
+            _pitchClassStability[pitchClass] =
+                (_pitchClassStability[pitchClass] ?? 0) + 1;
+          } else {
+            _pitchClassStability.clear();
+            _pitchClassStability[pitchClass] = 1;
+            _lastDetectedPitchClass = pitchClass;
+          }
+
+          final stabilityFrames = _pitchClassStability[pitchClass] ?? 1;
+          _logFirstEventTime(
+            rawTSec: re.tSec,
+            rawName: 're.tSec',
+            elapsedSec: elapsedSec,
+          );
+          _events.add(
+            PitchEvent(
+              tSec: re.tSec,
+              midi: re.midi,
+              freq: re.freq,
+              conf: re.conf,
+              rms: re.rms,
+              stabilityFrames: stabilityFrames,
+            ),
+          );
+
+          // Update UI state with first detected note
+          if (_uiMidi == null) {
+            _uiMidi = re.midi;
+            _uiMidiSetAt = now;
+          }
+
+          // Update last values
+          _lastFreqHz = re.freq;
+          _lastConfidence = re.conf;
+          _lastMidi = re.midi;
+        }
+      } else {
+        // ───────────────────────────────────────────────────────────────────
+        // ORIGINAL MPM PATH (unchanged when kUseHybridDetector = false)
+        // ───────────────────────────────────────────────────────────────────
+        final freqRaw = detectPitch(window, _detectedSampleRate.toDouble());
+        // detectPitch already uses the detected sample rate; avoid double correction.
+        final freq = freqRaw > 0 ? freqRaw : 0.0;
+
+        if (freq > 0 && freq >= 50.0 && freq <= 2000.0) {
+          final midi = _freqToMidi(freq);
+          final conf = (rms / 0.05).clamp(0.0, 1.0);
+
+          _lastFreqHz = freq;
+          _lastConfidence = conf;
+          _lastMidi = midi;
+
+          // SESSION-008: Skip weak detections (likely subharmonics or noise)
+          if (conf < minConfForPitch) {
             _events.removeWhere((e) => elapsedSec - e.tSec > 2.0);
             decisions.addAll(_matchNotes(elapsedSec, now));
             _lastChunkTime = now;
             return decisions;
           }
+
+          // Track pitch class stability (consecutive detections)
+          final pitchClass = midi % 12;
+          if (_lastDetectedPitchClass == pitchClass) {
+            _pitchClassStability[pitchClass] =
+                (_pitchClassStability[pitchClass] ?? 0) + 1;
+          } else {
+            _pitchClassStability.clear();
+            _pitchClassStability[pitchClass] = 1;
+            _lastDetectedPitchClass = pitchClass;
+          }
+
+          // Anti-spam: skip if same midi within debounce window
+          if (_events.isNotEmpty) {
+            final last = _events.last;
+            if ((elapsedSec - last.tSec).abs() < eventDebounceSec &&
+                last.midi == midi) {
+              _events.removeWhere((e) => elapsedSec - e.tSec > 2.0);
+              decisions.addAll(_matchNotes(elapsedSec, now));
+              _lastChunkTime = now;
+              return decisions;
+            }
+          }
+
+          // SESSION-010 FIX: Skip pitch events that are sustain/reverb of recently HIT notes
+          // This prevents the previous note's sustain from filling the buffer and blocking
+          // detection of the next note (especially for adjacent semitones like C#4 -> C4)
+          final recentHitTime = _recentlyHitPitchClasses[pitchClass];
+          if (recentHitTime != null) {
+            final msSinceHit = now.difference(recentHitTime).inMilliseconds;
+            if (msSinceHit < sustainFilterMs) {
+              // This pitch class was recently hit - likely sustain/reverb, skip adding to buffer
+              if (kDebugMode && verboseDebug) {
+                debugPrint(
+                  'SUSTAIN_SKIP sessionId=$_sessionId pitchClass=$pitchClass midi=$midi '
+                  'msSinceHit=$msSinceHit sustainFilterMs=$sustainFilterMs',
+                );
+              }
+              _events.removeWhere((e) => elapsedSec - e.tSec > 2.0);
+              decisions.addAll(_matchNotes(elapsedSec, now));
+              _lastChunkTime = now;
+              return decisions;
+            }
+          }
+
+          final stabilityFrames = _pitchClassStability[pitchClass] ?? 1;
+          _logFirstEventTime(
+            rawTSec: elapsedSec,
+            rawName: 'elapsedSec',
+            elapsedSec: elapsedSec,
+          );
+          _events.add(
+            PitchEvent(
+              tSec: elapsedSec,
+              midi: midi,
+              freq: freq,
+              conf: conf,
+              rms: rms,
+              stabilityFrames: stabilityFrames,
+            ),
+          );
+
+          // UI state (hold last valid midi 200ms)
+          _uiMidi = midi;
+          _uiMidiSetAt = now;
         }
-
-        final stabilityFrames = _pitchClassStability[pitchClass] ?? 1;
-        _events.add(
-          PitchEvent(
-            tSec: elapsedSec,
-            midi: midi,
-            freq: freq,
-            conf: conf,
-            rms: rms,
-            stabilityFrames: stabilityFrames,
-          ),
-        );
-
-        // UI state (hold last valid midi 200ms)
-        _uiMidi = midi;
-        _uiMidiSetAt = now;
       }
     }
 
@@ -317,6 +452,38 @@ class MicEngine {
     return sqrt(sum / samples.length);
   }
 
+  (double, double)? _firstActiveWindow(double elapsedSec) {
+    if (hitNotes.length != noteEvents.length) return null;
+    for (var idx = 0; idx < noteEvents.length; idx++) {
+      if (hitNotes[idx]) continue;
+      final note = noteEvents[idx];
+      final windowStart = note.start - headWindowSec;
+      final windowEnd = note.end + tailWindowSec;
+      if (elapsedSec >= windowStart && elapsedSec <= windowEnd) {
+        return (windowStart, windowEnd);
+      }
+    }
+    return null;
+  }
+
+  void _logFirstEventTime({
+    required double rawTSec,
+    required String rawName,
+    required double elapsedSec,
+  }) {
+    if (!kDebugMode || _eventTimeLogged) return;
+    final window = _firstActiveWindow(elapsedSec);
+    final windowStart = window?.$1;
+    final windowEnd = window?.$2;
+    debugPrint(
+      'MIC_EVENT_TIME sessionId=$_sessionId raw=${rawTSec.toStringAsFixed(3)} (name=$rawName) '
+      'elapsedSec=${elapsedSec.toStringAsFixed(3)} '
+      'windowStart=${windowStart?.toStringAsFixed(3) ?? "n/a"} '
+      'windowEnd=${windowEnd?.toStringAsFixed(3) ?? "n/a"}',
+    );
+    _eventTimeLogged = true;
+  }
+
   int _freqToMidi(double freq) {
     return (12 * (log(freq / 440.0) / ln2) + 69).round();
   }
@@ -385,6 +552,22 @@ class MicEngine {
         final eventsInWindow = _events
             .where((e) => e.tSec >= windowStart && e.tSec <= windowEnd)
             .toList();
+        double? minEventSec;
+        double? maxEventSec;
+        for (final event in _events) {
+          final tSec = event.tSec;
+          if (minEventSec == null || tSec < minEventSec) {
+            minEventSec = tSec;
+          }
+          if (maxEventSec == null || tSec > maxEventSec) {
+            maxEventSec = tSec;
+          }
+        }
+        final eventsOverlapWindow =
+            minEventSec != null &&
+            maxEventSec != null &&
+            maxEventSec >= windowStart &&
+            minEventSec <= windowEnd;
         final pitchClasses = eventsInWindow
             .map((e) => e.midi % 12)
             .toSet()
@@ -393,6 +576,11 @@ class MicEngine {
           'BUFFER_STATE sessionId=$_sessionId noteIdx=$idx expectedMidi=${note.pitch} expectedPC=$expectedPitchClass '
           'window=[${windowStart.toStringAsFixed(3)}..${windowEnd.toStringAsFixed(3)}] '
           'eventsInWindow=${eventsInWindow.length} totalEvents=${_events.length} '
+          'eventsMin=${minEventSec?.toStringAsFixed(3) ?? "n/a"} '
+          'eventsMax=${maxEventSec?.toStringAsFixed(3) ?? "n/a"} '
+          'windowStart=${windowStart.toStringAsFixed(3)} '
+          'windowEnd=${windowEnd.toStringAsFixed(3)} '
+          'eventsOverlapWindow=$eventsOverlapWindow '
           'pitchClassesInWindow=[$pitchClasses]',
         );
       }

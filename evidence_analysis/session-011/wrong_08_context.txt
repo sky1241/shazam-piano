@@ -1,0 +1,41 @@
+01-18 14:29:44.139 29679 29679 I flutter : BUFFER_STATE sessionId=1 noteIdx=0 expectedMidi=65 expectedPC=5 window=[0.950..2.275] eventsInWindow=0 totalEvents=0 pitchClassesInWindow=[]
+01-18 14:29:44.139 29679 29679 I flutter : HIT_DECISION sessionId=1 noteIdx=0 elapsed=1.127 expectedMidi=65 expectedPC=5 window=[0.950..2.275] result=REJECT reason=no_events_in_buffer bestEvent=null
+01-18 14:29:44.287 29679 29679 I flutter : BUFFER_STATE sessionId=1 noteIdx=0 expectedMidi=65 expectedPC=5 window=[0.950..2.275] eventsInWindow=0 totalEvents=0 pitchClassesInWindow=[]
+01-18 14:29:44.288 29679 29679 I flutter : HIT_DECISION sessionId=1 noteIdx=0 elapsed=1.269 expectedMidi=65 expectedPC=5 window=[0.950..2.275] result=REJECT reason=no_events_in_buffer bestEvent=null
+01-18 14:29:44.333 29679 29679 I flutter : BUFFER_STATE sessionId=1 noteIdx=0 expectedMidi=65 expectedPC=5 window=[0.950..2.275] eventsInWindow=0 totalEvents=0 pitchClassesInWindow=[]
+01-18 14:29:44.333 29679 29679 I flutter : HIT_DECISION sessionId=1 noteIdx=0 elapsed=1.321 expectedMidi=65 expectedPC=5 window=[0.950..2.275] result=REJECT reason=no_events_in_buffer bestEvent=null
+01-18 14:29:44.396   929   929 I BufferQueueProducer: [SurfaceView[com.ludo.shazapiano/com.ludo.shazapiano.MainActivity](BLAST)#31214](this:0xb400007c7d1af468,id:-1,api:0,p:-1,c:929) queueBuffer: fps=20.67 dur=1015.76 max=50.37 min=33.12
+01-18 14:29:44.432 29679 29679 I flutter : BUFFER_STATE sessionId=1 noteIdx=0 expectedMidi=65 expectedPC=5 window=[0.950..2.275] eventsInWindow=0 totalEvents=0 pitchClassesInWindow=[]
+01-18 14:29:44.432 29679 29679 I flutter : HIT_DECISION sessionId=1 noteIdx=0 elapsed=1.412 expectedMidi=65 expectedPC=5 window=[0.950..2.275] result=REJECT reason=no_events_in_buffer bestEvent=null
+01-18 14:29:44.520 29679 29679 I flutter : BUFFER_STATE sessionId=1 noteIdx=0 expectedMidi=65 expectedPC=5 window=[0.950..2.275] eventsInWindow=0 totalEvents=0 pitchClassesInWindow=[]
+01-18 14:29:44.521 29679 29679 I flutter : HIT_DECISION sessionId=1 noteIdx=0 elapsed=1.502 expectedMidi=65 expectedPC=5 window=[0.950..2.275] result=REJECT reason=no_events_in_buffer bestEvent=null
+01-18 14:29:44.565 29679 29679 I flutter : BUFFER_STATE sessionId=1 noteIdx=0 expectedMidi=65 expectedPC=5 window=[0.950..2.275] eventsInWindow=0 totalEvents=0 pitchClassesInWindow=[]
+01-18 14:29:44.566 29679 29679 I flutter : HIT_DECISION sessionId=1 noteIdx=0 elapsed=1.553 expectedMidi=65 expectedPC=5 window=[0.950..2.275] result=REJECT reason=no_events_in_buffer bestEvent=null
+01-18 14:29:44.674 29679 29679 I flutter : BUFFER_STATE sessionId=1 noteIdx=0 expectedMidi=65 expectedPC=5 window=[0.950..2.275] eventsInWindow=1 totalEvents=1 pitchClassesInWindow=[5]
+01-18 14:29:44.677 29679 29679 I flutter : HIT_DECISION sessionId=1 noteIdx=0 elapsed=1.649 expectedMidi=65 expectedPC=5 detectedMidi=65 freq=349.0 conf=1.00 stability=1 distance=0.0 dt=0.000s window=[0.950..2.275] result=HIT
+01-18 14:29:44.695 29679 29679 I flutter : RESOLVE_NOTE session=1 idx=0 grade=perfect dt=0.0ms pts=100 combo=1 total=100 match=c3b9f99e
+01-18 14:29:45.019 29679 29679 I flutter : MIC: rms=0.261 f0=349.2 note=F4 conf=1.00
+01-18 14:29:45.429   929   929 I BufferQueueProducer: [SurfaceView[com.ludo.shazapiano/com.ludo.shazapiano.MainActivity](BLAST)#31214](this:0xb400007c7d1af468,id:-1,api:0,p:-1,c:929) queueBuffer: fps=21.30 dur=1032.70 max=66.80 min=33.07
+01-18 14:29:45.855 29679 29679 I flutter : BUFFER_STATE sessionId=1 noteIdx=1 expectedMidi=63 expectedPC=3 window=[2.825..4.150] eventsInWindow=0 totalEvents=3 pitchClassesInWindow=[]
+01-18 14:29:45.856 29679 29679 I flutter : HIT_DECISION sessionId=1 noteIdx=1 elapsed=2.837 expectedMidi=63 expectedPC=3 window=[2.825..4.150] result=REJECT reason=no_events_in_buffer bestEvent=null
+01-18 14:29:45.858 29679 29679 I flutter : WRONG_FLASH sessionId=1 elapsed=2.837 wrongMidi=65 wrongPC=5 conf=0.73 expectedPCs={3}
+01-18 14:29:45.861 29679 29679 I flutter : SESSION4_MATCH_FAIL: rawMidi=65 usedMidi=65 t=2837.0 nextExpectedMidi=63 dist=2
+01-18 14:29:45.964 29679 29679 I flutter : BUFFER_STATE sessionId=1 noteIdx=1 expectedMidi=63 expectedPC=3 window=[2.825..4.150] eventsInWindow=0 totalEvents=3 pitchClassesInWindow=[]
+01-18 14:29:45.965 29679 29679 I flutter : HIT_DECISION sessionId=1 noteIdx=1 elapsed=2.943 expectedMidi=63 expectedPC=3 window=[2.825..4.150] result=REJECT reason=no_events_in_buffer bestEvent=null
+01-18 14:29:45.974 29679 30579 I MediaCodec: [mId: 1] [video-debug-dec] ClientName: com.ludo.shazapiano ComponentName: c2.mtk.avc.decoder
+01-18 14:29:46.049 29679 29679 I flutter : BUFFER_STATE sessionId=1 noteIdx=1 expectedMidi=63 expectedPC=3 window=[2.825..4.150] eventsInWindow=0 totalEvents=3 pitchClassesInWindow=[]
+01-18 14:29:46.049 29679 29679 I flutter : HIT_DECISION sessionId=1 noteIdx=1 elapsed=3.031 expectedMidi=63 expectedPC=3 window=[2.825..4.150] result=REJECT reason=no_events_in_buffer bestEvent=null
+01-18 14:29:46.051 29679 29679 I flutter : MIC: rms=0.006 f0=348.6 note=F4 conf=0.09
+01-18 14:29:46.085 29679 29679 I flutter : BUFFER_STATE sessionId=1 noteIdx=1 expectedMidi=63 expectedPC=3 window=[2.825..4.150] eventsInWindow=0 totalEvents=3 pitchClassesInWindow=[]
+01-18 14:29:46.085 29679 29679 I flutter : HIT_DECISION sessionId=1 noteIdx=1 elapsed=3.073 expectedMidi=63 expectedPC=3 window=[2.825..4.150] result=REJECT reason=no_events_in_buffer bestEvent=null
+01-18 14:29:46.200 29679 29679 I flutter : BUFFER_STATE sessionId=1 noteIdx=1 expectedMidi=63 expectedPC=3 window=[2.825..4.150] eventsInWindow=0 totalEvents=3 pitchClassesInWindow=[]
+01-18 14:29:46.200 29679 29679 I flutter : HIT_DECISION sessionId=1 noteIdx=1 elapsed=3.182 expectedMidi=63 expectedPC=3 window=[2.825..4.150] result=REJECT reason=no_events_in_buffer bestEvent=null
+01-18 14:29:46.242 29679 29679 I flutter : BUFFER_STATE sessionId=1 noteIdx=1 expectedMidi=63 expectedPC=3 window=[2.825..4.150] eventsInWindow=0 totalEvents=3 pitchClassesInWindow=[]
+01-18 14:29:46.243 29679 29679 I flutter : HIT_DECISION sessionId=1 noteIdx=1 elapsed=3.230 expectedMidi=63 expectedPC=3 window=[2.825..4.150] result=REJECT reason=no_events_in_buffer bestEvent=null
+01-18 14:29:46.354 29679 29679 I flutter : BUFFER_STATE sessionId=1 noteIdx=1 expectedMidi=63 expectedPC=3 window=[2.825..4.150] eventsInWindow=0 totalEvents=3 pitchClassesInWindow=[]
+01-18 14:29:46.354 29679 29679 I flutter : HIT_DECISION sessionId=1 noteIdx=1 elapsed=3.336 expectedMidi=63 expectedPC=3 window=[2.825..4.150] result=REJECT reason=no_events_in_buffer bestEvent=null
+01-18 14:29:46.433 29679 29679 I flutter : BUFFER_STATE sessionId=1 noteIdx=1 expectedMidi=63 expectedPC=3 window=[2.825..4.150] eventsInWindow=0 totalEvents=3 pitchClassesInWindow=[]
+01-18 14:29:46.433 29679 29679 I flutter : HIT_DECISION sessionId=1 noteIdx=1 elapsed=3.415 expectedMidi=63 expectedPC=3 window=[2.825..4.150] result=REJECT reason=no_events_in_buffer bestEvent=null
+01-18 14:29:46.445   929   929 I BufferQueueProducer: [SurfaceView[com.ludo.shazapiano/com.ludo.shazapiano.MainActivity](BLAST)#31214](this:0xb400007c7d1af468,id:-1,api:0,p:-1,c:929) queueBuffer: fps=23.63 dur=1015.69 max=66.81 min=32.93
+01-18 14:29:46.516 29679 29679 I flutter : BUFFER_STATE sessionId=1 noteIdx=1 expectedMidi=63 expectedPC=3 window=[2.825..4.150] eventsInWindow=0 totalEvents=3 pitchClassesInWindow=[]
+01-18 14:29:46.516 29679 29679 I flutter : HIT_DECISION sessionId=1 noteIdx=1 elapsed=3.498 expectedMidi=63 expectedPC=3 window=[2.825..4.150] result=REJECT reason=no_events_in_buffer bestEvent=null
