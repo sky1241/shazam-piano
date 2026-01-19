@@ -50,8 +50,14 @@ class PracticePitchRouter {
   PracticePitchRouter({
     YinPitchService? yinService,
     GoertzelDetector? goertzelDetector,
+    this.snapSemitoneTolerance = 0, // STRICT: C4 ≠ C#4, no tolerance
   }) : _yin = yinService ?? YinPitchService(),
        _goertzel = goertzelDetector ?? GoertzelDetector();
+
+  /// Semitone tolerance for snapping detected pitch to expected (mono mode).
+  /// Default 0 = strict precision (C4 ≠ C#4).
+  /// Set to 1 for lenient mode (snaps if within 1 semitone).
+  final int snapSemitoneTolerance;
 
   final YinPitchService _yin;
   final GoertzelDetector _goertzel;
@@ -97,6 +103,7 @@ class PracticePitchRouter {
       return _detectWithYin(
         samples: samples,
         sampleRate: sampleRate,
+        expectedMidi: activeExpectedMidis.first,
         rms: rms,
         tSec: tSec,
         minConfidence: yinMinConfidence,
@@ -118,12 +125,15 @@ class PracticePitchRouter {
     );
   }
 
-  /// Detect pitch using YIN algorithm.
+  /// Detect pitch using YIN algorithm with tolerant snap.
   ///
   /// Returns 0 or 1 PitchEvent depending on whether a valid pitch is found.
+  /// If detected MIDI is within [snapSemitoneTolerance] of expected, snaps to expected.
+  /// This avoids rejecting notes with minor pitch drift while allowing wrongFlash.
   List<RouterPitchEvent> _detectWithYin({
     required Float32List samples,
     required int sampleRate,
+    required int expectedMidi,
     required double rms,
     required double tSec,
     required double minConfidence,
@@ -142,7 +152,7 @@ class PracticePitchRouter {
     }
 
     // Convert to MIDI
-    final midi = _yin.frequencyToMidiNote(freq);
+    final detectedMidi = _yin.frequencyToMidiNote(freq);
 
     // Compute confidence from RMS (same heuristic as MicEngine)
     final conf = (rms / 0.05).clamp(0.0, 1.0);
@@ -152,10 +162,23 @@ class PracticePitchRouter {
       return [];
     }
 
+    // Tolerant snap: if within tolerance, snap to expected
+    // This avoids rejecting notes with minor pitch drift
+    final distance = (detectedMidi - expectedMidi).abs();
+    final snappedMidi = distance <= snapSemitoneTolerance ? expectedMidi : detectedMidi;
+
+    // Debug log (grep-friendly YIN_CALLED format)
+    if (kDebugMode) {
+      debugPrint(
+        'YIN_CALLED expected=[$expectedMidi] detectedMidi=$detectedMidi '
+        'snappedMidi=$snappedMidi freq=${freq.toStringAsFixed(1)} conf=${conf.toStringAsFixed(2)}',
+      );
+    }
+
     return [
       RouterPitchEvent(
         tSec: tSec,
-        midi: midi,
+        midi: snappedMidi,
         freq: freq,
         conf: conf,
         rms: rms,
@@ -194,7 +217,17 @@ class PracticePitchRouter {
           ..sort((a, b) => b.value.compareTo(a.value));
 
     // Take top N notes
-    final topNotes = detected.take(maxSimultaneousNotes);
+    final topNotes = detected.take(maxSimultaneousNotes).toList();
+
+    // Debug log (grep-friendly GOERTZEL_CALLED format)
+    if (kDebugMode) {
+      final presentList = topNotes
+          .map((e) => '(${e.key},${e.value.toStringAsFixed(2)})')
+          .join(',');
+      debugPrint(
+        'GOERTZEL_CALLED targets=$activeExpectedMidis present=[$presentList]',
+      );
+    }
 
     // Convert to PitchEvents
     return topNotes.map((entry) {

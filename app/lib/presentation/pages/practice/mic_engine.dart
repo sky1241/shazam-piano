@@ -4,9 +4,16 @@ import 'package:flutter/foundation.dart';
 import 'package:shazapiano/core/practice/pitch/practice_pitch_router.dart';
 
 /// Feature flag: Enable hybrid YIN/Goertzel detection.
-/// - OFF (default): Use existing MPM path (zero regression).
-/// - ON: Use YIN for mono notes, Goertzel for chords.
-const bool kUseHybridDetector = false;
+/// - OFF: Use existing MPM path.
+/// - ON (default): Use YIN for mono notes, Goertzel for chords.
+const bool kUseHybridDetector = true;
+
+/// Feature flag: Force fixed sample rate instead of dynamic detection.
+/// SESSION-012 FIX: Dynamic SR detection is unreliable on some Android devices
+/// (e.g., Xiaomi) where chunk timing jitter causes wrong SR estimation.
+/// When true, always use 44100 Hz regardless of detected rate.
+const bool kForceFixedSampleRate = true;
+const int kFixedSampleRate = 44100;
 
 /// MicEngine: Robust scoring engine for Practice mode
 /// Handles: pitch detection → event buffer → note matching → decisions
@@ -101,6 +108,96 @@ class MicEngine {
   final Map<int, int> _pitchClassStability = {};
   int? _lastDetectedPitchClass;
 
+  /// Epsilon for grouping chord notes with nearly-simultaneous starts.
+  /// Notes within this time window are considered part of the same chord.
+  /// 30ms is safe for piano MIDI where chord notes may have slightly different starts.
+  static const double _epsilonStartSec = 0.03;
+
+  /// Compute active expected MIDIs for routing decision (epsilon grouping).
+  ///
+  /// This groups notes by their start time (within epsilon) to correctly
+  /// detect chords even when note starts are not perfectly aligned.
+  ///
+  /// Algorithm:
+  /// 1. Find all non-hit notes whose start is within the routing window
+  /// 2. Group them by start time (notes within epsilon are same group)
+  /// 3. Select the group closest to current elapsedSec
+  /// 4. Return deduplicated, sorted, capped midis from that group
+  ///
+  /// This ensures:
+  /// - Hyper Facile (mono): always returns 1 note → YIN
+  /// - Facile (chords): returns 2+ notes at chord moments → Goertzel
+  List<int> _computeActiveExpectedMidisForRouting(double elapsedSec) {
+    // Step 1: Collect candidate notes within routing window
+    final candidates = <({double start, int pitch})>[];
+    for (var idx = 0; idx < noteEvents.length; idx++) {
+      if (hitNotes[idx]) continue;
+      final note = noteEvents[idx];
+      // Routing window: start-only (not end)
+      final windowStart = note.start - headWindowSec;
+      final windowEnd = note.start + tailWindowSec;
+      if (elapsedSec >= windowStart && elapsedSec <= windowEnd) {
+        candidates.add((start: note.start, pitch: note.pitch));
+      }
+    }
+
+    if (candidates.isEmpty) return [];
+
+    // Step 2: Group candidates by start time (epsilon clustering)
+    // Sort by start time first
+    candidates.sort((a, b) => a.start.compareTo(b.start));
+
+    final groups = <List<({double start, int pitch})>>[];
+    var currentGroup = <({double start, int pitch})>[candidates.first];
+    var groupAnchor = candidates.first.start;
+
+    for (var i = 1; i < candidates.length; i++) {
+      final c = candidates[i];
+      if ((c.start - groupAnchor).abs() <= _epsilonStartSec) {
+        // Same group (within epsilon of anchor)
+        currentGroup.add(c);
+      } else {
+        // New group
+        groups.add(currentGroup);
+        currentGroup = [c];
+        groupAnchor = c.start;
+      }
+    }
+    groups.add(currentGroup);
+
+    // Step 3: Select group closest to elapsedSec
+    List<({double start, int pitch})> chosenGroup = groups.first;
+    double minDistance = double.infinity;
+    for (final group in groups) {
+      final groupStart = group.first.start;
+      final distance = (groupStart - elapsedSec).abs();
+      if (distance < minDistance) {
+        minDistance = distance;
+        chosenGroup = group;
+      }
+    }
+
+    // Step 4: Extract midis, dedup, sort, cap
+    final midis = chosenGroup.map((c) => c.pitch).toSet().toList()..sort();
+    final result = midis.take(6).toList();
+
+    // Debug log: show all groups and chosen group
+    if (kDebugMode && verboseDebug) {
+      final groupsStr = groups
+          .map(
+            (g) =>
+                '(start=${g.first.start.toStringAsFixed(3)},midis=${g.map((c) => c.pitch).toList()})',
+          )
+          .join(',');
+      debugPrint(
+        'EXPECTED_ROUTING t=${elapsedSec.toStringAsFixed(3)} '
+        'groups=[$groupsStr] chosen=$result',
+      );
+    }
+
+    return result;
+  }
+
   /// Current UI detected MIDI (held 200ms)
   int? get uiDetectedMidi {
     if (_uiMidi != null && _uiMidiSetAt != null) {
@@ -134,6 +231,16 @@ class MicEngine {
     _lastDetectedPitchClass = null;
 
     if (kDebugMode) {
+      // PITCH_PIPELINE: Non-filterable startup log proving pipeline configuration
+      // This log MUST always appear to verify hybrid mode and sample rate settings
+      final detectorStr = kUseHybridDetector ? 'HYBRID' : 'MPM';
+      debugPrint(
+        'PITCH_PIPELINE sessionId=$sessionId hybrid=$kUseHybridDetector detector=$detectorStr '
+        'snapTol=${_router.snapSemitoneTolerance} minRms=${absMinRms.toStringAsFixed(4)} '
+        'minConf=${minConfForPitch.toStringAsFixed(2)} debounce=${eventDebounceSec.toStringAsFixed(3)}s '
+        'wrongCooldown=${wrongFlashCooldownSec.toStringAsFixed(3)}s uiHold=${uiHoldMs}ms '
+        'sampleRateForced=$kForceFixedSampleRate fixedSR=$kFixedSampleRate',
+      );
       debugPrint(
         'SESSION_PARAMS sessionId=$sessionId head=${headWindowSec.toStringAsFixed(3)}s '
         'tail=${tailWindowSec.toStringAsFixed(3)}s absMinRms=${absMinRms.toStringAsFixed(4)} '
@@ -191,17 +298,9 @@ class MicEngine {
       // HYBRID PATH: Use YIN for mono-note, Goertzel for chords
       // ─────────────────────────────────────────────────────────────────────
       if (kUseHybridDetector) {
-        // Compute active expected MIDIs (notes in current window)
-        final activeExpectedMidis = <int>[];
-        for (var idx = 0; idx < noteEvents.length; idx++) {
-          if (hitNotes[idx]) continue;
-          final note = noteEvents[idx];
-          final windowStart = note.start - headWindowSec;
-          final windowEnd = note.end + tailWindowSec;
-          if (elapsedSec >= windowStart && elapsedSec <= windowEnd) {
-            activeExpectedMidis.add(note.pitch);
-          }
-        }
+        // Compute active expected MIDIs using START-ONLY window for routing
+        // This prevents long notes from artificially extending chord detection
+        final activeExpectedMidis = _computeActiveExpectedMidisForRouting(elapsedSec);
 
         // Call router to decide YIN vs Goertzel
         final routerEvents = _router.decide(
@@ -212,13 +311,16 @@ class MicEngine {
           tSec: elapsedSec,
         );
 
-        // Debug log
+        // Debug log (grep-friendly PITCH_ROUTER format)
+        // Always log to verify hybrid is working (essential for debugging)
         if (kDebugMode) {
-          PracticePitchRouter.debugLog(
-            tSec: elapsedSec,
-            expectedCount: activeExpectedMidis.length,
-            eventsCount: routerEvents.length,
-            mode: _router.lastMode,
+          final modeStr = _router.lastMode == DetectionMode.yin
+              ? 'YIN'
+              : _router.lastMode == DetectionMode.goertzel
+                  ? 'GOERTZEL'
+                  : 'NONE';
+          debugPrint(
+            'PITCH_ROUTER expected=$activeExpectedMidis mode=$modeStr events=${routerEvents.length} t=${elapsedSec.toStringAsFixed(3)}',
           );
         }
 
@@ -271,11 +373,9 @@ class MicEngine {
             ),
           );
 
-          // Update UI state with first detected note
-          if (_uiMidi == null) {
-            _uiMidi = re.midi;
-            _uiMidiSetAt = now;
-          }
+          // Update UI state (same as MPM path: always update)
+          _uiMidi = re.midi;
+          _uiMidiSetAt = now;
 
           // Update last values
           _lastFreqHz = re.freq;
@@ -416,16 +516,25 @@ class MicEngine {
     _sampleRateEmaHz = _sampleRateEmaHz == null
         ? srInstant
         : (_sampleRateEmaHz! * 0.9 + srInstant * 0.1);
-    _detectedSampleRate = _sampleRateEmaHz!.round().clamp(32000, 52000);
+
+    // SESSION-012 FIX: Use fixed sample rate if flag is set
+    // Dynamic detection is unreliable on some Android devices
+    if (kForceFixedSampleRate) {
+      _detectedSampleRate = kFixedSampleRate;
+    } else {
+      _detectedSampleRate = _sampleRateEmaHz!.round().clamp(32000, 52000);
+    }
 
     if (!_configLogged && kDebugMode) {
       // PROOF log: calculate semitone shift if mismatch
       const expectedSampleRate = 44100;
-      final ratio = _detectedSampleRate / expectedSampleRate;
+      final detectedForLog = _sampleRateEmaHz!.round().clamp(32000, 52000);
+      final ratio = detectedForLog / expectedSampleRate;
       final semitoneShift = 12 * (log(ratio) / ln2);
       debugPrint(
         'MIC_INPUT sessionId=$_sessionId channels=$_detectedChannels '
-        'sampleRate=$_detectedSampleRate inputRate=${inputRate.toStringAsFixed(0)} '
+        'sampleRate=$_detectedSampleRate (detected=$detectedForLog, forced=${kForceFixedSampleRate ? "YES" : "NO"}) '
+        'inputRate=${inputRate.toStringAsFixed(0)} '
         'samplesLen=${samples.length} dtSec=${dtSec.toStringAsFixed(3)} '
         'expectedSR=44100 ratio=${ratio.toStringAsFixed(3)} semitoneShift=${semitoneShift.toStringAsFixed(2)}',
       );
@@ -621,9 +730,10 @@ class MicEngine {
 
         // Reject: pitch class mismatch
         if (detectedPitchClass != expectedPitchClass) {
-          if (verboseDebug && kDebugMode && rejectReason == null) {
+          // Always track pitch_class_mismatch (not just verboseDebug) for accurate logging
+          if (kDebugMode && rejectReason == null) {
             rejectReason =
-                'pitch_class_mismatch_expected=$expectedPitchClass-detected=$detectedPitchClass';
+                'pitch_class_mismatch_expected=${expectedPitchClass}_detected=$detectedPitchClass';
           }
           continue;
         }
