@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 
 import 'package:shazapiano/core/practice/pitch/practice_pitch_router.dart';
 import 'package:shazapiano/core/practice/pitch/onset_detector.dart';
+import 'package:shazapiano/core/practice/pitch/note_tracker.dart';
 
 /// Feature flag: Enable hybrid YIN/Goertzel detection.
 /// - OFF: Use existing MPM path.
@@ -112,6 +113,10 @@ class MicEngine {
   /// Onset detector gate - decides WHEN to allow pitch detection.
   /// Prevents sustain/reverb pollution by only evaluating during attack bursts.
   final OnsetDetector _onsetDetector = OnsetDetector();
+
+  /// SESSION-015 P4: Note tracker - prevents tail/sustain from generating new attacks.
+  /// Envelope gate with hysteresis: allows ATTACK only on rising edge, blocks HELD/TAIL.
+  final NoteTracker _noteTracker = NoteTracker();
 
   String? _sessionId;
   final List<PitchEvent> _events = [];
@@ -297,6 +302,7 @@ class MicEngine {
     _pitchClassStability.clear();
     _lastDetectedPitchClass = null;
     _onsetDetector.reset(); // Reset onset gate for new session
+    _noteTracker.reset(); // SESSION-015 P4: Reset note tracker for new session
     // SESSION-015: Reset latency compensation with default value for low-end devices
     _latencySamples.clear();
     _latencyCompMs = latencyCompDefaultMs; // Start with default, refine with samples
@@ -465,6 +471,21 @@ class MicEngine {
           }
 
           final stabilityFrames = _pitchClassStability[pitchClass] ?? 1;
+
+          // SESSION-015 P4: NoteTracker gate - prevent tail/sustain from generating attacks
+          final trackerResult = _noteTracker.feed(
+            midi: re.midi,
+            rmsNow: re.rms,
+            conf: re.conf,
+            nowMs: elapsedMs,
+            source: eventSource.name,
+          );
+
+          if (!trackerResult.shouldEmit) {
+            // Tail/held/cooldown - skip adding to buffer
+            continue;
+          }
+
           _logFirstEventTime(
             rawTSec: re.tSec,
             rawName: 're.tSec',
@@ -992,6 +1013,10 @@ class MicEngine {
 
         // SESSION-009: Track this pitch class as recently hit for sustain filtering
         _recentlyHitPitchClasses[expectedPitchClass] = now;
+
+        // SESSION-015 P4: Release NoteTracker hold for this pitchClass
+        // HOTFIX P4: Pass nowMs to keep cooldown active (prevents tail re-attack)
+        _noteTracker.forceRelease(expectedPitchClass, nowMs: elapsed * 1000.0);
 
         if (kDebugMode) {
           // SESSION-015: Include latency compensation info in HIT log
