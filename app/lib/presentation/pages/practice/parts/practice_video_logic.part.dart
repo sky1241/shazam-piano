@@ -7,6 +7,7 @@ mixin _PracticeVideoLogicMixin on _PracticePageStateBase {
   void _resanitizeNoteEventsForVideoDuration();
   Future<void> _stopPractice({bool showSummary, String reason});
 
+  // ignore: unused_element (called from _PracticeLifecycleMixin)
   void _showVideoNotReadyHint() {
     if (!mounted) return;
     // BUG FIX #14: Message plus précis selon ce qui manque
@@ -25,6 +26,7 @@ mixin _PracticeVideoLogicMixin on _PracticePageStateBase {
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  // ignore: unused_element, unused_element_parameter (called from _PracticeLifecycleMixin)
   Future<void> _startPracticeVideo({Duration? startPosition}) async {
     final controller = _videoController;
     if (controller == null || !controller.value.isInitialized) {
@@ -40,6 +42,7 @@ mixin _PracticeVideoLogicMixin on _PracticePageStateBase {
     } catch (_) {}
   }
 
+  // ignore: unused_element (called from _PracticeLifecycleMixin, _PracticeUiVideoMixin)
   Future<void> _initVideo() async {
     // Token guard against double concurrent init
     final token = ++_videoInitToken;
