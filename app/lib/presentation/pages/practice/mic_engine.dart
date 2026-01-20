@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 
 import 'package:shazapiano/core/practice/pitch/practice_pitch_router.dart';
+import 'package:shazapiano/core/practice/pitch/onset_detector.dart';
 
 /// Feature flag: Enable hybrid YIN/Goertzel detection.
 /// - OFF: Use existing MPM path.
@@ -65,6 +66,10 @@ class MicEngine {
   /// Hybrid pitch router (YIN for mono, Goertzel for chords).
   /// Only used when kUseHybridDetector is true.
   final PracticePitchRouter _router = PracticePitchRouter();
+
+  /// Onset detector gate - decides WHEN to allow pitch detection.
+  /// Prevents sustain/reverb pollution by only evaluating during attack bursts.
+  final OnsetDetector _onsetDetector = OnsetDetector();
 
   String? _sessionId;
   final List<PitchEvent> _events = [];
@@ -229,6 +234,7 @@ class MicEngine {
     _lastWrongFlashAt = null;
     _pitchClassStability.clear();
     _lastDetectedPitchClass = null;
+    _onsetDetector.reset(); // Reset onset gate for new session
 
     if (kDebugMode) {
       // PITCH_PIPELINE: Non-filterable startup log proving pipeline configuration
@@ -301,6 +307,25 @@ class MicEngine {
         // Compute active expected MIDIs using START-ONLY window for routing
         // This prevents long notes from artificially extending chord detection
         final activeExpectedMidis = _computeActiveExpectedMidisForRouting(elapsedSec);
+
+        // ─────────────────────────────────────────────────────────────────────
+        // ONSET GATING: Only allow pitch detection during attack bursts
+        // This prevents sustain/reverb from previous notes from polluting detection
+        // ─────────────────────────────────────────────────────────────────────
+        final onsetState = _onsetDetector.update(
+          rmsNow: rms,
+          nowMs: elapsedMs,
+          hasExpectedNotes: activeExpectedMidis.isNotEmpty,
+        );
+
+        // If onset gate says skip, don't call pitch detector at all
+        if (onsetState == OnsetState.skip) {
+          // Still prune old events and run matching (for MISS detection)
+          _events.removeWhere((e) => elapsedSec - e.tSec > 2.0);
+          decisions.addAll(_matchNotes(elapsedSec, now));
+          _lastChunkTime = now;
+          return decisions;
+        }
 
         // Call router to decide YIN vs Goertzel
         final routerEvents = _router.decide(
