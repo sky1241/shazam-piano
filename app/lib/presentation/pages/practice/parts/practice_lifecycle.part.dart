@@ -21,7 +21,10 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
   Future<void> _startPracticeVideo({Duration? startPosition});
   Future<void> _startMicStream();
   double? _guidanceElapsedSec();
-  Future<void> _showScoreDialog({required double score, required double accuracy});
+  Future<void> _showScoreDialog({
+    required double score,
+    required double accuracy,
+  });
   void _seedTestData();
 
   @override

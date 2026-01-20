@@ -165,7 +165,9 @@ class PracticePitchRouter {
     // Tolerant snap: if within tolerance, snap to expected
     // This avoids rejecting notes with minor pitch drift
     final distance = (detectedMidi - expectedMidi).abs();
-    final snappedMidi = distance <= snapSemitoneTolerance ? expectedMidi : detectedMidi;
+    final snappedMidi = distance <= snapSemitoneTolerance
+        ? expectedMidi
+        : detectedMidi;
 
     // Debug log (grep-friendly YIN_CALLED format)
     if (kDebugMode) {

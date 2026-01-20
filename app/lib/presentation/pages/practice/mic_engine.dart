@@ -67,8 +67,10 @@ class MicEngine {
     // Positive = detection arrives late (shift events earlier), Negative = detection early
     this.latencyCompEnabled = true,
     this.latencyCompMaxMs = 400.0,
-    this.latencyCompEmaAlpha = 0.25, // SESSION-015: Faster convergence (was 0.2)
-    this.latencyCompSampleCount = 5, // SESSION-015: Smaller window for faster convergence (was 10)
+    this.latencyCompEmaAlpha =
+        0.25, // SESSION-015: Faster convergence (was 0.2)
+    this.latencyCompSampleCount =
+        5, // SESSION-015: Smaller window for faster convergence (was 10)
     // SESSION-015: Default latency for low-end devices (based on session-015 evidence: ~325ms median)
     // Applied immediately at session start, then refined by auto-estimation
     this.latencyCompDefaultMs = 250.0,
@@ -87,12 +89,15 @@ class MicEngine {
   final double eventDebounceSec;
   final double wrongFlashCooldownSec;
   final double wrongFlashDedupMs; // SESSION-014: Per-midi dedup for WRONG_FLASH
-  final int maxSemitoneDeltaForWrong; // SESSION-014: Max delta for outlier filter
+  final int
+  maxSemitoneDeltaForWrong; // SESSION-014: Max delta for outlier filter
   final int probeSafetyMaxDelta; // SESSION-014: PROBE safety max delta
   final double wrongFlashMinConf; // SESSION-015: Min confidence for WRONG_FLASH
   final bool probeBlockWrongFlash; // SESSION-015: Block WRONG_FLASH from PROBE
-  final int wrongFlashConfirmCount; // SESSION-015: Require N detections to confirm
-  final double wrongFlashConfirmWindowMs; // SESSION-015: Time window for confirmation
+  final int
+  wrongFlashConfirmCount; // SESSION-015: Require N detections to confirm
+  final double
+  wrongFlashConfirmWindowMs; // SESSION-015: Time window for confirmation
   final double
   sustainFilterMs; // SESSION-009: Time to ignore previous note's pitch
   final int uiHoldMs;
@@ -305,7 +310,8 @@ class MicEngine {
     _noteTracker.reset(); // SESSION-015 P4: Reset note tracker for new session
     // SESSION-015: Reset latency compensation with default value for low-end devices
     _latencySamples.clear();
-    _latencyCompMs = latencyCompDefaultMs; // Start with default, refine with samples
+    _latencyCompMs =
+        latencyCompDefaultMs; // Start with default, refine with samples
     _latencyMedianMs = null;
 
     if (kDebugMode) {
@@ -378,7 +384,9 @@ class MicEngine {
       if (kUseHybridDetector) {
         // Compute active expected MIDIs using START-ONLY window for routing
         // This prevents long notes from artificially extending chord detection
-        final activeExpectedMidis = _computeActiveExpectedMidisForRouting(elapsedSec);
+        final activeExpectedMidis = _computeActiveExpectedMidisForRouting(
+          elapsedSec,
+        );
 
         // ─────────────────────────────────────────────────────────────────────
         // ONSET GATING: Only allow pitch detection during attack bursts
@@ -414,8 +422,8 @@ class MicEngine {
           final modeStr = _router.lastMode == DetectionMode.yin
               ? 'YIN'
               : _router.lastMode == DetectionMode.goertzel
-                  ? 'GOERTZEL'
-                  : 'NONE';
+              ? 'GOERTZEL'
+              : 'NONE';
           debugPrint(
             'PITCH_ROUTER expected=$activeExpectedMidis mode=$modeStr events=${routerEvents.length} t=${elapsedSec.toStringAsFixed(3)}',
           );
@@ -744,7 +752,8 @@ class MicEngine {
     _latencyMedianMs = median;
 
     // Apply EMA smoothing to avoid sudden jumps
-    final newComp = _latencyCompMs * (1 - latencyCompEmaAlpha) +
+    final newComp =
+        _latencyCompMs * (1 - latencyCompEmaAlpha) +
         median * latencyCompEmaAlpha;
 
     // Clamp to reasonable range
@@ -1022,7 +1031,7 @@ class MicEngine {
           // SESSION-015: Include latency compensation info in HIT log
           final latencyInfo = latencyCompEnabled
               ? 'latencyCompMs=${_latencyCompMs.toStringAsFixed(1)} '
-                'rawT=${bestEvent.tSec.toStringAsFixed(3)} adjT=${adjustedEventTSec.toStringAsFixed(3)}'
+                    'rawT=${bestEvent.tSec.toStringAsFixed(3)} adjT=${adjustedEventTSec.toStringAsFixed(3)}'
               : 'latencyComp=OFF';
           debugPrint(
             'HIT_DECISION sessionId=$_sessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
@@ -1125,7 +1134,8 @@ class MicEngine {
 
       // FILTER 2: PROBE safety fallback (if probeBlockWrongFlash=false)
       // Don't flag wrong notes from PROBE if delta > probeSafetyMaxDelta
-      if (event.source == PitchEventSource.probe && minDeltaToExpected > probeSafetyMaxDelta) {
+      if (event.source == PitchEventSource.probe &&
+          minDeltaToExpected > probeSafetyMaxDelta) {
         if (kDebugMode) {
           debugPrint(
             'WRONG_FLASH_DROP reason=probe_safety midi=${event.midi} '
@@ -1202,7 +1212,8 @@ class MicEngine {
         candidateList.add(event.tSec);
 
         // Prune old entries outside confirmation window
-        final windowStartSec = event.tSec - (wrongFlashConfirmWindowMs / 1000.0);
+        final windowStartSec =
+            event.tSec - (wrongFlashConfirmWindowMs / 1000.0);
         candidateList.removeWhere((t) => t < windowStartSec);
 
         // Check if we have enough confirmations
@@ -1251,8 +1262,11 @@ class MicEngine {
           ),
         );
         _lastWrongFlashAt = now;
-        _lastWrongFlashByMidi[bestWrongMidi] = now; // SESSION-014: Track per-midi
-        _wrongCandidateHistory.remove(bestWrongMidi); // SESSION-015: Clear confirmation history
+        _lastWrongFlashByMidi[bestWrongMidi] =
+            now; // SESSION-014: Track per-midi
+        _wrongCandidateHistory.remove(
+          bestWrongMidi,
+        ); // SESSION-015: Clear confirmation history
 
         if (kDebugMode) {
           // SESSION-015: Calculate minDelta for logging
@@ -1296,10 +1310,13 @@ class NoteEvent {
 enum PitchEventSource {
   /// Event from onset trigger (first eval in burst).
   trigger,
+
   /// Event from burst window (subsequent evals after trigger).
   burst,
+
   /// Event from probe failsafe (soft attack recovery).
   probe,
+
   /// Event from legacy MPM path (non-hybrid).
   legacy,
 }
@@ -1320,6 +1337,7 @@ class PitchEvent {
   final double conf;
   final double rms;
   final int stabilityFrames;
+
   /// Source of this event (for PROBE safety filtering).
   final PitchEventSource source;
 }

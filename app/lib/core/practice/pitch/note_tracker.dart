@@ -242,8 +242,10 @@ class NoteTracker {
 
       // Check END conditions (only after minHoldMs)
       if (msSinceAttack >= minHoldMs) {
-        final endThreshold = (_noiseFloorEma + marginEnd)
-            .clamp(0.0, _peakRms[pc] * releaseRatio);
+        final endThreshold = (_noiseFloorEma + marginEnd).clamp(
+          0.0,
+          _peakRms[pc] * releaseRatio,
+        );
         final rmsBelow = rmsNow < endThreshold;
         final confBelow = _confEma[pc] < presenceEndThreshold;
 
@@ -320,8 +322,9 @@ class NoteTracker {
 
     // 1. RMS above background (hybrid: max of absolute and relative margin)
     final dynamicMargin = _rmsEma[pc] * attackMarginRatio;
-    final effectiveMargin =
-        dynamicMargin > attackMarginAbs ? dynamicMargin : attackMarginAbs;
+    final effectiveMargin = dynamicMargin > attackMarginAbs
+        ? dynamicMargin
+        : attackMarginAbs;
     final aboveBackground = rmsNow > _rmsEma[pc] + effectiveMargin;
 
     // 2. STRICT rising edge: dRms must be > minAttackDelta (not >=)
@@ -342,8 +345,8 @@ class NoteTracker {
         final reason = !risingEdge
             ? 'tail_falling'
             : !aboveBackground
-                ? 'tail_below_bg'
-                : 'tail_low_conf';
+            ? 'tail_below_bg'
+            : 'tail_low_conf';
         debugPrint(
           'NOTE_SUPPRESS reason=$reason midi=$midi pc=$pc t=${nowMs.toStringAsFixed(0)}ms '
           'rms=${rmsNow.toStringAsFixed(4)} dRms=${dRms.toStringAsFixed(4)} '

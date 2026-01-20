@@ -294,7 +294,6 @@ class _PracticePageState extends _PracticePageStateBase
         _PracticeInputLogicMixin,
         _PracticeNotesLogicMixin,
         _PracticeLifecycleMixin {
-
   @override
   Widget build(BuildContext context) {
     // FEATURE A: Update countdown every frame
