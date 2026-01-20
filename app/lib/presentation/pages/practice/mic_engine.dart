@@ -36,12 +36,41 @@ class MicEngine {
     this.minConfForPitch = 0.40,
     this.eventDebounceSec = 0.05,
     this.wrongFlashCooldownSec = 0.15,
+    // SESSION-014: Per-midi dedup for WRONG_FLASH (prevents spam of same wrong note)
+    this.wrongFlashDedupMs = 400.0,
+    // SESSION-014: Max semitone distance for WRONG_FLASH (filters outliers like subharmonics)
+    // If detected midi is > 12 semitones from ALL expected midis, ignore it
+    this.maxSemitoneDeltaForWrong = 12,
+    // SESSION-014: PROBE safety - max semitone distance to allow WRONG_FLASH from PROBE events
+    // PROBE events with delta > 3 are likely artifacts, not real wrong notes
+    this.probeSafetyMaxDelta = 3,
+    // SESSION-015: Minimum confidence required to emit WRONG_FLASH (filters weak artifacts)
+    // Higher than minConfForWrong to avoid ghost flashes from low-confidence detections
+    // 0.75 = user must really be pressing the wrong key with conviction
+    this.wrongFlashMinConf = 0.75,
+    // SESSION-015: Block WRONG_FLASH from PROBE events entirely (artifacts, not real mistakes)
+    // When true, PROBE events never trigger WRONG_FLASH regardless of delta
+    this.probeBlockWrongFlash = true,
+    // SESSION-015: Confirmation temporelle - require N detections of same wrong midi
+    // within a time window to trigger WRONG_FLASH (anti-single-spike filter)
+    // This prevents sustain/reverb artifacts from triggering ghost red flashes
+    this.wrongFlashConfirmCount = 2,
+    this.wrongFlashConfirmWindowMs = 250.0,
     // SESSION-009: Sustain filter - ignore previous note's pitch for wrong detection
     this.sustainFilterMs = 600.0,
     this.uiHoldMs = 200,
     this.pitchWindowSize = 2048,
     this.minPitchIntervalMs = 40,
     this.verboseDebug = false,
+    // SESSION-015: Latency compensation - applied to event timestamps for HIT matching
+    // Positive = detection arrives late (shift events earlier), Negative = detection early
+    this.latencyCompEnabled = true,
+    this.latencyCompMaxMs = 400.0,
+    this.latencyCompEmaAlpha = 0.25, // SESSION-015: Faster convergence (was 0.2)
+    this.latencyCompSampleCount = 5, // SESSION-015: Smaller window for faster convergence (was 10)
+    // SESSION-015: Default latency for low-end devices (based on session-015 evidence: ~325ms median)
+    // Applied immediately at session start, then refined by auto-estimation
+    this.latencyCompDefaultMs = 250.0,
   });
 
   final List<NoteEvent> noteEvents;
@@ -56,12 +85,25 @@ class MicEngine {
   minConfForPitch; // SESSION-008: Minimum confidence for pitch detection
   final double eventDebounceSec;
   final double wrongFlashCooldownSec;
+  final double wrongFlashDedupMs; // SESSION-014: Per-midi dedup for WRONG_FLASH
+  final int maxSemitoneDeltaForWrong; // SESSION-014: Max delta for outlier filter
+  final int probeSafetyMaxDelta; // SESSION-014: PROBE safety max delta
+  final double wrongFlashMinConf; // SESSION-015: Min confidence for WRONG_FLASH
+  final bool probeBlockWrongFlash; // SESSION-015: Block WRONG_FLASH from PROBE
+  final int wrongFlashConfirmCount; // SESSION-015: Require N detections to confirm
+  final double wrongFlashConfirmWindowMs; // SESSION-015: Time window for confirmation
   final double
   sustainFilterMs; // SESSION-009: Time to ignore previous note's pitch
   final int uiHoldMs;
   final int pitchWindowSize;
   final int minPitchIntervalMs;
   final bool verboseDebug;
+  // SESSION-015: Latency compensation parameters
+  final bool latencyCompEnabled;
+  final double latencyCompMaxMs;
+  final double latencyCompEmaAlpha;
+  final int latencyCompSampleCount;
+  final double latencyCompDefaultMs; // Default latency for low-end devices
 
   /// Hybrid pitch router (YIN for mono, Goertzel for chords).
   /// Only used when kUseHybridDetector is true.
@@ -104,6 +146,12 @@ class MicEngine {
 
   // Wrong flash throttle
   DateTime? _lastWrongFlashAt;
+  // SESSION-014: Per-midi dedup tracking for WRONG_FLASH
+  final Map<int, DateTime> _lastWrongFlashByMidi = {};
+
+  // SESSION-015: Confirmation temporelle tracking for WRONG_FLASH
+  // Maps midi → list of detection timestamps (for requiring N confirmations)
+  final Map<int, List<double>> _wrongCandidateHistory = {};
 
   // SESSION-009: Track recently hit pitch classes to filter sustain/reverb
   // Maps pitchClass (0-11) to timestamp when it was last hit
@@ -112,6 +160,18 @@ class MicEngine {
   // Stability tracking: pitchClass → consecutive count
   final Map<int, int> _pitchClassStability = {};
   int? _lastDetectedPitchClass;
+
+  // SESSION-015: Latency compensation state
+  final List<double> _latencySamples = []; // Recent dt samples (ms)
+  double _latencyCompMs = 0.0; // Current applied compensation (ms)
+  double? _latencyMedianMs; // Last computed median (for logging)
+
+  /// SESSION-015: Current latency compensation in milliseconds.
+  /// Positive = detection arrives late (events shifted earlier).
+  double get latencyCompMs => _latencyCompMs;
+
+  /// SESSION-015: Last computed median latency (for debugging).
+  double? get latencyMedianMs => _latencyMedianMs;
 
   /// Epsilon for grouping chord notes with nearly-simultaneous starts.
   /// Notes within this time window are considered part of the same chord.
@@ -232,9 +292,15 @@ class MicEngine {
     _uiMidi = null;
     _uiMidiSetAt = null;
     _lastWrongFlashAt = null;
+    _lastWrongFlashByMidi.clear(); // SESSION-014: Reset per-midi dedup
+    _wrongCandidateHistory.clear(); // SESSION-015: Reset confirmation tracking
     _pitchClassStability.clear();
     _lastDetectedPitchClass = null;
     _onsetDetector.reset(); // Reset onset gate for new session
+    // SESSION-015: Reset latency compensation with default value for low-end devices
+    _latencySamples.clear();
+    _latencyCompMs = latencyCompDefaultMs; // Start with default, refine with samples
+    _latencyMedianMs = null;
 
     if (kDebugMode) {
       // PITCH_PIPELINE: Non-filterable startup log proving pipeline configuration
@@ -349,6 +415,23 @@ class MicEngine {
           );
         }
 
+        // SESSION-014: Convert OnsetState to PitchEventSource for tracking
+        final PitchEventSource eventSource;
+        switch (onsetState) {
+          case OnsetState.trigger:
+            eventSource = PitchEventSource.trigger;
+            break;
+          case OnsetState.burst:
+            eventSource = PitchEventSource.burst;
+            break;
+          case OnsetState.probe:
+            eventSource = PitchEventSource.probe;
+            break;
+          case OnsetState.skip:
+            eventSource = PitchEventSource.legacy; // Should not happen
+            break;
+        }
+
         // Add router events to buffer (with sustain filter + debounce)
         for (final re in routerEvents) {
           final pitchClass = re.midi % 12;
@@ -395,6 +478,7 @@ class MicEngine {
               conf: re.conf,
               rms: re.rms,
               stabilityFrames: stabilityFrames,
+              source: eventSource, // SESSION-014: Track source for PROBE safety
             ),
           );
 
@@ -622,6 +706,38 @@ class MicEngine {
     return (12 * (log(freq / 440.0) / ln2) + 69).round();
   }
 
+  /// SESSION-015: Update latency compensation estimate from collected samples.
+  ///
+  /// Uses median of recent samples (robust to outliers) with EMA smoothing.
+  /// Clamps result to [-latencyCompMaxMs, +latencyCompMaxMs].
+  void _updateLatencyEstimate() {
+    if (_latencySamples.isEmpty) return;
+
+    // Compute median (robust to outliers)
+    final sorted = List<double>.from(_latencySamples)..sort();
+    final mid = sorted.length ~/ 2;
+    final median = sorted.length.isOdd
+        ? sorted[mid]
+        : (sorted[mid - 1] + sorted[mid]) / 2.0;
+
+    _latencyMedianMs = median;
+
+    // Apply EMA smoothing to avoid sudden jumps
+    final newComp = _latencyCompMs * (1 - latencyCompEmaAlpha) +
+        median * latencyCompEmaAlpha;
+
+    // Clamp to reasonable range
+    _latencyCompMs = newComp.clamp(-latencyCompMaxMs, latencyCompMaxMs);
+
+    if (kDebugMode) {
+      debugPrint(
+        'LATENCY_EST medianMs=${median.toStringAsFixed(1)} '
+        'appliedMs=${_latencyCompMs.toStringAsFixed(1)} '
+        'samples=${_latencySamples.length}',
+      );
+    }
+  }
+
   List<NoteDecision> _matchNotes(double elapsed, DateTime now) {
     final decisions = <NoteDecision>[];
 
@@ -780,19 +896,64 @@ class MicEngine {
         // validate another note with the same pitch class
         consumedEventTimes.add(bestEvent.tSec);
 
+        // SESSION-015: Apply latency compensation to event timestamp
+        // If detection arrives late (positive latencyCompMs), shift event earlier
+        final adjustedEventTSec = latencyCompEnabled
+            ? bestEvent.tSec - (_latencyCompMs / 1000.0)
+            : bestEvent.tSec;
+
         // FIX BUG #7 (SESSION4): Calculate dt correctly for long notes
         // For long notes (>500ms), playing DURING the note should be perfect (dt=0)
         // Only penalize if played before note.start or after note.end
         final double dtSec;
-        if (bestEvent.tSec < note.start) {
+        if (adjustedEventTSec < note.start) {
           // Played before note started (early)
-          dtSec = bestEvent.tSec - note.start; // negative
-        } else if (bestEvent.tSec <= note.end) {
+          dtSec = adjustedEventTSec - note.start; // negative
+        } else if (adjustedEventTSec <= note.end) {
           // Played DURING the note (perfect timing for long notes)
           dtSec = 0.0;
         } else {
           // Played after note ended (late)
-          dtSec = bestEvent.tSec - note.end; // positive
+          dtSec = adjustedEventTSec - note.end; // positive
+        }
+
+        // SESSION-015: Collect latency sample for auto-estimation
+        // Only from high-confidence, non-PROBE sources
+        if (latencyCompEnabled &&
+            bestEvent.conf >= minConfForPitch &&
+            bestEvent.source != PitchEventSource.probe) {
+          // Raw dt: how late the detection arrived relative to the "expected time"
+          // For latency estimation, we use note.start as the reference point
+          // (when the user SHOULD press the key to be "on time")
+          // Positive = detection late, Negative = detection early
+          //
+          // Note: We use note.start (not center) because that's when the user
+          // should ideally begin playing. The detection latency is the delay
+          // between user action and system detection.
+          final expectedTime = note.start;
+          final rawDtMs = (bestEvent.tSec - expectedTime) * 1000.0;
+
+          // Log the sample
+          if (kDebugMode) {
+            debugPrint(
+              'LATENCY_SAMPLE dtMs=${rawDtMs.toStringAsFixed(1)} '
+              'source=${bestEvent.source.name} conf=${bestEvent.conf.toStringAsFixed(2)} '
+              'midi=${bestEvent.midi} noteIdx=$idx '
+              'eventT=${bestEvent.tSec.toStringAsFixed(3)} expectedT=${expectedTime.toStringAsFixed(3)}',
+            );
+          }
+
+          // Add to sliding window
+          _latencySamples.add(rawDtMs);
+          if (_latencySamples.length > latencyCompSampleCount) {
+            _latencySamples.removeAt(0);
+          }
+
+          // Update latency estimate when we have enough samples
+          // SESSION-015: Start estimating after just 2 samples for faster convergence
+          if (_latencySamples.length >= 2) {
+            _updateLatencyEstimate();
+          }
         }
 
         // SUSTAIN SCORING: Calculate held duration from pitch events in buffer
@@ -833,12 +994,17 @@ class MicEngine {
         _recentlyHitPitchClasses[expectedPitchClass] = now;
 
         if (kDebugMode) {
+          // SESSION-015: Include latency compensation info in HIT log
+          final latencyInfo = latencyCompEnabled
+              ? 'latencyCompMs=${_latencyCompMs.toStringAsFixed(1)} '
+                'rawT=${bestEvent.tSec.toStringAsFixed(3)} adjT=${adjustedEventTSec.toStringAsFixed(3)}'
+              : 'latencyComp=OFF';
           debugPrint(
             'HIT_DECISION sessionId=$_sessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
             'expectedMidi=${note.pitch} expectedPC=$expectedPitchClass detectedMidi=${bestEvent.midi} '
             'freq=${bestEvent.freq.toStringAsFixed(1)} conf=${bestEvent.conf.toStringAsFixed(2)} '
             'stability=${bestEvent.stabilityFrames} distance=${bestDistance.toStringAsFixed(1)} '
-            'dt=${dtSec.toStringAsFixed(3)}s '
+            'dt=${dtSec.toStringAsFixed(3)}s $latencyInfo '
             'window=[${windowStart.toStringAsFixed(3)}..${windowEnd.toStringAsFixed(3)}] result=HIT',
           );
         }
@@ -870,8 +1036,9 @@ class MicEngine {
       return elapsed >= windowStart && elapsed <= windowEnd;
     });
 
-    // Collect all expected pitch classes for active notes
+    // Collect all expected pitch classes AND midis for active notes
     final activeExpectedPitchClasses = <int>{};
+    final activeExpectedMidis = <int>[]; // SESSION-014: For outlier filter
     for (var idx = 0; idx < noteEvents.length; idx++) {
       if (hitNotes[idx]) continue;
       final note = noteEvents[idx];
@@ -879,17 +1046,107 @@ class MicEngine {
       final windowEnd = note.end + tailWindowSec;
       if (elapsed >= windowStart && elapsed <= windowEnd) {
         activeExpectedPitchClasses.add(note.pitch % 12);
+        activeExpectedMidis.add(note.pitch);
       }
     }
+
+    // SESSION-015: Compute plausible keyboard range based on expected notes
+    // This filters ghost notes far outside the visible/playable range
+    int minExpectedMidi = 999;
+    int maxExpectedMidi = 0;
+    for (final midi in activeExpectedMidis) {
+      if (midi < minExpectedMidi) minExpectedMidi = midi;
+      if (midi > maxExpectedMidi) maxExpectedMidi = midi;
+    }
+    // Plausible range: 24 semitones (2 octaves) around expected notes
+    final plausibleMinMidi = minExpectedMidi - 24;
+    final plausibleMaxMidi = maxExpectedMidi + 24;
 
     // Find events that DON'T match any expected pitch class = WRONG notes
     for (final event in _events) {
       // Only consider recent events (within last 500ms)
       if (event.tSec < elapsed - 0.5) continue;
+
+      // SESSION-015: Initial confidence filter (basic threshold)
       if (event.conf < minConfForWrong) continue;
 
       final eventPitchClass = event.midi % 12;
       final isWrongNote = !activeExpectedPitchClasses.contains(eventPitchClass);
+
+      // SESSION-014: Calculate minimum distance to any expected note (for outlier filter)
+      int minDeltaToExpected = 999;
+      for (final expectedMidi in activeExpectedMidis) {
+        final delta = (event.midi - expectedMidi).abs();
+        if (delta < minDeltaToExpected) {
+          minDeltaToExpected = delta;
+        }
+      }
+
+      // ─────────────────────────────────────────────────────────────────────
+      // SESSION-015: WrongFlashGate - Multi-layer filtering for ghost flashes
+      // ─────────────────────────────────────────────────────────────────────
+
+      // FILTER 1: PROBE block - PROBE events never trigger WRONG_FLASH
+      // (PROBE is a failsafe for soft attacks, not for detecting mistakes)
+      if (probeBlockWrongFlash && event.source == PitchEventSource.probe) {
+        if (kDebugMode) {
+          debugPrint(
+            'WRONG_FLASH_DROP reason=probe midi=${event.midi} '
+            'conf=${event.conf.toStringAsFixed(2)} minDelta=$minDeltaToExpected',
+          );
+        }
+        continue;
+      }
+
+      // FILTER 2: PROBE safety fallback (if probeBlockWrongFlash=false)
+      // Don't flag wrong notes from PROBE if delta > probeSafetyMaxDelta
+      if (event.source == PitchEventSource.probe && minDeltaToExpected > probeSafetyMaxDelta) {
+        if (kDebugMode) {
+          debugPrint(
+            'WRONG_FLASH_DROP reason=probe_safety midi=${event.midi} '
+            'conf=${event.conf.toStringAsFixed(2)} minDelta=$minDeltaToExpected '
+            'threshold=$probeSafetyMaxDelta',
+          );
+        }
+        continue;
+      }
+
+      // FILTER 3: Outlier filter - skip events too far from any expected note
+      // This filters subharmonics like MIDI 34 when expecting MIDI 60-70
+      if (minDeltaToExpected > maxSemitoneDeltaForWrong) {
+        if (kDebugMode) {
+          debugPrint(
+            'WRONG_FLASH_DROP reason=outlier midi=${event.midi} '
+            'conf=${event.conf.toStringAsFixed(2)} minDelta=$minDeltaToExpected '
+            'threshold=$maxSemitoneDeltaForWrong',
+          );
+        }
+        continue;
+      }
+
+      // FILTER 4: Out of plausible keyboard range
+      if (activeExpectedMidis.isNotEmpty &&
+          (event.midi < plausibleMinMidi || event.midi > plausibleMaxMidi)) {
+        if (kDebugMode) {
+          debugPrint(
+            'WRONG_FLASH_DROP reason=out_of_range midi=${event.midi} '
+            'conf=${event.conf.toStringAsFixed(2)} '
+            'range=[$plausibleMinMidi..$plausibleMaxMidi]',
+          );
+        }
+        continue;
+      }
+
+      // FILTER 5: Low confidence for WRONG_FLASH (higher threshold than detection)
+      if (event.conf < wrongFlashMinConf) {
+        if (kDebugMode) {
+          debugPrint(
+            'WRONG_FLASH_DROP reason=low_conf midi=${event.midi} '
+            'conf=${event.conf.toStringAsFixed(2)} threshold=$wrongFlashMinConf',
+          );
+        }
+        continue;
+      }
 
       // SESSION-009: Sustain filter - ignore pitch classes that were recently hit
       // This prevents sustain/reverb of previous note from triggering false "wrong"
@@ -899,11 +1156,44 @@ class MicEngine {
         final msSinceHit = now.difference(recentHitTime).inMilliseconds;
         if (msSinceHit < sustainFilterMs) {
           isSustainOfPreviousNote = true;
+          if (kDebugMode && verboseDebug) {
+            debugPrint(
+              'WRONG_FLASH_DROP reason=sustain midi=${event.midi} '
+              'pitchClass=$eventPitchClass msSinceHit=$msSinceHit',
+            );
+          }
         }
       }
 
       if (isWrongNote && hasActiveNoteInWindow && !isSustainOfPreviousNote) {
-        // This event doesn't match any expected note = WRONG
+        // SESSION-015: FILTER 6 - Confirmation temporelle (anti-single-spike)
+        // Require N detections of same wrong midi within time window
+        final candidateList = _wrongCandidateHistory.putIfAbsent(
+          event.midi,
+          () => <double>[],
+        );
+
+        // Add current detection timestamp
+        candidateList.add(event.tSec);
+
+        // Prune old entries outside confirmation window
+        final windowStartSec = event.tSec - (wrongFlashConfirmWindowMs / 1000.0);
+        candidateList.removeWhere((t) => t < windowStartSec);
+
+        // Check if we have enough confirmations
+        if (candidateList.length < wrongFlashConfirmCount) {
+          if (kDebugMode) {
+            debugPrint(
+              'WRONG_FLASH_DROP reason=unconfirmed midi=${event.midi} '
+              'conf=${event.conf.toStringAsFixed(2)} '
+              'detections=${candidateList.length}/$wrongFlashConfirmCount '
+              'windowMs=$wrongFlashConfirmWindowMs',
+            );
+          }
+          continue;
+        }
+
+        // This event doesn't match any expected note = WRONG (confirmed!)
         if (bestWrongEvent == null || event.conf > bestWrongEvent.conf) {
           bestWrongEvent = event;
           bestWrongMidi = event.midi;
@@ -915,12 +1205,19 @@ class MicEngine {
     // FIX BUG SESSION-005: Allow wrongFlash even when a HIT was also registered
     // This detects when user plays correct note + wrong note simultaneously
     if (bestWrongEvent != null && hasActiveNoteInWindow) {
-      final canFlash =
+      // Global cooldown check
+      final globalCooldownOk =
           _lastWrongFlashAt == null ||
           now.difference(_lastWrongFlashAt!).inMilliseconds >
               (wrongFlashCooldownSec * 1000);
 
-      if (canFlash) {
+      // SESSION-014: Per-midi dedup check - prevent spam of same wrong note
+      final lastFlashForMidi = _lastWrongFlashByMidi[bestWrongMidi!];
+      final perMidiDedupOk =
+          lastFlashForMidi == null ||
+          now.difference(lastFlashForMidi).inMilliseconds > wrongFlashDedupMs;
+
+      if (globalCooldownOk && perMidiDedupOk) {
         decisions.add(
           NoteDecision(
             type: DecisionType.wrongFlash,
@@ -929,15 +1226,29 @@ class MicEngine {
           ),
         );
         _lastWrongFlashAt = now;
+        _lastWrongFlashByMidi[bestWrongMidi] = now; // SESSION-014: Track per-midi
+        _wrongCandidateHistory.remove(bestWrongMidi); // SESSION-015: Clear confirmation history
 
         if (kDebugMode) {
+          // SESSION-015: Calculate minDelta for logging
+          int logMinDelta = 999;
+          for (final expectedMidi in activeExpectedMidis) {
+            final delta = (bestWrongMidi - expectedMidi).abs();
+            if (delta < logMinDelta) logMinDelta = delta;
+          }
           debugPrint(
             'WRONG_FLASH sessionId=$_sessionId elapsed=${elapsed.toStringAsFixed(3)} '
-            'wrongMidi=$bestWrongMidi wrongPC=${bestWrongMidi! % 12} '
+            'wrongMidi=$bestWrongMidi wrongPC=${bestWrongMidi % 12} '
             'conf=${bestWrongEvent.conf.toStringAsFixed(2)} '
-            'expectedPCs=$activeExpectedPitchClasses',
+            'source=${bestWrongEvent.source.name} minDelta=$logMinDelta '
+            'expectedPCs=$activeExpectedPitchClasses expectedMidis=$activeExpectedMidis',
           );
         }
+      } else if (kDebugMode && verboseDebug) {
+        // Log dedup skip
+        debugPrint(
+          'WRONG_FLASH_DEDUP midi=$bestWrongMidi globalOk=$globalCooldownOk perMidiOk=$perMidiDedupOk',
+        );
       }
     }
 
@@ -956,6 +1267,18 @@ class NoteEvent {
   final int pitch;
 }
 
+/// Source of a pitch event (for PROBE safety filtering).
+enum PitchEventSource {
+  /// Event from onset trigger (first eval in burst).
+  trigger,
+  /// Event from burst window (subsequent evals after trigger).
+  burst,
+  /// Event from probe failsafe (soft attack recovery).
+  probe,
+  /// Event from legacy MPM path (non-hybrid).
+  legacy,
+}
+
 class PitchEvent {
   const PitchEvent({
     required this.tSec,
@@ -964,6 +1287,7 @@ class PitchEvent {
     required this.conf,
     required this.rms,
     required this.stabilityFrames,
+    this.source = PitchEventSource.legacy,
   });
   final double tSec;
   final int midi;
@@ -971,6 +1295,8 @@ class PitchEvent {
   final double conf;
   final double rms;
   final int stabilityFrames;
+  /// Source of this event (for PROBE safety filtering).
+  final PitchEventSource source;
 }
 
 enum DecisionType { hit, miss, wrongFlash }
