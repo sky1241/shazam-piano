@@ -263,8 +263,11 @@ void main() {
       test('default snapSemitoneTolerance is 0 (strict precision)', () {
         // Default router should have no tolerance (C4 ≠ C#4)
         final defaultRouter = PracticePitchRouter();
-        expect(defaultRouter.snapSemitoneTolerance, 0,
-            reason: 'Default should be strict (no snap tolerance)');
+        expect(
+          defaultRouter.snapSemitoneTolerance,
+          0,
+          reason: 'Default should be strict (no snap tolerance)',
+        );
       });
 
       test('snaps detected MIDI to expected when within tolerance', () {
@@ -287,8 +290,11 @@ void main() {
         expect(routerWithSnap.lastMode, DetectionMode.yin);
         // If detection works, the MIDI should be snapped to expected (69)
         if (events.isNotEmpty) {
-          expect(events.first.midi, 69,
-              reason: 'Should snap to expected MIDI when within tolerance');
+          expect(
+            events.first.midi,
+            69,
+            reason: 'Should snap to expected MIDI when within tolerance',
+          );
         }
       });
 
@@ -312,8 +318,11 @@ void main() {
         expect(routerWithSnap.lastMode, DetectionMode.yin);
         // If detection works, the MIDI should NOT be snapped (wrong note)
         if (events.isNotEmpty) {
-          expect(events.first.midi, isNot(69),
-              reason: 'Should NOT snap when detected is far from expected');
+          expect(
+            events.first.midi,
+            isNot(69),
+            reason: 'Should NOT snap when detected is far from expected',
+          );
         }
       });
 
