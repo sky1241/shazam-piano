@@ -166,6 +166,11 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
     _lastMissHitAt = null; // FIX BUG SESSION-005 #4
     _recentlyHitNotes
         .clear(); // FIX BUG P0: Clear recently hit notes for new session
+    // Phase B instrumentation: Reset RMS stats for new session
+    _micRmsMin = null;
+    _micRmsMax = null;
+    _micRmsSum = 0.0;
+    _micSampleCount = 0;
     if (_videoController != null && _videoController!.value.isInitialized) {
       await _videoController!.pause();
       await _videoController!.seekTo(Duration.zero);

@@ -1629,6 +1629,26 @@ class _PracticePageState extends _PracticePageStateBase
         'guidanceElapsed': _guidanceElapsedSec()?.toStringAsFixed(3),
         'practiceClock': (_startTime != null ? _practiceClockSec() : null)
             ?.toStringAsFixed(3),
+        // Phase B instrumentation: clock vs video gap
+        'clockVideoGapSec': (() {
+          final vpos = _videoElapsedSec();
+          final clock = _startTime != null ? _practiceClockSec() : null;
+          if (vpos == null || clock == null) return null;
+          return (clock - vpos).toStringAsFixed(3);
+        })(),
+        'effectiveLeadInSec': _effectiveLeadInSec.toStringAsFixed(3),
+        'earliestNoteStartSec': _earliestNoteStartSec?.toStringAsFixed(3),
+      },
+      'mic': {
+        'rmsMin': _micRmsMin?.toStringAsFixed(4),
+        'rmsMax': _micRmsMax?.toStringAsFixed(4),
+        'rmsMean': _micSampleCount > 0
+            ? (_micRmsSum / _micSampleCount).toStringAsFixed(4)
+            : null,
+        'sampleCount': _micSampleCount,
+        'absMinRms': _absMinRms.toStringAsFixed(4),
+        'latencyCompSec': _micLatencyCompSec.toStringAsFixed(3),
+        'scoringOffsetSec': _micScoringOffsetSec.toStringAsFixed(3),
       },
       'debug': {
         'overlayBuildCount': _overlayBuildCount,

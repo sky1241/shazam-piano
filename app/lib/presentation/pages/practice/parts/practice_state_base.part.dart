@@ -147,6 +147,11 @@ abstract class _PracticePageStateBase extends ConsumerState<PracticePage>
   bool _micDisabled = false;
   DateTime? _lastMicFrameAt;
   double _micRms = 0.0;
+  // Phase B instrumentation: RMS statistics per session
+  double? _micRmsMin;
+  double? _micRmsMax;
+  double _micRmsSum = 0.0;
+  int _micSampleCount = 0;
   double? _micFrequency;
   int? _micNote;
   double _micConfidence = 0.0;

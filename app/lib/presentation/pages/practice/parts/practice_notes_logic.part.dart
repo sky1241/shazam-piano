@@ -43,6 +43,14 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
       _micConfidence = _micEngine!.lastConfidence ?? 0.0;
       _micRms = _micEngine!.lastRms ?? 0.0;
 
+      // Phase B instrumentation: Accumulate RMS stats
+      if (_micRms > 0) {
+        _micRmsMin = (_micRmsMin == null) ? _micRms : min(_micRmsMin!, _micRms);
+        _micRmsMax = (_micRmsMax == null) ? _micRms : max(_micRmsMax!, _micRms);
+        _micRmsSum += _micRms;
+        _micSampleCount++;
+      }
+
       // Apply decisions (HIT/MISS/wrongFlash)
       for (final decision in decisions) {
         switch (decision.type) {
