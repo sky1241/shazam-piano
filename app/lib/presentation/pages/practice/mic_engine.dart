@@ -71,8 +71,10 @@ class MicEngine {
     // SESSION-015: Confirmation temporelle - require N detections of same wrong midi
     // within a time window to trigger WRONG_FLASH (anti-single-spike filter)
     // This prevents sustain/reverb artifacts from triggering ghost red flashes
-    this.wrongFlashConfirmCount = 2,
-    this.wrongFlashConfirmWindowMs = 250.0,
+    // SESSION-020 FIX BUG #3: Reduced from 2 to 1 for faster latency (<120ms target)
+    // Anti-spam is still enforced by cooldown + dedup gates.
+    this.wrongFlashConfirmCount = 1,
+    this.wrongFlashConfirmWindowMs = 150.0,
     // SESSION-009: Sustain filter - ignore previous note's pitch for wrong detection
     double? sustainFilterMs,
     this.uiHoldMs = 200,
@@ -1342,6 +1344,8 @@ class MicEngine {
                 );
                 _lastWrongFlashAt = now;
                 _mismatchDedupHistory[dedupKey] = now;
+                // SESSION-020 FIX: Also update per-midi dedup to prevent spam from post-match scan
+                _lastWrongFlashByMidi[mismatchEvent.midi] = now;
                 _mismatchConfirmHistory.remove(confirmKey);
 
                 if (kDebugMode) {
@@ -1423,18 +1427,27 @@ class MicEngine {
     const double probeOverrideRmsMult = 2.0;
     const double probeOverrideConfMin = 0.92;
     const double highConfAttackConfMin = 0.90;
+    // SESSION-020 FIX BUG #1: Max delta for PROBE override
+    // PROBE events with delta >= this threshold are NEVER allowed through probeOverride
+    // because they are likely harmonics/artifacts, not real wrong notes.
+    // Value 7 = perfect 5th - anything beyond is suspicious for a "wrong key" scenario.
+    const int probeOverrideMaxDelta = 7;
 
-    /// Check if event is a high-confidence attack (bypasses outlier/range filters).
+    /// Check if event is a high-confidence attack (for logging purposes).
     bool isHighConfidenceAttack(PitchEvent e) {
       return e.conf >= highConfAttackConfMin;
     }
 
     /// Check if PROBE event can override the probe block.
     /// Requires: very high conf + RMS well above effective onset threshold.
-    bool canOverrideProbe(PitchEvent e) {
+    /// SESSION-020 FIX: Also requires minDelta < probeOverrideMaxDelta to filter harmonics.
+    bool canOverrideProbe(PitchEvent e, int minDelta) {
       if (e.source != PitchEventSource.probe) return false;
       if (e.conf < probeOverrideConfMin) return false;
       if (e.rms < probeOverrideRmsMult * effectiveOnsetMinRms) return false;
+      // SESSION-020 FIX BUG #1: Block probe override for large deltas (harmonics)
+      // A PROBE 10 semitones away is almost certainly a harmonic, not a pressed key.
+      if (minDelta >= probeOverrideMaxDelta) return false;
       return true;
     }
 
@@ -1463,7 +1476,8 @@ class MicEngine {
       // ─────────────────────────────────────────────────────────────────────
 
       final bool highConfAttack = isHighConfidenceAttack(event);
-      final bool probeOverride = canOverrideProbe(event);
+      // SESSION-020 FIX BUG #1: Pass minDelta to block probe override for harmonics
+      final bool probeOverride = canOverrideProbe(event, minDeltaToExpected);
 
       // FILTER 1: PROBE block - PROBE events don't trigger WRONG_FLASH
       // EXCEPTION: probeOverride allows very confident PROBE events through
@@ -1499,8 +1513,11 @@ class MicEngine {
 
       // FILTER 3: Outlier filter - skip events too far from any expected note
       // This filters subharmonics like MIDI 34 when expecting MIDI 60-70
-      // SESSION-016: BYPASS if highConfAttack (real intentional wrong note)
-      if (!highConfAttack && minDeltaToExpected > maxSemitoneDeltaForWrong) {
+      // SESSION-020 FIX BUG #1: REMOVED highConfAttack bypass for outlier filter
+      // Previously: highConfAttack could bypass this, causing wrong flashes 10+ semitones away
+      // Now: outlier filter ALWAYS applies regardless of confidence
+      // Rationale: A note 10 semitones away is NEVER the "wrong key pressed" - it's noise/harmonic
+      if (minDeltaToExpected > maxSemitoneDeltaForWrong) {
         if (kDebugMode) {
           debugPrint(
             'WRONG_FLASH_DROP reason=outlier midi=${event.midi} '
@@ -1512,9 +1529,10 @@ class MicEngine {
       }
 
       // FILTER 4: Out of plausible keyboard range
-      // SESSION-016: BYPASS if highConfAttack (real intentional wrong note)
-      if (!highConfAttack &&
-          activeExpectedMidis.isNotEmpty &&
+      // SESSION-020 FIX BUG #1: REMOVED highConfAttack bypass for range filter
+      // Previously: highConfAttack could bypass this, causing wrong flashes outside keyboard range
+      // Now: range filter ALWAYS applies regardless of confidence
+      if (activeExpectedMidis.isNotEmpty &&
           (event.midi < plausibleMinMidi || event.midi > plausibleMaxMidi)) {
         if (kDebugMode) {
           debugPrint(

@@ -255,8 +255,10 @@ class _FallingNotesPainter extends CustomPainter {
           successFlashActive &&
           successNoteIndex != null &&
           noteIdx == successNoteIndex;
-      final isWrongFlash =
-          wrongFlashActive && wrongNote != null && n.pitch == wrongNote;
+      // SESSION-020 FIX BUG #2: wrongFlash coupling REMOVED from falling notes
+      // Wrong flash must ONLY affect the keyboard (bottom), NOT the falling notes.
+      // Previously: wrongFlashActive && wrongNote != null && n.pitch == wrongNote
+      // Now: wrongFlash is handled ONLY by PracticeKeyboard widget.
 
       // FIX BUG 5+7: Change rectangle color when note hit, not just halo
       // Before: Rectangle stayed orange with blue halo overlay (inconsistent)
@@ -277,11 +279,11 @@ class _FallingNotesPainter extends CustomPainter {
         canvas.drawRRect(glowRect, glowPaint);
       }
 
-      // Priority: successFlash > wrongFlash > isTarget (note hit) > default (orange)
+      // Priority: successFlash > isTarget (note hit) > default (orange)
+      // SESSION-020 FIX BUG #2: wrongFlash removed from falling notes color logic
+      // Wrong flash feedback is now ONLY on the keyboard (bottom), not falling notes.
       paint.color = isSuccessFlash
           ? AppColors.success.withValues(alpha: 0.95)
-          : isWrongFlash
-          ? AppColors.error.withValues(alpha: 0.9)
           : isTarget
           ? AppColors.success.withValues(alpha: 0.85)
           : AppColors.warning.withValues(alpha: 0.85);
