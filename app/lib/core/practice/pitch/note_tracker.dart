@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import 'mic_tuning.dart';
+
 /// Result from NoteTracker.feed() - whether to emit a pitch event.
 class NoteTrackerResult {
   const NoteTrackerResult({
@@ -64,6 +66,21 @@ class NoteTracker {
     // Log rate limiting
     this.logRateLimitMs = 120.0,
   });
+
+  /// SESSION-016: Create NoteTracker from MicTuning preset.
+  factory NoteTracker.fromTuning(MicTuning tuning) {
+    return NoteTracker(
+      attackMarginAbs: tuning.attackMarginAbs,
+      attackMarginRatio: tuning.attackMarginRatio,
+      minAttackDelta: tuning.minAttackDelta,
+      confAttackMin: tuning.confAttackMin,
+      cooldownMs: tuning.pitchClassCooldownMs,
+      postHitCooldownMs: tuning.postHitCooldownMs,
+      releaseRatio: tuning.releaseRatio,
+      presenceEndThreshold: tuning.presenceEndThreshold,
+      endConsecutiveFrames: tuning.endConsecutiveFrames,
+    );
+  }
 
   // ───────────────────────────────────────────────────────────────────────────
   // PARAMETERS

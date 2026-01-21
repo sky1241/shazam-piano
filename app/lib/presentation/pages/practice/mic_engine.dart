@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shazapiano/core/practice/pitch/practice_pitch_router.dart';
 import 'package:shazapiano/core/practice/pitch/onset_detector.dart';
 import 'package:shazapiano/core/practice/pitch/note_tracker.dart';
+import 'package:shazapiano/core/practice/pitch/mic_tuning.dart';
 
 /// Feature flag: Enable hybrid YIN/Goertzel detection.
 /// - OFF: Use existing MPM path.
@@ -58,7 +59,7 @@ class MicEngine {
     this.wrongFlashConfirmCount = 2,
     this.wrongFlashConfirmWindowMs = 250.0,
     // SESSION-009: Sustain filter - ignore previous note's pitch for wrong detection
-    this.sustainFilterMs = 600.0,
+    double? sustainFilterMs,
     this.uiHoldMs = 200,
     this.pitchWindowSize = 2048,
     this.minPitchIntervalMs = 40,
@@ -74,7 +75,16 @@ class MicEngine {
     // SESSION-015: Default latency for low-end devices (based on session-015 evidence: ~325ms median)
     // Applied immediately at session start, then refined by auto-estimation
     this.latencyCompDefaultMs = 250.0,
-  });
+    // SESSION-016: MicTuning support (null = use medium profile)
+    MicTuning? tuning,
+  })  : tuning = tuning ?? MicTuning.forProfile(ReverbProfile.medium),
+        sustainFilterMs = sustainFilterMs ?? (tuning?.sustainFilterMs ?? 600.0),
+        _onsetDetector = OnsetDetector.fromTuning(
+          tuning ?? MicTuning.forProfile(ReverbProfile.medium),
+        ),
+        _noteTracker = NoteTracker.fromTuning(
+          tuning ?? MicTuning.forProfile(ReverbProfile.medium),
+        );
 
   final List<NoteEvent> noteEvents;
   final List<bool> hitNotes;
@@ -111,17 +121,22 @@ class MicEngine {
   final int latencyCompSampleCount;
   final double latencyCompDefaultMs; // Default latency for low-end devices
 
+  /// SESSION-016: MicTuning configuration for reverb profile.
+  final MicTuning tuning;
+
   /// Hybrid pitch router (YIN for mono, Goertzel for chords).
   /// Only used when kUseHybridDetector is true.
   final PracticePitchRouter _router = PracticePitchRouter();
 
   /// Onset detector gate - decides WHEN to allow pitch detection.
   /// Prevents sustain/reverb pollution by only evaluating during attack bursts.
-  final OnsetDetector _onsetDetector = OnsetDetector();
+  /// SESSION-016: Now configured via MicTuning.
+  final OnsetDetector _onsetDetector;
 
   /// SESSION-015 P4: Note tracker - prevents tail/sustain from generating new attacks.
   /// Envelope gate with hysteresis: allows ATTACK only on rising edge, blocks HELD/TAIL.
-  final NoteTracker _noteTracker = NoteTracker();
+  /// SESSION-016: Now configured via MicTuning.
+  final NoteTracker _noteTracker;
 
   String? _sessionId;
   final List<PitchEvent> _events = [];
@@ -182,6 +197,18 @@ class MicEngine {
 
   /// SESSION-015: Last computed median latency (for debugging).
   double? get latencyMedianMs => _latencyMedianMs;
+
+  // SESSION-016: Auto-baseline noise floor detection
+  double _noiseFloorRms = 0.0; // Estimated noise floor during baseline
+  double _dynamicOnsetMinRms = 0.0; // Dynamic onset threshold (after baseline)
+  double _baselineStartMs = 0.0; // When baseline measurement started
+  bool _baselineComplete = false; // Whether baseline measurement is done
+  int _baselineSampleCount = 0; // Number of samples in baseline
+  double _lastOnsetTriggerMs = -10000.0; // Last onset trigger time (for baseline guard)
+  double _lastBaselineLogMs = -10000.0; // Rate limit baseline logs
+
+  /// SESSION-016: Dynamic onset minimum RMS (after auto-baseline).
+  double get dynamicOnsetMinRms => _dynamicOnsetMinRms;
 
   /// Epsilon for grouping chord notes with nearly-simultaneous starts.
   /// Notes within this time window are considered part of the same chord.
@@ -314,6 +341,15 @@ class MicEngine {
         latencyCompDefaultMs; // Start with default, refine with samples
     _latencyMedianMs = null;
 
+    // SESSION-016: Reset auto-baseline state
+    _noiseFloorRms = 0.0;
+    _dynamicOnsetMinRms = tuning.onsetMinRms; // Start with preset, refine with baseline
+    _baselineStartMs = 0.0;
+    _baselineComplete = false;
+    _baselineSampleCount = 0;
+    _lastOnsetTriggerMs = -10000.0;
+    _lastBaselineLogMs = -10000.0;
+
     if (kDebugMode) {
       // PITCH_PIPELINE: Non-filterable startup log proving pipeline configuration
       // This log MUST always appear to verify hybrid mode and sample rate settings
@@ -330,6 +366,17 @@ class MicEngine {
         'tail=${tailWindowSec.toStringAsFixed(3)}s absMinRms=${absMinRms.toStringAsFixed(4)} '
         'minConfWrong=${minConfForWrong.toStringAsFixed(2)} debounce=${eventDebounceSec.toStringAsFixed(3)}s '
         'wrongCooldown=${wrongFlashCooldownSec.toStringAsFixed(3)}s uiHold=${uiHoldMs}ms',
+      );
+      // SESSION-016: Log tuning profile
+      debugPrint(
+        'TUNING_PROFILE profile=${tuning.profile.name} '
+        'onsetMinRms=${tuning.onsetMinRms.toStringAsFixed(4)} '
+        'dynamicOnsetMinRms=${_dynamicOnsetMinRms.toStringAsFixed(4)} '
+        'cooldown=${tuning.pitchClassCooldownMs.toStringAsFixed(0)} '
+        'releaseRatio=${tuning.releaseRatio.toStringAsFixed(2)} '
+        'presenceEnd=${tuning.presenceEndThreshold.toStringAsFixed(2)} '
+        'endFrames=${tuning.endConsecutiveFrames} '
+        'sustainFilterMs=${sustainFilterMs.toStringAsFixed(0)}',
       );
     }
   }
@@ -362,6 +409,71 @@ class MicEngine {
 
     final rms = samples.isEmpty ? 0.0 : _computeRms(samples);
     _lastRms = rms;
+
+    // SESSION-016: Auto-baseline noise floor detection
+    // During the first baselineMs, collect RMS samples to estimate noise floor
+    // GUARD: Only update if "silent" (no recent onset, RMS below threshold)
+    if (tuning.autoNoiseBaseline && !_baselineComplete) {
+      if (_baselineStartMs == 0.0) {
+        _baselineStartMs = elapsedMs;
+      }
+      final baselineElapsed = elapsedMs - _baselineStartMs;
+
+      if (baselineElapsed < tuning.baselineMs) {
+        // Guard conditions: only update noise floor if truly silent
+        const double baselineSilenceMaxMult = 0.6; // Max RMS as multiple of onsetMinRms
+        const double onsetRecentMs = 300.0; // "Recent" onset window
+
+        final bool onsetTriggeredRecently =
+            (elapsedMs - _lastOnsetTriggerMs) < onsetRecentMs;
+        final bool isSilent =
+            rms < baselineSilenceMaxMult * tuning.onsetMinRms;
+
+        if (!onsetTriggeredRecently && isSilent) {
+          // Safe to update noise floor
+          _baselineSampleCount++;
+          if (_baselineSampleCount == 1) {
+            _noiseFloorRms = rms;
+          } else {
+            // Slow EMA (alpha=0.1) for stable noise floor estimation
+            _noiseFloorRms = _noiseFloorRms * 0.9 + rms * 0.1;
+          }
+
+          // Rate-limited log (max 1 per 300ms)
+          if (kDebugMode && (elapsedMs - _lastBaselineLogMs) >= 300.0) {
+            _lastBaselineLogMs = elapsedMs;
+            debugPrint(
+              'NOISE_BASELINE_UPDATE floor=${_noiseFloorRms.toStringAsFixed(5)} '
+              'rms=${rms.toStringAsFixed(5)} samples=$_baselineSampleCount',
+            );
+          }
+        } else {
+          // Skip this sample (not silent)
+          if (kDebugMode && (elapsedMs - _lastBaselineLogMs) >= 300.0) {
+            _lastBaselineLogMs = elapsedMs;
+            debugPrint(
+              'NOISE_BASELINE_SKIP reason=not_silent '
+              'rms=${rms.toStringAsFixed(5)} onsetRecently=$onsetTriggeredRecently '
+              'silenceThresh=${(baselineSilenceMaxMult * tuning.onsetMinRms).toStringAsFixed(5)}',
+            );
+          }
+        }
+      } else {
+        // Baseline period ended - compute dynamic threshold
+        _baselineComplete = true;
+        _dynamicOnsetMinRms = (
+          _noiseFloorRms * tuning.noiseFloorMultiplier + tuning.noiseFloorMargin
+        ).clamp(tuning.onsetMinRms, tuning.onsetMinRms * 5);
+
+        if (kDebugMode) {
+          debugPrint(
+            'NOISE_BASELINE floor=${_noiseFloorRms.toStringAsFixed(5)} '
+            'dynamicOnsetMinRms=${_dynamicOnsetMinRms.toStringAsFixed(5)} '
+            'samples=$_baselineSampleCount baselineMs=${tuning.baselineMs}',
+          );
+        }
+      }
+    }
 
     final canComputePitch =
         pitchWindowSize > 0 &&
@@ -434,6 +546,8 @@ class MicEngine {
         switch (onsetState) {
           case OnsetState.trigger:
             eventSource = PitchEventSource.trigger;
+            // SESSION-016: Track onset trigger time for baseline guard
+            _lastOnsetTriggerMs = elapsedMs;
             break;
           case OnsetState.burst:
             eventSource = PitchEventSource.burst;
@@ -1096,6 +1210,33 @@ class MicEngine {
     final plausibleMinMidi = minExpectedMidi - 24;
     final plausibleMaxMidi = maxExpectedMidi + 24;
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // SESSION-016: WrongFlashGate helpers (local, minimal, readable)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // Effective onset RMS threshold (dynamic if auto-baseline complete, else preset)
+    final double effectiveOnsetMinRms =
+        _baselineComplete ? _dynamicOnsetMinRms : tuning.onsetMinRms;
+
+    // Multiplier for PROBE override RMS check
+    const double probeOverrideRmsMult = 2.0;
+    const double probeOverrideConfMin = 0.92;
+    const double highConfAttackConfMin = 0.90;
+
+    /// Check if event is a high-confidence attack (bypasses outlier/range filters).
+    bool isHighConfidenceAttack(PitchEvent e) {
+      return e.conf >= highConfAttackConfMin;
+    }
+
+    /// Check if PROBE event can override the probe block.
+    /// Requires: very high conf + RMS well above effective onset threshold.
+    bool canOverrideProbe(PitchEvent e) {
+      if (e.source != PitchEventSource.probe) return false;
+      if (e.conf < probeOverrideConfMin) return false;
+      if (e.rms < probeOverrideRmsMult * effectiveOnsetMinRms) return false;
+      return true;
+    }
+
     // Find events that DON'T match any expected pitch class = WRONG notes
     for (final event in _events) {
       // Only consider recent events (within last 500ms)
@@ -1117,16 +1258,23 @@ class MicEngine {
       }
 
       // ─────────────────────────────────────────────────────────────────────
-      // SESSION-015: WrongFlashGate - Multi-layer filtering for ghost flashes
+      // SESSION-016: WrongFlashGate - Multi-layer filtering for ghost flashes
       // ─────────────────────────────────────────────────────────────────────
 
-      // FILTER 1: PROBE block - PROBE events never trigger WRONG_FLASH
-      // (PROBE is a failsafe for soft attacks, not for detecting mistakes)
-      if (probeBlockWrongFlash && event.source == PitchEventSource.probe) {
+      final bool highConfAttack = isHighConfidenceAttack(event);
+      final bool probeOverride = canOverrideProbe(event);
+
+      // FILTER 1: PROBE block - PROBE events don't trigger WRONG_FLASH
+      // EXCEPTION: probeOverride allows very confident PROBE events through
+      if (probeBlockWrongFlash &&
+          event.source == PitchEventSource.probe &&
+          !probeOverride) {
         if (kDebugMode) {
           debugPrint(
             'WRONG_FLASH_DROP reason=probe midi=${event.midi} '
-            'conf=${event.conf.toStringAsFixed(2)} minDelta=$minDeltaToExpected',
+            'conf=${event.conf.toStringAsFixed(2)} rms=${event.rms.toStringAsFixed(4)} '
+            'effOnsetMinRms=${effectiveOnsetMinRms.toStringAsFixed(4)} '
+            'minDelta=$minDeltaToExpected probeOverride=$probeOverride',
           );
         }
         continue;
@@ -1134,7 +1282,9 @@ class MicEngine {
 
       // FILTER 2: PROBE safety fallback (if probeBlockWrongFlash=false)
       // Don't flag wrong notes from PROBE if delta > probeSafetyMaxDelta
-      if (event.source == PitchEventSource.probe &&
+      // EXCEPTION: probeOverride bypasses this filter too
+      if (!probeOverride &&
+          event.source == PitchEventSource.probe &&
           minDeltaToExpected > probeSafetyMaxDelta) {
         if (kDebugMode) {
           debugPrint(
@@ -1148,7 +1298,8 @@ class MicEngine {
 
       // FILTER 3: Outlier filter - skip events too far from any expected note
       // This filters subharmonics like MIDI 34 when expecting MIDI 60-70
-      if (minDeltaToExpected > maxSemitoneDeltaForWrong) {
+      // SESSION-016: BYPASS if highConfAttack (real intentional wrong note)
+      if (!highConfAttack && minDeltaToExpected > maxSemitoneDeltaForWrong) {
         if (kDebugMode) {
           debugPrint(
             'WRONG_FLASH_DROP reason=outlier midi=${event.midi} '
@@ -1160,7 +1311,9 @@ class MicEngine {
       }
 
       // FILTER 4: Out of plausible keyboard range
-      if (activeExpectedMidis.isNotEmpty &&
+      // SESSION-016: BYPASS if highConfAttack (real intentional wrong note)
+      if (!highConfAttack &&
+          activeExpectedMidis.isNotEmpty &&
           (event.midi < plausibleMinMidi || event.midi > plausibleMaxMidi)) {
         if (kDebugMode) {
           debugPrint(
@@ -1230,6 +1383,24 @@ class MicEngine {
         }
 
         // This event doesn't match any expected note = WRONG (confirmed!)
+        // SESSION-016: Log WRONG_FLASH_ALLOW for debugging (proves the gate was passed)
+        if (kDebugMode) {
+          final reason = highConfAttack
+              ? 'highConfAttack'
+              : probeOverride
+                  ? 'probeOverride'
+                  : 'normal';
+          // Include RMS info for probeOverride (proves it met the threshold)
+          final rmsInfo = probeOverride
+              ? 'rms=${event.rms.toStringAsFixed(4)} effOnsetMinRms=${effectiveOnsetMinRms.toStringAsFixed(4)} mult=$probeOverrideRmsMult '
+              : '';
+          debugPrint(
+            'WRONG_FLASH_ALLOW reason=$reason '
+            'midi=${event.midi} conf=${event.conf.toStringAsFixed(2)} '
+            '${rmsInfo}source=${event.source.name} minDelta=$minDeltaToExpected '
+            'expected=$activeExpectedMidis',
+          );
+        }
         if (bestWrongEvent == null || event.conf > bestWrongEvent.conf) {
           bestWrongEvent = event;
           bestWrongMidi = event.midi;

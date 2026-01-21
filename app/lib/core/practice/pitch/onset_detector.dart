@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import 'mic_tuning.dart';
+
 /// Onset detection state returned by OnsetDetector.update().
 enum OnsetState {
   /// Skip pitch evaluation - no onset detected, outside burst window.
@@ -44,6 +46,21 @@ class OnsetDetector {
     this.probeIntervalMs = 300,
     this.probeEnabled = true,
   });
+
+  /// SESSION-016: Create OnsetDetector from MicTuning preset.
+  factory OnsetDetector.fromTuning(MicTuning tuning) {
+    return OnsetDetector(
+      emaAlpha: tuning.emaAlpha,
+      onsetMinRms: tuning.onsetMinRms,
+      onsetDeltaAbsMin: tuning.onsetDeltaAbsMin,
+      onsetDeltaRatioMin: tuning.onsetDeltaRatioMin,
+      onsetCooldownMs: tuning.onsetCooldownMs,
+      attackBurstMs: tuning.attackBurstMs,
+      maxEvalsPerBurst: tuning.maxEvalsPerBurst,
+      probeIntervalMs: tuning.probeIntervalMs,
+      probeEnabled: tuning.probeEnabled,
+    );
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // PARAMETERS (tuned for session-013 evidence)
