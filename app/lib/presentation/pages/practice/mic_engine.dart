@@ -23,8 +23,10 @@ const bool kRefreshUiDuringSustain = true;
 /// This prevents keyboard from going black during quiet sustain phases.
 /// Set to false to rollback if this causes ghost highlights.
 const bool kExtendUiDuringSilentSustain = true;
-const int kSustainExtendWindowMs = 400; // Max time to extend UI without new pitch (was 600, reduced)
-const double kSustainExtendMinRms = 0.025; // Min RMS to allow extension (presence gate)
+const int kSustainExtendWindowMs =
+    400; // Max time to extend UI without new pitch (was 600, reduced)
+const double kSustainExtendMinRms =
+    0.025; // Min RMS to allow extension (presence gate)
 
 /// Feature flag: Force fixed sample rate instead of dynamic detection.
 /// SESSION-012 FIX: Dynamic SR detection is unreliable on some Android devices
@@ -94,14 +96,14 @@ class MicEngine {
     this.latencyCompDefaultMs = 250.0,
     // SESSION-016: MicTuning support (null = use medium profile)
     MicTuning? tuning,
-  })  : tuning = tuning ?? MicTuning.forProfile(ReverbProfile.medium),
-        sustainFilterMs = sustainFilterMs ?? (tuning?.sustainFilterMs ?? 600.0),
-        _onsetDetector = OnsetDetector.fromTuning(
-          tuning ?? MicTuning.forProfile(ReverbProfile.medium),
-        ),
-        _noteTracker = NoteTracker.fromTuning(
-          tuning ?? MicTuning.forProfile(ReverbProfile.medium),
-        );
+  }) : tuning = tuning ?? MicTuning.forProfile(ReverbProfile.medium),
+       sustainFilterMs = sustainFilterMs ?? (tuning?.sustainFilterMs ?? 600.0),
+       _onsetDetector = OnsetDetector.fromTuning(
+         tuning ?? MicTuning.forProfile(ReverbProfile.medium),
+       ),
+       _noteTracker = NoteTracker.fromTuning(
+         tuning ?? MicTuning.forProfile(ReverbProfile.medium),
+       );
 
   final List<NoteEvent> noteEvents;
   final List<bool> hitNotes;
@@ -229,7 +231,8 @@ class MicEngine {
   double _baselineStartMs = 0.0; // When baseline measurement started
   bool _baselineComplete = false; // Whether baseline measurement is done
   int _baselineSampleCount = 0; // Number of samples in baseline
-  double _lastOnsetTriggerMs = -10000.0; // Last onset trigger time (for baseline guard)
+  double _lastOnsetTriggerMs =
+      -10000.0; // Last onset trigger time (for baseline guard)
   double _lastBaselineLogMs = -10000.0; // Rate limit baseline logs
 
   /// SESSION-016: Dynamic onset minimum RMS (after auto-baseline).
@@ -370,7 +373,8 @@ class MicEngine {
 
     // SESSION-016: Reset auto-baseline state
     _noiseFloorRms = 0.0;
-    _dynamicOnsetMinRms = tuning.onsetMinRms; // Start with preset, refine with baseline
+    _dynamicOnsetMinRms =
+        tuning.onsetMinRms; // Start with preset, refine with baseline
     _baselineStartMs = 0.0;
     _baselineComplete = false;
     _baselineSampleCount = 0;
@@ -448,13 +452,13 @@ class MicEngine {
 
       if (baselineElapsed < tuning.baselineMs) {
         // Guard conditions: only update noise floor if truly silent
-        const double baselineSilenceMaxMult = 0.6; // Max RMS as multiple of onsetMinRms
+        const double baselineSilenceMaxMult =
+            0.6; // Max RMS as multiple of onsetMinRms
         const double onsetRecentMs = 300.0; // "Recent" onset window
 
         final bool onsetTriggeredRecently =
             (elapsedMs - _lastOnsetTriggerMs) < onsetRecentMs;
-        final bool isSilent =
-            rms < baselineSilenceMaxMult * tuning.onsetMinRms;
+        final bool isSilent = rms < baselineSilenceMaxMult * tuning.onsetMinRms;
 
         if (!onsetTriggeredRecently && isSilent) {
           // Safe to update noise floor
@@ -488,9 +492,10 @@ class MicEngine {
       } else {
         // Baseline period ended - compute dynamic threshold
         _baselineComplete = true;
-        _dynamicOnsetMinRms = (
-          _noiseFloorRms * tuning.noiseFloorMultiplier + tuning.noiseFloorMargin
-        ).clamp(tuning.onsetMinRms, tuning.onsetMinRms * 5);
+        _dynamicOnsetMinRms =
+            (_noiseFloorRms * tuning.noiseFloorMultiplier +
+                    tuning.noiseFloorMargin)
+                .clamp(tuning.onsetMinRms, tuning.onsetMinRms * 5);
 
         if (kDebugMode) {
           debugPrint(
@@ -1251,10 +1256,13 @@ class MicEngine {
         // This catches cases where detectedPC is in activeExpectedPitchClasses
         // (e.g., D# sustain from previous note) but mismatches current note's expectedPC
         // ─────────────────────────────────────────────────────────────────────
-        if (rejectReason != null && rejectReason.startsWith('pitch_class_mismatch_expected=')) {
+        if (rejectReason != null &&
+            rejectReason.startsWith('pitch_class_mismatch_expected=')) {
           // Parse detected info from rejectReason: "pitch_class_mismatch_expected=X_detected=Y"
           // Robust regex: captures both expectedPC and detectedPC
-          final mismatchRegex = RegExp(r'pitch_class_mismatch_expected=(\d+)_detected=(\d+)');
+          final mismatchRegex = RegExp(
+            r'pitch_class_mismatch_expected=(\d+)_detected=(\d+)',
+          );
           final mismatchMatch = mismatchRegex.firstMatch(rejectReason);
 
           if (mismatchMatch == null) {
@@ -1274,7 +1282,8 @@ class MicEngine {
             for (final event in _events) {
               if (event.tSec >= windowStart && event.tSec <= windowEnd) {
                 if ((event.midi % 12) == detectedPC) {
-                  if (mismatchEvent == null || event.conf > mismatchEvent.conf) {
+                  if (mismatchEvent == null ||
+                      event.conf > mismatchEvent.conf) {
                     mismatchEvent = event;
                   }
                 }
@@ -1316,7 +1325,8 @@ class MicEngine {
               final lastFlashForKey = _mismatchDedupHistory[dedupKey];
               final perNoteDedupOk =
                   lastFlashForKey == null ||
-                  now.difference(lastFlashForKey).inMilliseconds > wrongFlashDedupMs;
+                  now.difference(lastFlashForKey).inMilliseconds >
+                      wrongFlashDedupMs;
 
               // GATE 3: Confirmation count (anti-single-spike)
               // Key: noteIdx to track confirmations per target note
@@ -1329,7 +1339,8 @@ class MicEngine {
               final confirmWindowStartSec =
                   mismatchEvent.tSec - (wrongFlashConfirmWindowMs / 1000.0);
               candidateList.removeWhere((t) => t < confirmWindowStartSec);
-              final confirmationOk = candidateList.length >= wrongFlashConfirmCount;
+              final confirmationOk =
+                  candidateList.length >= wrongFlashConfirmCount;
 
               if (globalCooldownOk && perNoteDedupOk && confirmationOk) {
                 // All gates passed - emit WRONG_FLASH
@@ -1420,8 +1431,9 @@ class MicEngine {
     // ─────────────────────────────────────────────────────────────────────────
 
     // Effective onset RMS threshold (dynamic if auto-baseline complete, else preset)
-    final double effectiveOnsetMinRms =
-        _baselineComplete ? _dynamicOnsetMinRms : tuning.onsetMinRms;
+    final double effectiveOnsetMinRms = _baselineComplete
+        ? _dynamicOnsetMinRms
+        : tuning.onsetMinRms;
 
     // Multiplier for PROBE override RMS check
     const double probeOverrideRmsMult = 2.0;
@@ -1607,8 +1619,8 @@ class MicEngine {
           final reason = highConfAttack
               ? 'highConfAttack'
               : probeOverride
-                  ? 'probeOverride'
-                  : 'normal';
+              ? 'probeOverride'
+              : 'normal';
           // Include RMS info for probeOverride (proves it met the threshold)
           final rmsInfo = probeOverride
               ? 'rms=${event.rms.toStringAsFixed(4)} effOnsetMinRms=${effectiveOnsetMinRms.toStringAsFixed(4)} mult=$probeOverrideRmsMult '
@@ -1636,11 +1648,11 @@ class MicEngine {
     // SESSION-018: Stricter gate for silence mode to avoid noise spam
     // In silence: require trigger/burst source AND very high confidence
     const double silenceModeMinConf = 0.92;
-    final bool silenceGateOk = !isSilenceMode || (
-      bestWrongEvent != null &&
-      bestWrongEvent.source != PitchEventSource.probe &&
-      bestWrongEvent.conf >= silenceModeMinConf
-    );
+    final bool silenceGateOk =
+        !isSilenceMode ||
+        (bestWrongEvent != null &&
+            bestWrongEvent.source != PitchEventSource.probe &&
+            bestWrongEvent.conf >= silenceModeMinConf);
 
     if (bestWrongEvent != null && silenceGateOk) {
       // Global cooldown check
