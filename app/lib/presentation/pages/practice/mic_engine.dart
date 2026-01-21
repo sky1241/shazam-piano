@@ -1549,8 +1549,20 @@ class MicEngine {
 
     // Trigger wrongFlash for wrong notes (independent of HITs)
     // FIX BUG SESSION-005: Allow wrongFlash even when a HIT was also registered
-    // This detects when user plays correct note + wrong note simultaneously
-    if (bestWrongEvent != null && hasActiveNoteInWindow) {
+    // SESSION-018 FIX: Also allow wrongFlash in SILENCE mode (no active note)
+    // Mode detection: mismatch (hasActiveNoteInWindow=true) vs silence (false)
+    final bool isSilenceMode = !hasActiveNoteInWindow;
+
+    // SESSION-018: Stricter gate for silence mode to avoid noise spam
+    // In silence: require trigger/burst source AND very high confidence
+    const double silenceModeMinConf = 0.92;
+    final bool silenceGateOk = !isSilenceMode || (
+      bestWrongEvent != null &&
+      bestWrongEvent.source != PitchEventSource.probe &&
+      bestWrongEvent.conf >= silenceModeMinConf
+    );
+
+    if (bestWrongEvent != null && silenceGateOk) {
       // Global cooldown check
       final globalCooldownOk =
           _lastWrongFlashAt == null ||
@@ -1565,7 +1577,7 @@ class MicEngine {
 
       if (globalCooldownOk && perMidiDedupOk) {
         // SESSION-018 FIX: Find dominant active note (closest to elapsed time)
-        // This ensures WRONG_FLASH targets the correct noteIdx for UI flash
+        // In silence mode, these will be null (no active note)
         int? dominantNoteIdx;
         int? dominantExpectedMidi;
         double minDistanceToNow = double.infinity;
@@ -1588,7 +1600,7 @@ class MicEngine {
         decisions.add(
           NoteDecision(
             type: DecisionType.wrongFlash,
-            // SESSION-018: Include noteIndex and expectedMidi for correct UI targeting
+            // SESSION-018: noteIndex/expectedMidi are null in silence mode
             noteIndex: dominantNoteIdx,
             expectedMidi: dominantExpectedMidi,
             detectedMidi: bestWrongMidi,
@@ -1603,26 +1615,41 @@ class MicEngine {
         ); // SESSION-015: Clear confirmation history
 
         if (kDebugMode) {
-          // SESSION-015: Calculate minDelta for logging
-          int logMinDelta = 999;
-          for (final expectedMidi in activeExpectedMidis) {
-            final delta = (bestWrongMidi - expectedMidi).abs();
-            if (delta < logMinDelta) logMinDelta = delta;
+          // SESSION-018: Unified log with mode indicator
+          final mode = isSilenceMode ? 'silence' : 'mismatch';
+          int logMinDelta = isSilenceMode ? -1 : 999;
+          if (!isSilenceMode) {
+            for (final expectedMidi in activeExpectedMidis) {
+              final delta = (bestWrongMidi - expectedMidi).abs();
+              if (delta < logMinDelta) logMinDelta = delta;
+            }
           }
           debugPrint(
-            'WRONG_FLASH sessionId=$_sessionId noteIdx=$dominantNoteIdx elapsed=${elapsed.toStringAsFixed(3)} '
-            'expectedMidi=$dominantExpectedMidi wrongMidi=$bestWrongMidi wrongPC=${bestWrongMidi % 12} '
-            'conf=${bestWrongEvent.conf.toStringAsFixed(2)} '
-            'source=${bestWrongEvent.source.name} minDelta=$logMinDelta '
-            'expectedPCs=$activeExpectedPitchClasses expectedMidis=$activeExpectedMidis',
+            'WRONG_FLASH_EMIT mode=$mode sessionId=$_sessionId noteIdx=$dominantNoteIdx '
+            'elapsed=${elapsed.toStringAsFixed(3)} expectedMidi=$dominantExpectedMidi '
+            'detectedMidi=$bestWrongMidi detectedPC=${bestWrongMidi % 12} '
+            'conf=${bestWrongEvent.conf.toStringAsFixed(2)} source=${bestWrongEvent.source.name} '
+            'minDelta=$logMinDelta expectedMidis=$activeExpectedMidis',
           );
         }
-      } else if (kDebugMode && verboseDebug) {
-        // Log dedup skip
-        debugPrint(
-          'WRONG_FLASH_DEDUP midi=$bestWrongMidi globalOk=$globalCooldownOk perMidiOk=$perMidiDedupOk',
-        );
+      } else {
+        // Log skip with reason
+        if (kDebugMode) {
+          final mode = isSilenceMode ? 'silence' : 'mismatch';
+          debugPrint(
+            'WRONG_FLASH_SKIP reason=gated mode=$mode midi=$bestWrongMidi '
+            'conf=${bestWrongEvent.conf.toStringAsFixed(2)} '
+            'globalCooldownOk=$globalCooldownOk perMidiDedupOk=$perMidiDedupOk',
+          );
+        }
       }
+    } else if (bestWrongEvent != null && !silenceGateOk && kDebugMode) {
+      // Log silence gate rejection
+      debugPrint(
+        'WRONG_FLASH_SKIP reason=silence_gate midi=$bestWrongMidi '
+        'conf=${bestWrongEvent.conf.toStringAsFixed(2)} source=${bestWrongEvent.source.name} '
+        'requiredConf=$silenceModeMinConf',
+      );
     }
 
     return decisions;
