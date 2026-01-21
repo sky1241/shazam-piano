@@ -1,332 +1,171 @@
 # 🎹 ShazaPiano
 
-[![GitHub](https://img.shields.io/badge/github-sky1241%2Fshazam--piano-blue?logo=github)](https://github.com/sky1241/shazam-piano)
-[![Backend CI](https://github.com/sky1241/shazam-piano/workflows/Backend%20CI/badge.svg)](https://github.com/sky1241/shazam-piano/actions)
-[![Flutter CI](https://github.com/sky1241/shazam-piano/workflows/Flutter%20CI/badge.svg)](https://github.com/sky1241/shazam-piano/actions)
-[![License](https://img.shields.io/badge/license-Proprietary-red.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
-[![Flutter](https://img.shields.io/badge/flutter-3.16+-blue.svg)](https://flutter.dev/)
-
-**Transformez vos enregistrements piano en vidéos pédagogiques animées**
-
-Enregistrez ~8 secondes de piano → Obtenez instantanément 4 niveaux de difficulté avec clavier animé.
-
-[Features](#-features) • [Architecture](#-architecture) • [Quick Start](#-quick-start) • [Documentation](#-documentation) • [Contributing](#-contributing)
+**Transforme 8 secondes de piano en vidéos pédagogiques animées.**  
+Tu enregistres un court extrait → l’app génère automatiquement **4 niveaux de difficulté** avec **clavier animé**, **previews gratuites**, et un **mode pratique** pour t’entraîner en temps réel.
 
 ---
 
-## ✨ Features
+## ✨ Ce que fait le projet
 
-- 🎤 **Enregistrement simple** : 8 secondes suffisent
-- 🎹 **4 niveaux automatiques** : Hyper Facile → Facile → Moyen → Pro
-- 📺 **Previews gratuits** : 16 secondes par niveau
-- 💰 **Achat unique 1$** : Débloquez tout à vie
-- 🎵 **Mode Pratique** : Détection des fausses notes en temps réel
-- 🌙 **UI Shazam-like** : Dark theme moderne
+- 🎤 **Enregistrement ultra simple** : ~8 secondes suffisent  
+- 🎹 **4 niveaux automatiques** : Hyper Facile → Facile → Moyen → Pro  
+- 📺 **Previews gratuites** : 12 secondes par niveau  
+- 💰 **Déblocage à vie (~1$)** : accès complet aux 4 niveaux  
+- 🎵 **Practice Mode** : détection d’erreurs + feedback temps réel  
+- 🌙 **UI Shazam-like** : design dark moderne, rapide et clair  
 
 ---
 
-## 🏗️ Architecture
+## 🧠 Concept (en 1 phrase)
 
-### Monorepo Structure
+**“Shazam pour piano”** : tu joues → l’app comprend → elle te génère des vidéos d’apprentissage adaptées à ton niveau.
 
-```
+---
+
+# 🧭 Plan d’architecture (clair + complet)
+
+## 1) Vue d’ensemble (pipeline)
+
+1. **App mobile (Flutter)**
+   - L’utilisateur enregistre ~8s de piano
+   - L’app envoie l’audio au backend
+2. **Backend (FastAPI)**
+   - Extraction MIDI / notes
+   - Génération de **4 arrangements** (L1→L4)
+   - Rendu des **vidéos** (clavier animé + overlay)
+3. **Retour app**
+   - Affichage des **4 previews**
+   - Paywall (achat unique)
+   - Accès aux vidéos complètes + mode pratique
+
+---
+
+## 2) Monorepo (structure projet)
+
 shazapiano/
-├── app/           # Flutter mobile app
-│   ├── lib/
-│   │   ├── core/         # Config, theme, constants
-│   │   ├── data/         # Data sources, models, repos
-│   │   ├── domain/       # Entities, use cases
-│   │   └── presentation/ # UI, state, pages
-│   └── pubspec.yaml
+├── app/ # Flutter mobile app (UI + logique)
+│ ├── lib/
+│ │ ├── core/ # Config, constants, thème, services, utils
+│ │ ├── data/ # API (Dio/Retrofit), DTO, repos, storage
+│ │ ├── domain/ # Entities + interfaces + usecases
+│ │ └── presentation/ # Pages UI, widgets, state (Riverpod)
+│ └── pubspec.yaml
 │
-├── backend/       # FastAPI server
-│   ├── app.py         # Routes & endpoints
-│   ├── config.py      # Levels presets & config
-│   ├── inference.py   # BasicPitch MIDI extraction
-│   ├── arranger.py    # 4-level arrangements
-│   ├── render.py      # Video generation
-│   └── requirements.txt
+├── backend/ # FastAPI (traitement audio + rendu vidéo)
+│ ├── app.py # Endpoints (process, health, cleanup, etc.)
+│ ├── config.py # Settings, presets, validation
+│ ├── inference.py # Audio → MIDI / extraction notes
+│ ├── arranger.py # Génération 4 niveaux (L1-L4)
+│ ├── render.py # Génération vidéo (MoviePy/FFmpeg)
+│ └── requirements.txt
 │
-├── infra/         # Docker, CI/CD
-│   └── docker-compose.yml
-│
-└── docs/          # Documentation
-    ├── ARCHITECTURE.md
-    ├── UI_SPEC.md
-    └── ROADMAP.md
-```
+├── packages/ # Packages internes / stubs (si nécessaire)
+├── scripts/ # Dev helpers (Windows/Linux)
+├── infra/ # Docker / déploiement
+└── docs/ # Specs, roadmap, guides
 
-### Repo layout updates
-- Root now contains directly: `app/`, `backend/`, `packages/`, `scripts/`, `infra/`, `docs/`, `.github/`, `Makefile`.
-- Archives et anciens docs: `docs/meta/legacy/` (index: `docs/meta/README.md`).
-- Pièces jointes PDF: `docs/attachments/`.
-- Fiches IA: `AGENTS.md`, `PROJECT_MAP.md`, `TASK_TEMPLATE.md` à la racine.
-
-### Commandes utiles (Makefile)
-- Flutter: `make install-flutter`, `make flutter-format`, `make flutter-analyze`, `make flutter-test`.
-- Backend: `make install-backend`, `make backend-run`, `make backend-test`, `make backend-lint`.
-- Nettoyage: `make clean`; CI combiné: `make ci-all`.
 
 ---
 
-## 🚀 Quick Start
+## 3) Architecture Frontend (Flutter)
 
-### Backend (FastAPI)
+**Organisation en couches (Clean-ish) :**
 
-```bash
-cd backend
+- **presentation/**
+  - UI : pages, widgets, composants
+  - state management : Riverpod (state + controllers)
+- **domain/**
+  - Entities (modèles métier)
+  - Interfaces de repositories
+  - Use cases (logique métier)
+- **data/**
+  - API clients (Dio/Retrofit)
+  - DTOs + mapping vers Entities
+  - Implémentations des repositories
+- **core/**
+  - Thème / design system
+  - Services communs (audio, prefs, logging)
+  - Constantes, helpers
 
-# Setup
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-
-# Run
-uvicorn app:app --reload --host 0.0.0.0 --port 8000
-```
-
-API: http://localhost:8000
-Docs: http://localhost:8000/docs
-
-### Frontend (Flutter)
-
-```bash
-cd app
-
-# Setup
-flutter pub get
-
-# Run (Android Emulator)
-flutter run --flavor dev --dart-define=BACKEND_BASE=http://10.0.2.2:8000
-```
-
-### Dev workflow (Windows)
-```powershell
-.\scripts\dev.ps1
-.\scripts\dev.ps1 -Logcat
-.\scripts\run-app.ps1
-```
-- Ouvre 2 fenetres: Backend + Flutter (et Logcat si -Logcat).
-- `.\scripts\run-app.ps1` reste la commande "golden run" (clean + BUILD_STAMP).
-- Le BUILD_STAMP + BACKEND_BASE sont visibles en overlay debug.
-
-### Mobile services (Firebase/AdMob)
-- Firebase Android config: `app/android/app/google-services.json` (gitignored; do NOT commit).
-- AdMob: debug/profile use test ad IDs; release uses real IDs (kReleaseMode in `app/lib/ads/admob_ads.dart`).
-- Privacy & Data screen: Settings -> Confidentialité & données (`app/lib/presentation/pages/settings/privacy_data_page.dart`).
-- Mic permission is requested when starting Practice or calibration; rationale shows first, then denied flow offers retry + open settings.
-
-### Docker
-
-```bash
-cd infra
-docker-compose up --build
-```
+**Flux typique :**  
+UI → Controller (Riverpod) → UseCase → Repository → API/Local → retour UI
 
 ---
 
-## 🎯 Stack Technique
+## 4) Architecture Backend (FastAPI)
+
+**Modules principaux :**
+
+- `app.py` : routes + orchestration
+- `inference.py` : audio → notes/MIDI (BasicPitch + logique d’extraction)
+- `arranger.py` : création des 4 niveaux (simplification, transposition, accompagnements)
+- `render.py` : rendu vidéo (timeline notes + clavier + export mp4)
+- `config.py` : presets, paramètres, validation, chemins fichiers
+
+**Flux typique :**  
+Upload audio → extraction MIDI → arrangements (L1..L4) → rendu vidéos → URLs (preview/full) + MIDI
+
+---
+
+## 5) Composants produit (écrans)
+
+- **Home**
+  - bouton central d’enregistrement
+  - progression L1-L4
+- **Previews (2×2)**
+  - lecture auto des previews
+  - CTA déblocage
+- **Player**
+  - lecteur vidéo complet + actions
+- **Paywall**
+  - achat unique + restore
+- **Practice Mode**
+  - clavier virtuel + feedback temps réel (notes correctes / fausses / timing)
+
+---
+
+## 🎯 Stack technique
 
 ### Frontend
-- **Framework** : Flutter 3.9.2+
-- **State** : Riverpod
-- **Navigation** : go_router
-- **HTTP** : Dio + Retrofit
-- **Audio** : record package
-- **Video** : video_player + chewie
-- **IAP** : in_app_purchase
-- **Firebase** : Auth + Firestore + Analytics + Crashlytics
+- Flutter, Riverpod, go_router  
+- Dio/Retrofit (API)  
+- record + permission_handler (micro)  
+- video_player + chewie  
+- in_app_purchase  
+- Firebase (Auth/Firestore/Analytics/Crashlytics)  
+- AdMob (monétisation)  
 
 ### Backend
-- **Framework** : FastAPI + Uvicorn
-- **ML** : BasicPitch (Spotify) - MIDI extraction
-- **Video** : MoviePy + FFmpeg
-- **Audio** : Fluidsynth + SoundFont .sf2
-- **MIDI** : PrettyMIDI
-
-### Infrastructure
-- **Container** : Docker
-- **Hosting** : Fly.io / Railway / VPS
-- **CI/CD** : GitHub Actions
-- **DB** : Firebase Firestore
+- FastAPI + Uvicorn  
+- BasicPitch (extraction MIDI)  
+- PrettyMIDI / mido (MIDI)  
+- MoviePy + FFmpeg (vidéos)  
+- (Optionnel) Firebase Admin  
 
 ---
 
-## 🎹 4 Niveaux de Difficulté
+## 🎹 Les 4 niveaux
 
-| Niveau | Description | Transposition | Accompagnement | Public |
-|--------|-------------|---------------|----------------|--------|
-| **L1 - Hyper Facile** | Mélodie simple | → C Majeur | Mélodie seule | Débutants complets |
-| **L2 - Facile** | + Basse | → C Majeur | Fondamentale tenue | 3-6 mois de piano |
-| **L3 - Moyen** | + Accords | Tonalité originale | Triades plaquées | 6-12 mois |
-| **L4 - Pro** | Arrangement complet | Tonalité originale | Arpèges + voicings | 1+ an |
-
----
-
-## 💰 Modèle Économique
-
-- ✅ **Previews gratuits** : 16 secondes par niveau
-- ✅ **Achat unique** : 1.00 USD (non-consommable)
-- ✅ **Déblocage** : Accès complet aux 4 niveaux à vie
-- ✅ **Mises à jour** : Gratuites
+| Niveau | Objectif | Public |
+|---|---|---|
+| L1 - Hyper Facile | Mélodie simplifiée | Débutants complets |
+| L2 - Facile | Mélodie + basse | 3–6 mois |
+| L3 - Moyen | Ajout accords | 6–12 mois |
+| L4 - Pro | Arrangement complet | 1+ an |
 
 ---
 
-## 📱 Screens
+## 💰 Business model
 
-### 1. Home (Shazam-like)
-- Gros bouton circulaire central
-- "Appuie pour créer tes 4 vidéos piano"
-- 4 pastilles de progression (L1-L4)
-
-### 2. Previews (Grille 2×2)
-- 4 tuiles vidéo avec lecture auto
-- Badge "16s preview"
-- CTA "Débloquer pour 1$"
-
-### 3. Player
-- Lecteur vidéo complet
-- Métadonnées : Level, Key, Tempo
-- Actions : Télécharger, Partager, Pratiquer
-
-### 4. Paywall
-- Modal élégant
-- Prix : 1.00 USD
-- Avantages : 4 niveaux, accès illimité
-- Bouton "Restaurer l'achat"
-
-### 5. Practice Mode
-- Clavier virtuel animé
-- Détection pitch monophonique
-- Feedback temps réel : ✅ Vert / ⚠️ Jaune / ❌ Rouge
-- Score par mesure
+- ✅ **Previews gratuites** : 16s par niveau  
+- ✅ **Achat unique (~1$)** : déblocage complet à vie  
+- ✅ **Mises à jour incluses**  
 
 ---
 
-## 🔥 API Endpoints
+## 🔥 Objectif produit
 
-### `POST /process`
-Génère les 4 vidéos à partir d'un audio
-
-**Paramètres** :
-- `audio` (file) : Fichier audio (m4a, wav, mp3)
-- `with_audio` (bool) : Inclure audio synthétisé
-- `levels` (string) : Niveaux à générer (default: "1,2,3,4")
-
-**Réponse** :
-```json
-{
-  "job_id": "20251124_030700_12345",
-  "timestamp": "2025-11-24T03:07:00",
-  "levels": [
-    {
-      "level": 1,
-      "name": "Hyper Facile",
-      "preview_url": "/media/out/job_L1_preview.mp4",
-      "video_url": "/media/out/job_L1_full.mp4",
-      "midi_url": "/media/out/job_L1.mid",
-      "key_guess": "C",
-      "tempo_guess": 120,
-      "duration_sec": 8.0
-    }
-    // ... L2, L3, L4
-  ]
-}
-```
-
-### `GET /health`
-Health check
-
-### `DELETE /cleanup/{job_id}`
-Nettoyer les fichiers d'un job
+Rendre l’apprentissage du piano **instantané**, **visuel**, et **motivant** :  
+tu joues → tu obtiens immédiatement une vidéo guidée adaptée → tu progresses plus vite.
 
 ---
-
-## 🧪 Tests
-
-### Backend
-```bash
-cd backend
-pytest
-pytest --cov=. --cov-report=html
-```
-
-### Frontend
-```bash
-cd app
-flutter test
-flutter test --coverage
-```
-
----
-
-## 🚢 Déploiement
-
-### Backend (Fly.io)
-```bash
-cd backend
-fly launch
-fly deploy
-```
-
-### Frontend (Play Store)
-```bash
-cd app
-flutter build appbundle --release
-# Upload AAB to Play Console
-```
-
----
-
-## 📝 Roadmap
-
-- [x] **M1 - MVP** : Un seul niveau, vidéo muette
-- [ ] **M2 - 4 Niveaux** : Génération parallèle L1-L4
-- [ ] **M3 - Paywall** : IAP 1$ + previews 16s
-- [ ] **M4 - Audio** : Synthèse piano .sf2
-- [ ] **M5 - Release** : CI/CD + Alpha Testing
-
-Voir [docs/ROADMAP.md](docs/ROADMAP.md) pour plus de détails.
-
----
-
-## 📚 Documentation
-
-- [📐 Architecture](docs/ARCHITECTURE.md) - Stack technique & structure
-- [🎨 UI Spec](docs/UI_SPEC.md) - Design system & écrans
-- [🗺️ Roadmap](docs/ROADMAP.md) - Jalons & planning
-
----
-
-## 🤝 Contribution
-
-Ce projet est actuellement privé. Contact : ludo@shazapiano.com
-
----
-
-## 📄 Licence
-
-Propriétaire - ShazaPiano © 2025
-
----
-
-## 👨‍💻 Auteur
-
-**Ludo** - Créateur de ShazaPiano
-
----
-
-## 🙏 Remerciements
-
-- **Spotify BasicPitch** - Extraction MIDI
-- **MoviePy** - Génération vidéo
-- **Flutter** - Framework mobile
-- **FastAPI** - Backend moderne
-
----
-
-**🎹 Transforme ton piano en vidéos pédagogiques en quelques secondes !**
-
-## Codex usage
-- Start every new Codex session by reading CODEX_SYSTEM.md
