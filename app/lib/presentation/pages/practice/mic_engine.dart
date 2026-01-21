@@ -11,6 +11,21 @@ import 'package:shazapiano/core/practice/pitch/mic_tuning.dart';
 /// - ON (default): Use YIN for mono notes, Goertzel for chords.
 const bool kUseHybridDetector = true;
 
+/// SESSION-019 FIX: Refresh UI during sustained notes.
+/// When true, _uiMidi is updated even when NoteTracker blocks emission (held state).
+/// This prevents the keyboard from going black while holding a note.
+/// Set to false to rollback if this causes issues.
+const bool kRefreshUiDuringSustain = true;
+
+/// SESSION-019 FIX P2: Extend UI hold when no pitch detected but likely still sustaining.
+/// When routerEvents is empty (RMS too low for pitch detection), extend _uiMidiSetAt
+/// if we're within sustainExtendMs of the last valid pitch detection.
+/// This prevents keyboard from going black during quiet sustain phases.
+/// Set to false to rollback if this causes ghost highlights.
+const bool kExtendUiDuringSilentSustain = true;
+const int kSustainExtendWindowMs = 400; // Max time to extend UI without new pitch (was 600, reduced)
+const double kSustainExtendMinRms = 0.025; // Min RMS to allow extension (presence gate)
+
 /// Feature flag: Force fixed sample rate instead of dynamic detection.
 /// SESSION-012 FIX: Dynamic SR detection is unreliable on some Android devices
 /// (e.g., Xiaomi) where chunk timing jitter causes wrong SR estimation.
@@ -570,6 +585,38 @@ class MicEngine {
             break;
         }
 
+        // SESSION-019 FIX P2: Extend UI during silent sustain
+        // If no pitch detected but we have a recent _uiMidi, extend its lifetime
+        // This prevents keyboard from going black during quiet decay phases
+        // HARDENED: Added presence gate (rms >= kSustainExtendMinRms) to prevent ghost highlights
+        if (kExtendUiDuringSilentSustain &&
+            routerEvents.isEmpty &&
+            _uiMidi != null &&
+            _uiMidiSetAt != null) {
+          final ageMs = now.difference(_uiMidiSetAt!).inMilliseconds;
+          final presenceOk = rms >= kSustainExtendMinRms;
+          final windowOk = ageMs < kSustainExtendWindowMs;
+
+          if (windowOk && presenceOk) {
+            // Refresh the timestamp to keep the highlight alive
+            _uiMidiSetAt = now;
+            if (kDebugMode) {
+              debugPrint(
+                'UI_EXTEND_SUSTAIN events=0 uiMidi=$_uiMidi ageMs=$ageMs '
+                'rmsNow=${rms.toStringAsFixed(4)} minRms=${kSustainExtendMinRms.toStringAsFixed(4)} '
+                'windowMs=$kSustainExtendWindowMs t=${elapsedMs.toStringAsFixed(0)}ms',
+              );
+            }
+          } else if (kDebugMode && windowOk && !presenceOk) {
+            // Log when we SKIP extension due to low presence (helps debug ghost issues)
+            debugPrint(
+              'UI_EXTEND_SKIP reason=low_presence uiMidi=$_uiMidi ageMs=$ageMs '
+              'rmsNow=${rms.toStringAsFixed(4)} minRms=${kSustainExtendMinRms.toStringAsFixed(4)} '
+              't=${elapsedMs.toStringAsFixed(0)}ms',
+            );
+          }
+        }
+
         // Add router events to buffer (with sustain filter + debounce)
         for (final re in routerEvents) {
           final pitchClass = re.midi % 12;
@@ -614,6 +661,21 @@ class MicEngine {
           );
 
           if (!trackerResult.shouldEmit) {
+            // SESSION-019 FIX: Refresh UI during sustained notes
+            // Even though we don't add to buffer (to avoid scoring spam),
+            // we still want the keyboard to stay lit while holding a note.
+            // Only refresh if: (1) feature flag enabled, (2) reason is "held" (not cooldown/tail),
+            // (3) confidence is high enough to trust the pitch.
+            if (kRefreshUiDuringSustain &&
+                trackerResult.reason == 'held' &&
+                re.conf >= minConfForPitch) {
+              _uiMidi = re.midi;
+              _uiMidiSetAt = now;
+              // Also update last values for consistency
+              _lastFreqHz = re.freq;
+              _lastConfidence = re.conf;
+              _lastMidi = re.midi;
+            }
             // Tail/held/cooldown - skip adding to buffer
             continue;
           }
