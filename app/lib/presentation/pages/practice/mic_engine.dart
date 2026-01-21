@@ -178,6 +178,14 @@ class MicEngine {
   // Maps midi → list of detection timestamps (for requiring N confirmations)
   final Map<int, List<double>> _wrongCandidateHistory = {};
 
+  // SESSION-017: Per-(noteIdx, midi) dedup for mismatch WRONG_FLASH
+  // Key: "noteIdx_midi" string to allow same wrong note to flash for different expected notes
+  final Map<String, DateTime> _mismatchDedupHistory = {};
+
+  // SESSION-017: Per-noteIdx confirmation history for mismatch WRONG_FLASH
+  // Key: noteIdx to track confirmations per target note
+  final Map<int, List<double>> _mismatchConfirmHistory = {};
+
   // SESSION-009: Track recently hit pitch classes to filter sustain/reverb
   // Maps pitchClass (0-11) to timestamp when it was last hit
   final Map<int, DateTime> _recentlyHitPitchClasses = {};
@@ -331,6 +339,8 @@ class MicEngine {
     _lastWrongFlashAt = null;
     _lastWrongFlashByMidi.clear(); // SESSION-014: Reset per-midi dedup
     _wrongCandidateHistory.clear(); // SESSION-015: Reset confirmation tracking
+    _mismatchDedupHistory.clear(); // SESSION-017: Reset mismatch dedup
+    _mismatchConfirmHistory.clear(); // SESSION-017: Reset mismatch confirmation
     _pitchClassStability.clear();
     _lastDetectedPitchClass = null;
     _onsetDetector.reset(); // Reset onset gate for new session
@@ -1170,6 +1180,135 @@ class MicEngine {
             'bestEvent=${bestEvent != null ? "midi=${bestEvent.midi} freq=${bestEvent.freq.toStringAsFixed(1)} conf=${bestEvent.conf.toStringAsFixed(2)} stability=${bestEvent.stabilityFrames}" : "null"}',
           );
         }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // SESSION-017 FIX: Emit WRONG_FLASH on pitch_class_mismatch REJECT
+        // When user plays wrong pitch during an active note window, show red flash
+        // This catches cases where detectedPC is in activeExpectedPitchClasses
+        // (e.g., D# sustain from previous note) but mismatches current note's expectedPC
+        // ─────────────────────────────────────────────────────────────────────
+        if (rejectReason != null && rejectReason.startsWith('pitch_class_mismatch_expected=')) {
+          // Parse detected info from rejectReason: "pitch_class_mismatch_expected=X_detected=Y"
+          // Robust regex: captures both expectedPC and detectedPC
+          final mismatchRegex = RegExp(r'pitch_class_mismatch_expected=(\d+)_detected=(\d+)');
+          final mismatchMatch = mismatchRegex.firstMatch(rejectReason);
+
+          if (mismatchMatch == null) {
+            // FAIL-SAFE: Parse failed - log and skip
+            if (kDebugMode) {
+              debugPrint(
+                'WRONG_FLASH_SKIP reason=parse_failed noteIdx=$idx '
+                'rejectReason=$rejectReason',
+              );
+            }
+          } else {
+            final parsedExpectedPC = int.parse(mismatchMatch.group(1)!);
+            final detectedPC = int.parse(mismatchMatch.group(2)!);
+
+            // Find the event that caused this mismatch (highest conf with this PC in window)
+            PitchEvent? mismatchEvent;
+            for (final event in _events) {
+              if (event.tSec >= windowStart && event.tSec <= windowEnd) {
+                if ((event.midi % 12) == detectedPC) {
+                  if (mismatchEvent == null || event.conf > mismatchEvent.conf) {
+                    mismatchEvent = event;
+                  }
+                }
+              }
+            }
+
+            if (mismatchEvent == null) {
+              // FAIL-SAFE: No candidate event found - log and skip
+              if (kDebugMode) {
+                debugPrint(
+                  'WRONG_FLASH_SKIP reason=no_candidate noteIdx=$idx '
+                  'expectedPC=$parsedExpectedPC detectedPC=$detectedPC '
+                  'eventsInBuffer=${_events.length}',
+                );
+              }
+            } else if (mismatchEvent.conf < wrongFlashMinConf) {
+              // FAIL-SAFE: Candidate confidence too low - log and skip
+              if (kDebugMode) {
+                debugPrint(
+                  'WRONG_FLASH_SKIP reason=low_conf noteIdx=$idx '
+                  'expectedPC=$parsedExpectedPC detectedPC=$detectedPC '
+                  'detectedMidi=${mismatchEvent.midi} '
+                  'conf=${mismatchEvent.conf.toStringAsFixed(2)} '
+                  'threshold=$wrongFlashMinConf',
+                );
+              }
+            } else {
+              // Candidate is valid - apply gates
+
+              // GATE 1: Global cooldown
+              final globalCooldownOk =
+                  _lastWrongFlashAt == null ||
+                  now.difference(_lastWrongFlashAt!).inMilliseconds >
+                      (wrongFlashCooldownSec * 1000);
+
+              // GATE 2: Per-(noteIdx, detectedMidi) dedup to avoid blocking flash on other notes
+              // Key format: "noteIdx_midi" to allow same wrong note to flash for different expected notes
+              final dedupKey = '${idx}_${mismatchEvent.midi}';
+              final lastFlashForKey = _mismatchDedupHistory[dedupKey];
+              final perNoteDedupOk =
+                  lastFlashForKey == null ||
+                  now.difference(lastFlashForKey).inMilliseconds > wrongFlashDedupMs;
+
+              // GATE 3: Confirmation count (anti-single-spike)
+              // Key: noteIdx to track confirmations per target note
+              final confirmKey = idx;
+              final candidateList = _mismatchConfirmHistory.putIfAbsent(
+                confirmKey,
+                () => <double>[],
+              );
+              candidateList.add(mismatchEvent.tSec);
+              final confirmWindowStartSec =
+                  mismatchEvent.tSec - (wrongFlashConfirmWindowMs / 1000.0);
+              candidateList.removeWhere((t) => t < confirmWindowStartSec);
+              final confirmationOk = candidateList.length >= wrongFlashConfirmCount;
+
+              if (globalCooldownOk && perNoteDedupOk && confirmationOk) {
+                // All gates passed - emit WRONG_FLASH
+                decisions.add(
+                  NoteDecision(
+                    type: DecisionType.wrongFlash,
+                    noteIndex: idx,
+                    expectedMidi: note.pitch,
+                    detectedMidi: mismatchEvent.midi,
+                    confidence: mismatchEvent.conf,
+                  ),
+                );
+                _lastWrongFlashAt = now;
+                _mismatchDedupHistory[dedupKey] = now;
+                _mismatchConfirmHistory.remove(confirmKey);
+
+                if (kDebugMode) {
+                  debugPrint(
+                    'WRONG_FLASH sessionId=$_sessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
+                    'expectedMidi=${note.pitch} expectedPC=$expectedPitchClass '
+                    'detectedMidi=${mismatchEvent.midi} detectedPC=$detectedPC '
+                    'conf=${mismatchEvent.conf.toStringAsFixed(2)} '
+                    'source=${mismatchEvent.source.name} '
+                    'cooldownOk=$globalCooldownOk dedupOk=$perNoteDedupOk confirmOk=$confirmationOk '
+                    'trigger=HIT_DECISION_REJECT_MISMATCH',
+                  );
+                }
+              } else {
+                // Gates blocked - log skip with details
+                if (kDebugMode) {
+                  debugPrint(
+                    'WRONG_FLASH_SKIP reason=gated noteIdx=$idx '
+                    'expectedPC=$parsedExpectedPC detectedPC=$detectedPC '
+                    'detectedMidi=${mismatchEvent.midi} '
+                    'conf=${mismatchEvent.conf.toStringAsFixed(2)} '
+                    'cooldownOk=$globalCooldownOk dedupOk=$perNoteDedupOk '
+                    'confirmations=${candidateList.length}/$wrongFlashConfirmCount',
+                  );
+                }
+              }
+            }
+          }
+        }
       }
     }
 
@@ -1425,9 +1564,33 @@ class MicEngine {
           now.difference(lastFlashForMidi).inMilliseconds > wrongFlashDedupMs;
 
       if (globalCooldownOk && perMidiDedupOk) {
+        // SESSION-018 FIX: Find dominant active note (closest to elapsed time)
+        // This ensures WRONG_FLASH targets the correct noteIdx for UI flash
+        int? dominantNoteIdx;
+        int? dominantExpectedMidi;
+        double minDistanceToNow = double.infinity;
+        for (var idx = 0; idx < noteEvents.length; idx++) {
+          if (hitNotes[idx]) continue;
+          final note = noteEvents[idx];
+          final windowStart = note.start - headWindowSec;
+          final windowEnd = note.end + tailWindowSec;
+          if (elapsed >= windowStart && elapsed <= windowEnd) {
+            // Distance = how close note.start is to current elapsed time
+            final distanceToNow = (note.start - elapsed).abs();
+            if (distanceToNow < minDistanceToNow) {
+              minDistanceToNow = distanceToNow;
+              dominantNoteIdx = idx;
+              dominantExpectedMidi = note.pitch;
+            }
+          }
+        }
+
         decisions.add(
           NoteDecision(
             type: DecisionType.wrongFlash,
+            // SESSION-018: Include noteIndex and expectedMidi for correct UI targeting
+            noteIndex: dominantNoteIdx,
+            expectedMidi: dominantExpectedMidi,
             detectedMidi: bestWrongMidi,
             confidence: bestWrongEvent.conf,
           ),
@@ -1447,8 +1610,8 @@ class MicEngine {
             if (delta < logMinDelta) logMinDelta = delta;
           }
           debugPrint(
-            'WRONG_FLASH sessionId=$_sessionId elapsed=${elapsed.toStringAsFixed(3)} '
-            'wrongMidi=$bestWrongMidi wrongPC=${bestWrongMidi % 12} '
+            'WRONG_FLASH sessionId=$_sessionId noteIdx=$dominantNoteIdx elapsed=${elapsed.toStringAsFixed(3)} '
+            'expectedMidi=$dominantExpectedMidi wrongMidi=$bestWrongMidi wrongPC=${bestWrongMidi % 12} '
             'conf=${bestWrongEvent.conf.toStringAsFixed(2)} '
             'source=${bestWrongEvent.source.name} minDelta=$logMinDelta '
             'expectedPCs=$activeExpectedPitchClasses expectedMidis=$activeExpectedMidis',
