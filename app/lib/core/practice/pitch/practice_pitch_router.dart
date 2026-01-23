@@ -50,12 +50,12 @@ class PracticePitchRouter {
   PracticePitchRouter({
     YinPitchService? yinService,
     GoertzelDetector? goertzelDetector,
-    this.snapSemitoneTolerance = 0, // STRICT: C4 ≠ C#4, no tolerance
+    this.snapSemitoneTolerance = 0,
   }) : _yin = yinService ?? YinPitchService(),
        _goertzel = goertzelDetector ?? GoertzelDetector();
 
   /// Semitone tolerance for snapping detected pitch to expected (mono mode).
-  /// Default 0 = strict precision (C4 ≠ C#4).
+  /// Default 0 = strict mode (no tolerance, C4 != C#4).
   /// Set to 1 for lenient mode (snaps if within 1 semitone).
   final int snapSemitoneTolerance;
 

@@ -2,6 +2,66 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 
 import 'package:shazapiano/core/practice/pitch/practice_pitch_router.dart';
+
+// ============================================================================
+// PATCH LEDGER - SESSION-023 (2026-01-23) - WRONG FLASH FIXES
+// ============================================================================
+// CAUSE #1: Wrong flashes dropped with minDelta=999 (no expected notes active)
+//   PREUVE: logcat "WRONG_FLASH_DROP reason=outlier minDelta=999 threshold=12"
+//   CORRECTION: Check activeExpectedMidis.isEmpty BEFORE outlier filter
+//               New log: WRONG_FLASH_SKIP reason=no_expected_active
+//   RISQUE: None - just clearer logging, no behavior change
+//   TEST: Observe WRONG_FLASH_SKIP instead of DROP for empty windows
+//
+// CAUSE #2: Octave errors (same pitch class, wrong octave) produce no flash
+//   PREUVE: logcat "distance_too_large=12.0_threshold=3.0" with F5 vs F4 expected
+//           User plays correct pitch class but wrong octave = silent rejection
+//   CORRECTION: Emit WRONG_FLASH on distance_too_large WHEN pitchClass matches
+//               New log: WRONG_FLASH trigger=OCTAVE_ERROR octaveOffset=+/-N
+//   RISQUE: More flashes for octave errors - desired behavior for beginners
+//   TEST: Play F5 when F4 expected, verify red flash appears
+//
+// CAUSE #3: maxSemitoneDeltaForWrong=12 too strict for beginners
+//   PREUVE: logcat "WRONG_FLASH_DROP reason=outlier minDelta=16 threshold=12"
+//   CORRECTION: Increased to 24 (2 octaves) - SESSION-023 previous patch
+//   RISQUE: May flash for harmonics 2 octaves away - mitigated by conf>=0.75
+//   TEST: Octave errors now produce flash instead of silent drop
+// ============================================================================
+// PATCH LEDGER - SESSION-021 (2026-01-22) - REVISED
+// ============================================================================
+// CAUSE #1: Pitch drift +-1 semitone (D#4=63 detected as E4=64)
+//   PREUVE: logcat L3647 "YIN_CALLED expected=[63] detectedMidi=64 freq=331.2"
+//           331.2 Hz is E4 (329.63 Hz), but D#4 (311.13 Hz) was expected
+//   CORRECTION: LOCAL conditional snap in _matchNotes() - see _shouldSnapToExpected()
+//               If detected midi is within +-1 semitone of expected AND
+//               conf >= minConfForPitch AND stability >= kPitchStabilityMinFrames,
+//               treat as match. (NO modification to core/ files)
+//   RISQUE: May accept adjacent wrong notes - mitigated by conf+stability gates
+//   TEST: Play D#4 slowly, verify HIT instead of MISS
+//
+// CAUSE #2: Sustain pollution for long notes (C4 sustain blocks C#4 detection)
+//   PREUVE: logcat L3850-3900 shows C4(60) sustain blocking C#4(61) detection
+//           "pitch_class_mismatch_expected=1_detected=0" for 1.25s
+//   CORRECTION: sustainFilterMs=800 (was 600) via kSustainFilterMsExtended
+//   RISQUE: May delay detection of rapid repeated notes - acceptable for practice
+//   TEST: Play long C#4 (1.25s), verify HIT instead of MISS
+//
+// CAUSE #3: Latency spike (485ms) skewing average
+//   PREUVE: logcat L3828 "LATENCY_SAMPLE dtMs=485.0" skews EMA
+//   CORRECTION: _isLatencySpike() rejects samples > 2x median
+//   RISQUE: May reject legitimate high-latency samples on very slow devices
+//   TEST: Observe LATENCY_SPIKE_REJECT logs, verify stable latencyCompMs
+//
+// CAUSE #4: No onset trigger for last note (only PROBE, RMS too low)
+//   PREUVE: logcat L3957 "result=MISS reason=timeout_no_match" for A#4@8.75s
+//   CORRECTION: Not addressed (requires onset detector tuning)
+//   TEST: N/A for this patch
+//
+// B.2) Sample-rate mismatch: CONFIRMED NOT A CAUSE
+//   PREUVE: logcat "detected=32000, forced=YES, semitoneShift=-5.55" BUT
+//           pitch detection is CORRECT for most notes. -5.55 would cause
+//           systematic errors, not sporadic +-1. Root cause is harmonics.
+// ============================================================================
 import 'package:shazapiano/core/practice/pitch/onset_detector.dart';
 import 'package:shazapiano/core/practice/pitch/note_tracker.dart';
 import 'package:shazapiano/core/practice/pitch/mic_tuning.dart';
@@ -16,6 +76,39 @@ const bool kUseHybridDetector = true;
 /// This prevents the keyboard from going black while holding a note.
 /// Set to false to rollback if this causes issues.
 const bool kRefreshUiDuringSustain = true;
+
+// ============================================================================
+// SESSION-021 PATCH FLAGS
+// ============================================================================
+/// SESSION-021 FIX #1: Allow +-1 semitone snap in YIN mono detection.
+/// When true, if YIN detects a pitch within 1 semitone of expected, snap to expected.
+/// This fixes the D#4(63) detected as E4(64) issue caused by pitch drift.
+/// Set to false to rollback to strict mode (no tolerance).
+const bool kYinSnapTolerance1Semitone = true;
+
+/// SESSION-021 FIX #2: Extended sustain filter for long notes.
+/// When true, uses 800ms instead of 600ms for sustainFilterMs.
+/// This prevents sustain of previous note from polluting buffer during long holds.
+const int kSustainFilterMsExtended = 800;
+
+/// SESSION-021 FIX #3: Enable spike clamp for latency estimation.
+/// When true, rejects latency samples > 2x current median to filter spikes.
+/// This prevents outliers like 485ms from skewing the average.
+const bool kLatencySpikeClamp = true;
+const double kLatencySpikeClampRatio = 2.0;
+
+/// SESSION-021 FIX #4: Pitch stability frames required before emission.
+/// Require N consecutive frames detecting the same pitchClass before emitting.
+/// This filters single-frame pitch glitches and sub-harmonic flickers.
+/// Set to 1 to disable (original behavior).
+const int kPitchStabilityMinFrames = 2;
+
+/// SESSION-021 DEBUG: Enable debug report logging.
+/// Activated via --dart-define=PRACTICE_DEBUG=true
+const bool kPracticeDebugEnabled = bool.fromEnvironment(
+  'PRACTICE_DEBUG',
+  defaultValue: false,
+);
 
 /// SESSION-019 FIX P2: Extend UI hold when no pitch detected but likely still sustaining.
 /// When routerEvents is empty (RMS too low for pitch detection), extend _uiMidiSetAt
@@ -58,8 +151,11 @@ class MicEngine {
     // SESSION-014: Per-midi dedup for WRONG_FLASH (prevents spam of same wrong note)
     this.wrongFlashDedupMs = 400.0,
     // SESSION-014: Max semitone distance for WRONG_FLASH (filters outliers like subharmonics)
-    // If detected midi is > 12 semitones from ALL expected midis, ignore it
-    this.maxSemitoneDeltaForWrong = 12,
+    // If detected midi is > 24 semitones from ALL expected midis, ignore it
+    // SESSION-023 FIX: Increased from 12 to 24 (2 octaves) to allow octave errors
+    // common in beginners (e.g., playing F5 instead of F4 = delta 12)
+    // Protection: high confidence (0.75) + confirmation still required
+    this.maxSemitoneDeltaForWrong = 24,
     // SESSION-014: PROBE safety - max semitone distance to allow WRONG_FLASH from PROBE events
     // PROBE events with delta > 3 are likely artifacts, not real wrong notes
     this.probeSafetyMaxDelta = 3,
@@ -96,8 +192,11 @@ class MicEngine {
     this.latencyCompDefaultMs = 250.0,
     // SESSION-016: MicTuning support (null = use medium profile)
     MicTuning? tuning,
+  // SESSION-021 FIX #2: Use extended sustain filter (800ms) by default.
+  // This prevents sustain of previous note from polluting buffer during long holds.
+  // Evidence: session-021 shows C4(60) sustain blocking C#4(61) detection for 1.25s note.
   }) : tuning = tuning ?? MicTuning.forProfile(ReverbProfile.medium),
-       sustainFilterMs = sustainFilterMs ?? (tuning?.sustainFilterMs ?? 600.0),
+       sustainFilterMs = sustainFilterMs ?? (tuning?.sustainFilterMs ?? kSustainFilterMsExtended.toDouble()),
        _onsetDetector = OnsetDetector.fromTuning(
          tuning ?? MicTuning.forProfile(ReverbProfile.medium),
        ),
@@ -224,6 +323,22 @@ class MicEngine {
 
   /// SESSION-015: Last computed median latency (for debugging).
   double? get latencyMedianMs => _latencyMedianMs;
+
+  // ============================================================================
+  // SESSION-021: Debug report (see practice_debug_report.dart for full impl)
+  // ============================================================================
+  /// SESSION-021: Counter for latency spikes (used by _isLatencySpike).
+  int _debugLatencySpikeCount = 0;
+
+  /// SESSION-021: Get basic debug stats as map.
+  /// For full debug report, use PracticeDebugReport class.
+  Map<String, dynamic> get debugStats => {
+    'latencyCompMs': _latencyCompMs,
+    'latencyMedianMs': _latencyMedianMs,
+    'latencySamples': _latencySamples.length,
+    'latencySpikeCount': _debugLatencySpikeCount,
+    'timebase': 'DateTime.now() elapsed',
+  };
 
   // SESSION-016: Auto-baseline noise floor detection
   double _noiseFloorRms = 0.0; // Estimated noise floor during baseline
@@ -658,6 +773,19 @@ class MicEngine {
 
           final stabilityFrames = _pitchClassStability[pitchClass] ?? 1;
 
+          // SESSION-021 FIX #4: Require minimum stability frames before emission.
+          // This filters single-frame pitch glitches and sub-harmonic flickers.
+          if (stabilityFrames < kPitchStabilityMinFrames) {
+            if (kDebugMode && verboseDebug) {
+              debugPrint(
+                'PITCH_STABILITY_SKIP midi=${re.midi} pc=$pitchClass '
+                'frames=$stabilityFrames required=$kPitchStabilityMinFrames '
+                't=${elapsedMs.toStringAsFixed(0)}ms',
+              );
+            }
+            continue;
+          }
+
           // SESSION-015 P4: NoteTracker gate - prevent tail/sustain from generating attacks
           final trackerResult = _noteTracker.feed(
             midi: re.midi,
@@ -928,10 +1056,42 @@ class MicEngine {
     return (12 * (log(freq / 440.0) / ln2) + 69).round();
   }
 
+  /// SESSION-021 FIX #1: Local conditional snap for pitch drift tolerance.
+  ///
+  /// Returns true if the detected event should be snapped to the expected note.
+  /// Conditions for snap (ALL must be true):
+  /// 1. kYinSnapTolerance1Semitone is enabled
+  /// 2. Detected MIDI is within +-1 semitone of expected
+  /// 3. Confidence >= minConfForPitch (trust the detection)
+  /// 4. Stability >= kPitchStabilityMinFrames (not a single-frame glitch)
+  ///
+  /// This fixes the D#4(63) detected as E4(64) issue caused by harmonics/overtones
+  /// without modifying the core PracticePitchRouter.
+  bool _shouldSnapToExpected({
+    required int detectedMidi,
+    required int expectedMidi,
+    required double conf,
+    required int stabilityFrames,
+  }) {
+    if (!kYinSnapTolerance1Semitone) return false;
+
+    final delta = (detectedMidi - expectedMidi).abs();
+    if (delta > 1) return false; // More than 1 semitone away
+    if (delta == 0) return true; // Exact match, always "snap"
+
+    // For delta == 1 (adjacent semitone), require high confidence + stability
+    if (conf < minConfForPitch) return false;
+    if (stabilityFrames < kPitchStabilityMinFrames) return false;
+
+    return true;
+  }
+
   /// SESSION-015: Update latency compensation estimate from collected samples.
   ///
   /// Uses median of recent samples (robust to outliers) with EMA smoothing.
   /// Clamps result to [-latencyCompMaxMs, +latencyCompMaxMs].
+  ///
+  /// SESSION-021 FIX #3: Added spike clamp - rejects samples > 2x median.
   void _updateLatencyEstimate() {
     if (_latencySamples.isEmpty) return;
 
@@ -959,6 +1119,29 @@ class MicEngine {
         'samples=${_latencySamples.length}',
       );
     }
+  }
+
+  /// SESSION-021 FIX #3: Check if a latency sample is a spike (outlier).
+  ///
+  /// A spike is defined as a sample > kLatencySpikeClampRatio * current median.
+  /// This filters outliers like 485ms when median is ~250ms.
+  bool _isLatencySpike(double sampleMs) {
+    if (!kLatencySpikeClamp) return false;
+    if (_latencyMedianMs == null || _latencyMedianMs! <= 0) return false;
+
+    final threshold = _latencyMedianMs! * kLatencySpikeClampRatio;
+    final isSpike = sampleMs.abs() > threshold;
+
+    if (isSpike && kDebugMode) {
+      _debugLatencySpikeCount++;
+      debugPrint(
+        'LATENCY_SPIKE_REJECT sampleMs=${sampleMs.toStringAsFixed(1)} '
+        'medianMs=${_latencyMedianMs!.toStringAsFixed(1)} '
+        'threshold=${threshold.toStringAsFixed(1)} ratio=$kLatencySpikeClampRatio',
+      );
+    }
+
+    return isSpike;
   }
 
   List<NoteDecision> _matchNotes(double elapsed, DateTime now) {
@@ -1092,8 +1275,17 @@ class MicEngine {
 
         final detectedPitchClass = event.midi % 12;
 
-        // Reject: pitch class mismatch
-        if (detectedPitchClass != expectedPitchClass) {
+        // SESSION-021 FIX #1: Check if we should snap to expected (+-1 semitone tolerance)
+        // This allows D#4(63) detected as E4(64) to match, fixing harmonics-induced drift
+        final shouldSnap = _shouldSnapToExpected(
+          detectedMidi: event.midi,
+          expectedMidi: note.pitch,
+          conf: event.conf,
+          stabilityFrames: event.stabilityFrames,
+        );
+
+        // Reject: pitch class mismatch (unless snap is allowed)
+        if (detectedPitchClass != expectedPitchClass && !shouldSnap) {
           // Always track pitch_class_mismatch (not just verboseDebug) for accurate logging
           if (kDebugMode && rejectReason == null) {
             rejectReason =
@@ -1102,12 +1294,23 @@ class MicEngine {
           continue;
         }
 
-        // Now we have pitch class match, test direct midi ONLY
+        // Now we have pitch class match OR snap allowed, test direct midi
         // (octave shifts ±12/±24 disabled to prevent harmonics false hits)
-        final distDirect = (event.midi - note.pitch).abs().toDouble();
+        // SESSION-021: If snap allowed, treat distance as 0 (perfect match)
+        final distDirect = shouldSnap && detectedPitchClass != expectedPitchClass
+            ? 0.0 // Snapped match = perfect
+            : (event.midi - note.pitch).abs().toDouble();
         if (distDirect < bestDistance) {
           bestDistance = distDirect;
           bestEvent = event;
+          // Log snap event for debugging
+          if (shouldSnap && detectedPitchClass != expectedPitchClass && kDebugMode) {
+            debugPrint(
+              'PITCH_SNAP detected=${event.midi} expected=${note.pitch} '
+              'conf=${event.conf.toStringAsFixed(2)} stability=${event.stabilityFrames} '
+              't=${event.tSec.toStringAsFixed(3)}',
+            );
+          }
         }
       }
 
@@ -1166,16 +1369,23 @@ class MicEngine {
             );
           }
 
-          // Add to sliding window
-          _latencySamples.add(rawDtMs);
-          if (_latencySamples.length > latencyCompSampleCount) {
-            _latencySamples.removeAt(0);
-          }
+          // SESSION-021 FIX #3: Reject spike samples before adding to window
+          // Only check after we have a valid median (2+ samples)
+          if (_isLatencySpike(rawDtMs)) {
+            // Spike rejected - don't add to samples, don't update estimate
+            // Log already emitted by _isLatencySpike
+          } else {
+            // Add to sliding window
+            _latencySamples.add(rawDtMs);
+            if (_latencySamples.length > latencyCompSampleCount) {
+              _latencySamples.removeAt(0);
+            }
 
-          // Update latency estimate when we have enough samples
-          // SESSION-015: Start estimating after just 2 samples for faster convergence
-          if (_latencySamples.length >= 2) {
-            _updateLatencyEstimate();
+            // Update latency estimate when we have enough samples
+            // SESSION-015: Start estimating after just 2 samples for faster convergence
+            if (_latencySamples.length >= 2) {
+              _updateLatencyEstimate();
+            }
           }
         }
 
@@ -1256,6 +1466,79 @@ class MicEngine {
         // This catches cases where detectedPC is in activeExpectedPitchClasses
         // (e.g., D# sustain from previous note) but mismatches current note's expectedPC
         // ─────────────────────────────────────────────────────────────────────
+        // ─────────────────────────────────────────────────────────────────────
+        // SESSION-023 FIX #2: Emit WRONG_FLASH on distance_too_large with SAME pitch class
+        // This catches octave errors: user plays F5 instead of F4 (same PC, wrong octave)
+        // Without this, the rejection is silent and confusing for beginners.
+        // ─────────────────────────────────────────────────────────────────────
+        if (bestEvent != null && bestDistance > 3.0) {
+          // Check if pitch class actually matches (octave error)
+          final detectedPC = bestEvent.midi % 12;
+          final isPitchClassMatch = detectedPC == expectedPitchClass;
+
+          if (isPitchClassMatch) {
+            // This is an octave error - emit WRONG_FLASH with special tag
+
+            // GATE 1: Global cooldown
+            final globalCooldownOk =
+                _lastWrongFlashAt == null ||
+                now.difference(_lastWrongFlashAt!).inMilliseconds >
+                    (wrongFlashCooldownSec * 1000);
+
+            // GATE 2: Per-(noteIdx, detectedMidi) dedup
+            final dedupKey = 'octave_${idx}_${bestEvent.midi}';
+            final lastFlashForKey = _mismatchDedupHistory[dedupKey];
+            final perNoteDedupOk =
+                lastFlashForKey == null ||
+                now.difference(lastFlashForKey).inMilliseconds >
+                    wrongFlashDedupMs;
+
+            // GATE 3: Confidence check
+            final confOk = bestEvent.conf >= wrongFlashMinConf;
+
+            if (globalCooldownOk && perNoteDedupOk && confOk) {
+              // All gates passed - emit WRONG_FLASH for octave error
+              decisions.add(
+                NoteDecision(
+                  type: DecisionType.wrongFlash,
+                  noteIndex: idx,
+                  expectedMidi: note.pitch,
+                  detectedMidi: bestEvent.midi,
+                  confidence: bestEvent.conf,
+                ),
+              );
+              _lastWrongFlashAt = now;
+              _mismatchDedupHistory[dedupKey] = now;
+              _lastWrongFlashByMidi[bestEvent.midi] = now;
+
+              if (kDebugMode) {
+                final octaveDistance = ((bestEvent.midi - note.pitch) / 12).round();
+                debugPrint(
+                  'WRONG_FLASH sessionId=$_sessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
+                  'expectedMidi=${note.pitch} expectedPC=$expectedPitchClass '
+                  'detectedMidi=${bestEvent.midi} detectedPC=$detectedPC '
+                  'conf=${bestEvent.conf.toStringAsFixed(2)} '
+                  'source=${bestEvent.source.name} distance=${bestDistance.toStringAsFixed(1)} '
+                  'octaveOffset=$octaveDistance '
+                  'cooldownOk=$globalCooldownOk dedupOk=$perNoteDedupOk confOk=$confOk '
+                  'trigger=OCTAVE_ERROR',
+                );
+              }
+            } else {
+              // Gates blocked - log skip
+              if (kDebugMode) {
+                debugPrint(
+                  'WRONG_FLASH_SKIP reason=octave_gated noteIdx=$idx '
+                  'expectedMidi=${note.pitch} detectedMidi=${bestEvent.midi} '
+                  'distance=${bestDistance.toStringAsFixed(1)} '
+                  'conf=${bestEvent.conf.toStringAsFixed(2)} '
+                  'cooldownOk=$globalCooldownOk dedupOk=$perNoteDedupOk confOk=$confOk',
+                );
+              }
+            }
+          }
+        }
+
         if (rejectReason != null &&
             rejectReason.startsWith('pitch_class_mismatch_expected=')) {
           // Parse detected info from rejectReason: "pitch_class_mismatch_expected=X_detected=Y"
@@ -1529,12 +1812,26 @@ class MicEngine {
       // Previously: highConfAttack could bypass this, causing wrong flashes 10+ semitones away
       // Now: outlier filter ALWAYS applies regardless of confidence
       // Rationale: A note 10 semitones away is NEVER the "wrong key pressed" - it's noise/harmonic
+      //
+      // SESSION-023 FIX #1: Don't DROP outlier when no expected notes active
+      // When activeExpectedMidis is empty, minDelta=999 (sentinel) causes false DROP.
+      // Instead, SKIP with explicit reason to avoid polluting logs.
+      if (activeExpectedMidis.isEmpty) {
+        if (kDebugMode) {
+          debugPrint(
+            'WRONG_FLASH_SKIP reason=no_expected_active midi=${event.midi} '
+            'conf=${event.conf.toStringAsFixed(2)} '
+            'activeExpectedCount=0',
+          );
+        }
+        continue;
+      }
       if (minDeltaToExpected > maxSemitoneDeltaForWrong) {
         if (kDebugMode) {
           debugPrint(
             'WRONG_FLASH_DROP reason=outlier midi=${event.midi} '
             'conf=${event.conf.toStringAsFixed(2)} minDelta=$minDeltaToExpected '
-            'threshold=$maxSemitoneDeltaForWrong',
+            'threshold=$maxSemitoneDeltaForWrong activeExpected=$activeExpectedMidis',
           );
         }
         continue;
@@ -1850,5 +2147,52 @@ class NoteDecision {
         minSustainForHit + (rawRatio * (1.0 - minSustainForHit));
 
     return scaledRatio.clamp(0.0, 1.0);
+  }
+}
+
+// ============================================================================
+// SESSION-021: Debug event for ring buffer
+// ============================================================================
+/// SESSION-021: Debug event stored in ring buffer for post-session analysis.
+class DebugPitchEvent {
+  const DebugPitchEvent({
+    required this.timestampMs,
+    required this.midi,
+    required this.rms,
+    required this.conf,
+    required this.state,
+    this.source,
+    this.hz,
+    this.stableFrames,
+    this.heldMidi,
+    this.gateOn,
+    this.detectedSampleRate,
+    this.forcedSampleRate,
+    this.sampleRateRatio,
+  });
+
+  final double timestampMs;
+  final int midi;
+  final double rms;
+  final double conf;
+  final String state; // 'noteOn', 'noteOff', 'held', 'rejected', 'spike', 'stabilitySkip'
+  final String? source; // 'trigger', 'burst', 'probe', 'legacy'
+  final double? hz; // Detected frequency
+  final int? stableFrames; // Consecutive frames with same pitchClass
+  final int? heldMidi; // Currently held MIDI (from NoteTracker)
+  final bool? gateOn; // Onset gate state
+  final int? detectedSampleRate; // Detected sample rate from mic
+  final int? forcedSampleRate; // Forced sample rate (if kForceFixedSampleRate)
+  final double? sampleRateRatio; // detected/forced ratio
+
+  @override
+  String toString() {
+    final srInfo = sampleRateRatio != null
+        ? ' sr=$detectedSampleRate/$forcedSampleRate(${sampleRateRatio!.toStringAsFixed(3)})'
+        : '';
+    return 'DebugPitchEvent(t=${timestampMs.toStringAsFixed(0)}ms midi=$midi '
+        'hz=${hz?.toStringAsFixed(1) ?? "n/a"} '
+        'rms=${rms.toStringAsFixed(4)} conf=${conf.toStringAsFixed(2)} '
+        'state=$state source=$source stable=$stableFrames$srInfo)';
   }
 }

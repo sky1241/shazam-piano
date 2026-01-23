@@ -34,6 +34,12 @@ class NoteTrackerResult {
 /// - Hardened thresholds: confAttackMin=0.70, strict dRms > 0
 /// - Rate-limited logs (1 per 120ms per pitchClass)
 ///
+/// **SESSION-022 changes:**
+/// - Re-attack on same note: if dRms > reattackDeltaThreshold while held,
+///   force release and allow new attack (fixes "stuck note" bug)
+/// - Max hold TTL: auto-release after maxHoldMs without activity
+///   (fixes notes that never release due to reverb/confEma drift)
+///
 /// **Algorithm:**
 /// 1. Track RMS envelope per pitchClass with EMA smoothing
 /// 2. NEW ATTACK allowed only if ALL conditions met:
@@ -44,6 +50,8 @@ class NoteTrackerResult {
 /// 3. TAIL blocked because:
 ///    - `dRms <= 0` during decay (falling edge)
 ///    - Even if dRms slightly positive, cooldown blocks re-trigger
+/// 4. RE-ATTACK: if held but dRms > reattackDelta, force release + new attack
+/// 5. TTL: if held > maxHoldMs, auto-release
 class NoteTracker {
   NoteTracker({
     // Attack gate thresholds - HARDENED for anti-tail
@@ -65,6 +73,14 @@ class NoteTracker {
     this.endConsecutiveFrames = 4,
     // Log rate limiting
     this.logRateLimitMs = 120.0,
+    // SESSION-022 V1: Re-attack parameters (LOWERED thresholds for repeated strikes)
+    this.reattackDeltaThreshold = 0.025, // Was 0.05, now lower to catch more reattacks
+    this.minInterOnsetMs = 80.0, // Minimum time between re-attacks (anti-reverb)
+    // SESSION-022 V1: Silence-based hard release (fixes stuck notes)
+    this.silenceRmsThreshold = 0.015, // RMS below this = silence
+    this.silenceFramesForRelease = 6, // Consecutive silent frames to trigger release
+    // SESSION-022 V1: Conditional TTL (only if near-silence, not brute force)
+    this.maxHoldMs = 1200.0, // Increased from 800 - only kicks in if truly stuck
   });
 
   /// SESSION-016: Create NoteTracker from MicTuning preset.
@@ -79,6 +95,12 @@ class NoteTracker {
       releaseRatio: tuning.releaseRatio,
       presenceEndThreshold: tuning.presenceEndThreshold,
       endConsecutiveFrames: tuning.endConsecutiveFrames,
+      // SESSION-022 V1: Re-attack, silence release, and TTL parameters
+      reattackDeltaThreshold: tuning.reattackDeltaThreshold,
+      minInterOnsetMs: tuning.minInterOnsetMs,
+      silenceRmsThreshold: tuning.silenceRmsThreshold,
+      silenceFramesForRelease: tuning.silenceFramesForRelease,
+      maxHoldMs: tuning.maxHoldMs,
     );
   }
 
@@ -129,6 +151,30 @@ class NoteTracker {
   /// Rate limit for suppress logs (ms) - prevents log spam.
   final double logRateLimitMs;
 
+  /// SESSION-022 V1: Minimum dRms jump to force re-attack on a held note.
+  /// If a note is held and we detect dRms > this threshold, it's a new strike.
+  /// 0.025 = lowered from 0.05 to catch more repeated strikes.
+  final double reattackDeltaThreshold;
+
+  /// SESSION-022 V1: Minimum time between re-attacks (ms).
+  /// Prevents reverb/tail from triggering false re-attacks.
+  /// 80ms = allows fast repeated notes but filters reverb artifacts.
+  final double minInterOnsetMs;
+
+  /// SESSION-022 V1: RMS threshold for silence detection.
+  /// If rmsNow < this for N consecutive frames, force release.
+  /// 0.015 = just above typical noise floor.
+  final double silenceRmsThreshold;
+
+  /// SESSION-022 V1: Consecutive silent frames to trigger hard release.
+  /// 6 frames = ~300-600ms depending on chunk rate.
+  final int silenceFramesForRelease;
+
+  /// SESSION-022 V1: Maximum hold duration before auto-release (ms).
+  /// Only kicks in if silence-based release didn't trigger.
+  /// 1200ms = generous timeout for long sustained notes.
+  final double maxHoldMs;
+
   // ───────────────────────────────────────────────────────────────────────────
   // STATE (fixed arrays, O(1) access, zero allocations)
   // ───────────────────────────────────────────────────────────────────────────
@@ -142,6 +188,9 @@ class NoteTracker {
   final List<double> _attackStartMs = List.filled(12, -10000.0);
   final List<int> _belowThresholdFrames = List.filled(12, 0);
   final List<bool> _isHeld = List.filled(12, false);
+  // SESSION-022 V1: Silence tracking for hard release
+  final List<int> _silentFrames = List.filled(12, 0);
+  final List<double> _lastReattackMs = List.filled(12, -10000.0);
 
   // Log rate limiting per pitchClass
   final List<double> _lastSuppressLogMs = List.filled(12, -10000.0);
@@ -157,6 +206,9 @@ class NoteTracker {
   int _statsSuppressHeld = 0;
   int _statsSuppressCooldown = 0;
   int _statsSuppressTail = 0;
+  int _statsReattacks = 0; // SESSION-022: Re-attacks on same note
+  int _statsTtlReleases = 0; // SESSION-022: TTL auto-releases
+  int _statsSilenceReleases = 0; // SESSION-022 V1: Silence-based releases
   double _lastStatsLogMs = -10000.0;
   static const double _statsLogIntervalMs = 5000.0; // Log stats every 5s
 
@@ -172,12 +224,17 @@ class NoteTracker {
       _belowThresholdFrames[i] = 0;
       _isHeld[i] = false;
       _lastSuppressLogMs[i] = -10000.0;
+      _silentFrames[i] = 0;
+      _lastReattackMs[i] = -10000.0;
     }
     _noiseFloorEma = 0.001;
     _statsAttacks = 0;
     _statsSuppressHeld = 0;
     _statsSuppressCooldown = 0;
     _statsSuppressTail = 0;
+    _statsReattacks = 0;
+    _statsTtlReleases = 0;
+    _statsSilenceReleases = 0;
     _lastStatsLogMs = -10000.0;
   }
 
@@ -213,11 +270,15 @@ class NoteTracker {
       if (_statsAttacks > 0 ||
           _statsSuppressHeld > 0 ||
           _statsSuppressCooldown > 0 ||
-          _statsSuppressTail > 0) {
+          _statsSuppressTail > 0 ||
+          _statsReattacks > 0 ||
+          _statsTtlReleases > 0 ||
+          _statsSilenceReleases > 0) {
         debugPrint(
           'NOTE_STATS t=${nowMs.toStringAsFixed(0)}ms '
-          'attacks=$_statsAttacks suppressHeld=$_statsSuppressHeld '
-          'suppressCooldown=$_statsSuppressCooldown suppressTail=$_statsSuppressTail',
+          'attacks=$_statsAttacks reattacks=$_statsReattacks '
+          'silenceRel=$_statsSilenceReleases ttlRel=$_statsTtlReleases '
+          'suppHeld=$_statsSuppressHeld suppCool=$_statsSuppressCooldown suppTail=$_statsSuppressTail',
         );
       }
     }
@@ -257,8 +318,107 @@ class NoteTracker {
         _peakRms[pc] = rmsNow;
       }
 
-      // Check END conditions (only after minHoldMs)
-      if (msSinceAttack >= minHoldMs) {
+      // ───────────────────────────────────────────────────────────────────────
+      // SESSION-022 V1 FIX #1: SILENCE-BASED HARD RELEASE (highest priority)
+      // If RMS drops to near-silence for N consecutive frames, force release.
+      // This fixes notes that stay "held" forever in silence (see Evidence Table).
+      // ───────────────────────────────────────────────────────────────────────
+      final isSilent = rmsNow < silenceRmsThreshold;
+      if (isSilent) {
+        _silentFrames[pc]++;
+        if (_silentFrames[pc] >= silenceFramesForRelease) {
+          final heldMs = nowMs - _attackStartMs[pc];
+          _isHeld[pc] = false;
+          _belowThresholdFrames[pc] = 0;
+          _silentFrames[pc] = 0;
+          // Short cooldown to allow new attack soon after silence
+          _lastAttackMs[pc] = nowMs - cooldownMs + 50; // 50ms cooldown remaining
+          _statsSilenceReleases++;
+
+          if (kDebugMode) {
+            debugPrint(
+              'NOTE_SILENCE_RELEASE midi=$midi pc=$pc t=${nowMs.toStringAsFixed(0)}ms '
+              'rms=${rmsNow.toStringAsFixed(4)} silentFrames=$silenceFramesForRelease '
+              'heldMs=${heldMs.toStringAsFixed(0)} reason=silence_detected',
+            );
+          }
+
+          return const NoteTrackerResult(
+            shouldEmit: false,
+            reason: 'silence_release',
+            isNewAttack: false,
+          );
+        }
+      } else {
+        _silentFrames[pc] = 0; // Reset silence counter when sound detected
+      }
+
+      // ───────────────────────────────────────────────────────────────────────
+      // SESSION-022 V1 FIX #2: RE-ATTACK on strong RMS jump (same note struck)
+      // Conditions: dRms > threshold AND conf >= min AND minInterOnsetMs elapsed
+      // The minInterOnsetMs prevents reverb artifacts from triggering false attacks.
+      // ───────────────────────────────────────────────────────────────────────
+      final msSinceLastReattack = nowMs - _lastReattackMs[pc];
+      final interOnsetOk = msSinceLastReattack >= minInterOnsetMs;
+      final isReattack = dRms > reattackDeltaThreshold &&
+                         conf >= confAttackMin &&
+                         interOnsetOk &&
+                         rmsNow > silenceRmsThreshold * 2; // Not in silence
+
+      if (isReattack) {
+        // Force release, then fall through to attack logic
+        final heldMs = nowMs - _attackStartMs[pc];
+        _isHeld[pc] = false;
+        _belowThresholdFrames[pc] = 0;
+        _silentFrames[pc] = 0;
+        _lastReattackMs[pc] = nowMs;
+        // Reset cooldown to allow immediate re-attack
+        _lastAttackMs[pc] = nowMs - cooldownMs - 1; // Ensure cooldownOk = true
+        _statsReattacks++;
+
+        if (kDebugMode) {
+          debugPrint(
+            'NOTE_REATTACK midi=$midi pc=$pc t=${nowMs.toStringAsFixed(0)}ms '
+            'dRms=${dRms.toStringAsFixed(4)} threshold=${reattackDeltaThreshold.toStringAsFixed(4)} '
+            'conf=${conf.toStringAsFixed(2)} heldMs=${heldMs.toStringAsFixed(0)} '
+            'interOnsetMs=${msSinceLastReattack.toStringAsFixed(0)} reason=strong_rms_jump',
+          );
+        }
+
+        // Fall through to IDLE state (will trigger new attack below)
+      }
+      // ───────────────────────────────────────────────────────────────────────
+      // SESSION-022 V1 FIX #3: TTL auto-release (safety net for stuck notes)
+      // Only kicks in after maxHoldMs if silence-based release didn't trigger.
+      // ───────────────────────────────────────────────────────────────────────
+      else if (msSinceAttack >= maxHoldMs) {
+        final heldMs = nowMs - _attackStartMs[pc];
+        _isHeld[pc] = false;
+        _belowThresholdFrames[pc] = 0;
+        _silentFrames[pc] = 0;
+        // Keep cooldown active to prevent immediate re-trigger from reverb tail
+        _lastAttackMs[pc] = nowMs;
+        _statsTtlReleases++;
+
+        if (kDebugMode) {
+          debugPrint(
+            'NOTE_TTL_RELEASE midi=$midi pc=$pc t=${nowMs.toStringAsFixed(0)}ms '
+            'heldMs=${heldMs.toStringAsFixed(0)} maxHoldMs=${maxHoldMs.toStringAsFixed(0)} '
+            'rms=${rmsNow.toStringAsFixed(4)} conf=${conf.toStringAsFixed(2)} '
+            'reason=ttl_expired',
+          );
+        }
+
+        return const NoteTrackerResult(
+          shouldEmit: false,
+          reason: 'ttl_release',
+          isNewAttack: false,
+        );
+      }
+      // ───────────────────────────────────────────────────────────────────────
+      // Original END detection (rms + conf below thresholds) - kept as fallback
+      // ───────────────────────────────────────────────────────────────────────
+      else if (msSinceAttack >= minHoldMs) {
         final endThreshold = (_noiseFloorEma + marginEnd).clamp(
           0.0,
           _peakRms[pc] * releaseRatio,
@@ -273,6 +433,7 @@ class NoteTracker {
             final heldMs = nowMs - _attackStartMs[pc];
             _isHeld[pc] = false;
             _belowThresholdFrames[pc] = 0;
+            _silentFrames[pc] = 0;
 
             if (kDebugMode) {
               debugPrint(
@@ -293,21 +454,25 @@ class NoteTracker {
         }
       }
 
-      // HELD: suppress new attacks (tail filtering)
-      _statsSuppressHeld++;
-      if (kDebugMode && canLogSuppress()) {
-        debugPrint(
-          'NOTE_SUPPRESS reason=held midi=$midi pc=$pc t=${nowMs.toStringAsFixed(0)}ms '
-          'rms=${rmsNow.toStringAsFixed(4)} conf=${conf.toStringAsFixed(2)} '
-          'presence=${_confEma[pc].toStringAsFixed(2)}',
+      // Still held (no reattack, no silence release, no TTL, no end) - suppress
+      if (_isHeld[pc]) {
+        _statsSuppressHeld++;
+        if (kDebugMode && canLogSuppress()) {
+          debugPrint(
+            'NOTE_SUPPRESS reason=held midi=$midi pc=$pc t=${nowMs.toStringAsFixed(0)}ms '
+            'rms=${rmsNow.toStringAsFixed(4)} conf=${conf.toStringAsFixed(2)} '
+            'presence=${_confEma[pc].toStringAsFixed(2)} dRms=${dRms.toStringAsFixed(4)} '
+            'silentFrames=${_silentFrames[pc]}',
+          );
+        }
+
+        return const NoteTrackerResult(
+          shouldEmit: false,
+          reason: 'held',
+          isNewAttack: false,
         );
       }
-
-      return const NoteTrackerResult(
-        shouldEmit: false,
-        reason: 'held',
-        isNewAttack: false,
-      );
+      // If we reach here, reattack forced release - fall through to attack logic
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -438,7 +603,8 @@ class NoteTracker {
 
   /// Get current stats for external logging.
   String getStatsString() {
-    return 'attacks=$_statsAttacks held=$_statsSuppressHeld '
-        'cooldown=$_statsSuppressCooldown tail=$_statsSuppressTail';
+    return 'attacks=$_statsAttacks reattacks=$_statsReattacks '
+        'silenceRel=$_statsSilenceReleases ttlRel=$_statsTtlReleases '
+        'suppHeld=$_statsSuppressHeld suppCool=$_statsSuppressCooldown suppTail=$_statsSuppressTail';
   }
 }

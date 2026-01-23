@@ -55,6 +55,12 @@ class MicTuning {
     required this.noiseFloorMargin,
     // Sustain filter
     required this.sustainFilterMs,
+    // SESSION-022 V1: Re-attack, silence release, and TTL (NoteTracker)
+    this.reattackDeltaThreshold = 0.025,
+    this.minInterOnsetMs = 80.0,
+    this.silenceRmsThreshold = 0.015,
+    this.silenceFramesForRelease = 6,
+    this.maxHoldMs = 1200.0,
   });
 
   /// The profile this tuning was created from.
@@ -155,6 +161,29 @@ class MicTuning {
 
   /// Time to ignore recently hit pitch classes (sustain/reverb filtering).
   final double sustainFilterMs;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SESSION-022 V1: RE-ATTACK, SILENCE RELEASE, AND TTL (NoteTracker)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// SESSION-022 V1: Minimum dRms jump to force re-attack on a held note.
+  /// Lowered from 0.05 to 0.025 to catch more repeated strikes.
+  final double reattackDeltaThreshold;
+
+  /// SESSION-022 V1: Minimum time between re-attacks (ms).
+  /// Prevents reverb/tail from triggering false re-attacks.
+  final double minInterOnsetMs;
+
+  /// SESSION-022 V1: RMS threshold for silence detection.
+  /// If rmsNow < this for N consecutive frames, force release.
+  final double silenceRmsThreshold;
+
+  /// SESSION-022 V1: Consecutive silent frames to trigger hard release.
+  final int silenceFramesForRelease;
+
+  /// SESSION-022 V1: Maximum hold duration before auto-release (ms).
+  /// Only kicks in if silence-based release didn't trigger.
+  final double maxHoldMs;
 
   // ─────────────────────────────────────────────────────────────────────────
   // FACTORY: Create tuning for a given profile
