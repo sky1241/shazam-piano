@@ -74,13 +74,17 @@ class NoteTracker {
     // Log rate limiting
     this.logRateLimitMs = 120.0,
     // SESSION-022 V1: Re-attack parameters (LOWERED thresholds for repeated strikes)
-    this.reattackDeltaThreshold = 0.025, // Was 0.05, now lower to catch more reattacks
-    this.minInterOnsetMs = 80.0, // Minimum time between re-attacks (anti-reverb)
+    this.reattackDeltaThreshold =
+        0.025, // Was 0.05, now lower to catch more reattacks
+    this.minInterOnsetMs =
+        80.0, // Minimum time between re-attacks (anti-reverb)
     // SESSION-022 V1: Silence-based hard release (fixes stuck notes)
     this.silenceRmsThreshold = 0.015, // RMS below this = silence
-    this.silenceFramesForRelease = 6, // Consecutive silent frames to trigger release
+    this.silenceFramesForRelease =
+        6, // Consecutive silent frames to trigger release
     // SESSION-022 V1: Conditional TTL (only if near-silence, not brute force)
-    this.maxHoldMs = 1200.0, // Increased from 800 - only kicks in if truly stuck
+    this.maxHoldMs =
+        1200.0, // Increased from 800 - only kicks in if truly stuck
   });
 
   /// SESSION-016: Create NoteTracker from MicTuning preset.
@@ -332,7 +336,8 @@ class NoteTracker {
           _belowThresholdFrames[pc] = 0;
           _silentFrames[pc] = 0;
           // Short cooldown to allow new attack soon after silence
-          _lastAttackMs[pc] = nowMs - cooldownMs + 50; // 50ms cooldown remaining
+          _lastAttackMs[pc] =
+              nowMs - cooldownMs + 50; // 50ms cooldown remaining
           _statsSilenceReleases++;
 
           if (kDebugMode) {
@@ -360,10 +365,11 @@ class NoteTracker {
       // ───────────────────────────────────────────────────────────────────────
       final msSinceLastReattack = nowMs - _lastReattackMs[pc];
       final interOnsetOk = msSinceLastReattack >= minInterOnsetMs;
-      final isReattack = dRms > reattackDeltaThreshold &&
-                         conf >= confAttackMin &&
-                         interOnsetOk &&
-                         rmsNow > silenceRmsThreshold * 2; // Not in silence
+      final isReattack =
+          dRms > reattackDeltaThreshold &&
+          conf >= confAttackMin &&
+          interOnsetOk &&
+          rmsNow > silenceRmsThreshold * 2; // Not in silence
 
       if (isReattack) {
         // Force release, then fall through to attack logic

@@ -94,10 +94,7 @@ class PracticeDebugReport {
   }
 
   /// Update sample rate tracking info.
-  void updateSampleRate({
-    required int detected,
-    required int forced,
-  }) {
+  void updateSampleRate({required int detected, required int forced}) {
     _detectedSampleRate = detected;
     _forcedSampleRate = forced;
     _sampleRateRatio = forced > 0 ? detected / forced : null;
@@ -187,8 +184,14 @@ class PracticeDebugReport {
     _lastPeriodicLogMs = elapsedMs;
 
     // Only log if there was activity
-    final totalEvents = _noteOnCount + _noteOffCount + _dupeCount +
-        _outOfRangeCount + _dropTtlCount + _latencySpikeCount + _stabilitySkipCount;
+    final totalEvents =
+        _noteOnCount +
+        _noteOffCount +
+        _dupeCount +
+        _outOfRangeCount +
+        _dropTtlCount +
+        _latencySpikeCount +
+        _stabilitySkipCount;
     if (totalEvents == 0) return;
 
     final sessionDurationSec = (elapsedMs - _sessionStartMs) / 1000.0;
@@ -228,14 +231,18 @@ class PracticeDebugReport {
     debugPrint('');
     debugPrint('--- LATENCY ---');
     debugPrint('  compMs:     ${_latencyCompMs?.toStringAsFixed(1) ?? "n/a"}');
-    debugPrint('  medianMs:   ${_latencyMedianMs?.toStringAsFixed(1) ?? "n/a"}');
+    debugPrint(
+      '  medianMs:   ${_latencyMedianMs?.toStringAsFixed(1) ?? "n/a"}',
+    );
     debugPrint('  samples:    $_latencySampleCount');
     debugPrint('  timebase:   DateTime.now() elapsed (Stopwatch monotonic)');
     debugPrint('');
     debugPrint('--- SAMPLE RATE ---');
     debugPrint('  detected:   ${_detectedSampleRate ?? "n/a"}');
     debugPrint('  forced:     ${_forcedSampleRate ?? "n/a"}');
-    debugPrint('  ratio:      ${_sampleRateRatio?.toStringAsFixed(3) ?? "n/a"}');
+    debugPrint(
+      '  ratio:      ${_sampleRateRatio?.toStringAsFixed(3) ?? "n/a"}',
+    );
     debugPrint('');
     debugPrint('--- SNAP (+-1 semitone) ---');
     debugPrint('  snapCount:  $_snapCount');

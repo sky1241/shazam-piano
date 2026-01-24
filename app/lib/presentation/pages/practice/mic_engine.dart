@@ -209,11 +209,13 @@ class MicEngine {
     this.latencyCompDefaultMs = 250.0,
     // SESSION-016: MicTuning support (null = use medium profile)
     MicTuning? tuning,
-  // SESSION-021 FIX #2: Use extended sustain filter (800ms) by default.
-  // This prevents sustain of previous note from polluting buffer during long holds.
-  // Evidence: session-021 shows C4(60) sustain blocking C#4(61) detection for 1.25s note.
+    // SESSION-021 FIX #2: Use extended sustain filter (800ms) by default.
+    // This prevents sustain of previous note from polluting buffer during long holds.
+    // Evidence: session-021 shows C4(60) sustain blocking C#4(61) detection for 1.25s note.
   }) : tuning = tuning ?? MicTuning.forProfile(ReverbProfile.medium),
-       sustainFilterMs = sustainFilterMs ?? (tuning?.sustainFilterMs ?? kSustainFilterMsExtended.toDouble()),
+       sustainFilterMs =
+           sustainFilterMs ??
+           (tuning?.sustainFilterMs ?? kSustainFilterMsExtended.toDouble()),
        _onsetDetector = OnsetDetector.fromTuning(
          tuning ?? MicTuning.forProfile(ReverbProfile.medium),
        ),
@@ -1314,14 +1316,17 @@ class MicEngine {
         // Now we have pitch class match OR snap allowed, test direct midi
         // (octave shifts ±12/±24 disabled to prevent harmonics false hits)
         // SESSION-021: If snap allowed, treat distance as 0 (perfect match)
-        final distDirect = shouldSnap && detectedPitchClass != expectedPitchClass
+        final distDirect =
+            shouldSnap && detectedPitchClass != expectedPitchClass
             ? 0.0 // Snapped match = perfect
             : (event.midi - note.pitch).abs().toDouble();
         if (distDirect < bestDistance) {
           bestDistance = distDirect;
           bestEvent = event;
           // Log snap event for debugging
-          if (shouldSnap && detectedPitchClass != expectedPitchClass && kDebugMode) {
+          if (shouldSnap &&
+              detectedPitchClass != expectedPitchClass &&
+              kDebugMode) {
             debugPrint(
               'PITCH_SNAP detected=${event.midi} expected=${note.pitch} '
               'conf=${event.conf.toStringAsFixed(2)} stability=${event.stabilityFrames} '
@@ -1529,7 +1534,8 @@ class MicEngine {
               _lastWrongFlashByMidi[bestEvent.midi] = now;
 
               if (kDebugMode) {
-                final octaveDistance = ((bestEvent.midi - note.pitch) / 12).round();
+                final octaveDistance = ((bestEvent.midi - note.pitch) / 12)
+                    .round();
                 debugPrint(
                   'WRONG_FLASH sessionId=$_sessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
                   'expectedMidi=${note.pitch} expectedPC=$expectedPitchClass '
@@ -2192,7 +2198,8 @@ class DebugPitchEvent {
   final int midi;
   final double rms;
   final double conf;
-  final String state; // 'noteOn', 'noteOff', 'held', 'rejected', 'spike', 'stabilitySkip'
+  final String
+  state; // 'noteOn', 'noteOff', 'held', 'rejected', 'spike', 'stabilitySkip'
   final String? source; // 'trigger', 'burst', 'probe', 'legacy'
   final double? hz; // Detected frequency
   final int? stableFrames; // Consecutive frames with same pitchClass
