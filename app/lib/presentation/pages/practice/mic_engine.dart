@@ -4,6 +4,22 @@ import 'package:flutter/foundation.dart';
 import 'package:shazapiano/core/practice/pitch/practice_pitch_router.dart';
 
 // ============================================================================
+// PATCH LEDGER - SESSION-025 (2026-01-24) - WRONG FLASH UI GATE FIX
+// ============================================================================
+// CAUSE: _registerWrongHit gate uses _successFlashDuration (200ms) not aligned
+//   PREUVE: logcat session-025 WRONG_FLASH EMIT intervals: 161ms, 186ms, 180ms...
+//           ~50% < 200ms → silently blocked by _registerWrongHit
+// CORRECTION: New _wrongFlashGateDuration=150ms (practice_page.dart)
+//             Used in _registerWrongHit instead of _successFlashDuration
+// TEST: Spam C5 should flash at ~150ms intervals consistently
+// ============================================================================
+// PATCH LEDGER - SESSION-024 (2026-01-23) - WRONG FLASH DEDUP FIX
+// ============================================================================
+// CAUSE: wrongFlashDedupMs=400 + _antiSpamWrongMs=500 too aggressive
+//   PREUVE: logcat session-024 "perMidiDedupOk=false" blocking ~80% of flashes
+// CORRECTION: wrongFlashDedupMs 400→150ms, _antiSpamWrongMs 500→150ms
+// TEST: Spam C5 should trigger flash every ~150ms, not ~450ms
+// ============================================================================
 // PATCH LEDGER - SESSION-023 (2026-01-23) - WRONG FLASH FIXES
 // ============================================================================
 // CAUSE #1: Wrong flashes dropped with minDelta=999 (no expected notes active)
@@ -149,7 +165,8 @@ class MicEngine {
     this.eventDebounceSec = 0.05,
     this.wrongFlashCooldownSec = 0.15,
     // SESSION-014: Per-midi dedup for WRONG_FLASH (prevents spam of same wrong note)
-    this.wrongFlashDedupMs = 400.0,
+    // SESSION-024 FIX: 400→150ms to allow rapid re-attack feedback
+    this.wrongFlashDedupMs = 150.0,
     // SESSION-014: Max semitone distance for WRONG_FLASH (filters outliers like subharmonics)
     // If detected midi is > 24 semitones from ALL expected midis, ignore it
     // SESSION-023 FIX: Increased from 12 to 24 (2 octaves) to allow octave errors

@@ -261,7 +261,10 @@ class PracticePage extends ConsumerStatefulWidget {
 // ══════════════════════════════════════════════════════════════════════════
 const double _practiceLeadInSec = 1.5;
 const int _antiSpamHitMs = 200;
-const int _antiSpamWrongMs = 500;
+// SESSION-024 FIX: Reduced 500→150ms to allow rapid re-attack feedback
+// PREUVE: logcat session-024 "SESSION4_ANTISPAM_WRONG: Skip duplicate midi=72 (< 500ms)"
+// blocking flashes even after MicEngine allowed them
+const int _antiSpamWrongMs = 150;
 const double _fallbackLatencyMs = 100.0;
 const double _fallLeadSec = 2.0;
 const double _fallTailSec = 0.6;
@@ -272,6 +275,13 @@ const double _videoSyncOffsetSec = -0.06;
 const double _mergeEventOverlapToleranceSec = 0.05;
 const double _mergeEventGapToleranceSec = 0.08;
 const Duration _successFlashDuration = Duration(milliseconds: 200);
+// SESSION-025 FIX: Separate gate duration for _registerWrongHit anti-spam
+// PREUVE: logcat session-025 shows WRONG_FLASH EMIT every ~150-200ms from MicEngine,
+//         but _registerWrongHit silently blocks flashes < 200ms apart (same note)
+// CAUSE: _successFlashDuration=200ms used for BOTH display duration AND gate
+// CORRECTION: Use dedicated _wrongFlashGateDuration=150ms for gate, aligned with
+//             MicEngine's wrongFlashCooldownSec=0.15 and wrongFlashDedupMs=150
+const Duration _wrongFlashGateDuration = Duration(milliseconds: 150);
 const Duration _devTapWindow = Duration(seconds: 2);
 const int _devTapTarget = 5;
 const double _videoCropFactor = 0.65;

@@ -243,9 +243,13 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
   }
 
   void _registerWrongHit({required int detectedNote, required DateTime now}) {
+    // SESSION-025 FIX: Use _wrongFlashGateDuration (150ms) instead of _successFlashDuration (200ms)
+    // PREUVE: logcat session-025 shows ~50% of MicEngine WRONG_FLASH being silently blocked
+    //         because intervals (161ms, 186ms, 180ms, 151ms, 172ms) < 200ms
+    // Gate is now aligned with MicEngine (wrongFlashCooldownSec=150ms, wrongFlashDedupMs=150ms)
     final tooSoon =
         _lastWrongHitAt != null &&
-        now.difference(_lastWrongHitAt!) < _successFlashDuration;
+        now.difference(_lastWrongHitAt!) < _wrongFlashGateDuration;
     if (tooSoon && _lastWrongNote == detectedNote) {
       return;
     }
