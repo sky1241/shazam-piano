@@ -4,6 +4,31 @@ import 'package:flutter/foundation.dart';
 import 'package:shazapiano/core/practice/pitch/practice_pitch_router.dart';
 
 // ============================================================================
+// PATCH LEDGER - SESSION-027 (2026-01-24) - STABILITY BYPASS FOR TRIGGER FIX
+// ============================================================================
+// CAUSE: First-time pitch class detections blocked by stability filter
+//   PREUVE: logcat session-027 at 16:48:14.752:
+//           - ONSET_TRIGGER t=9091ms ratio=4.67 cooldownOk=true
+//           - YIN_CALLED expected=[70] detectedMidi=70 conf=1.00
+//           - PITCH_ROUTER expected=[70] events=1 t=9.091
+//           - (NO NOTE_START midi=70) ← BLOCKED by stability=1 < required=2
+//           - BUFFER_STATE totalEvents=0 eventsInWindow=0
+//           - HIT_DECISION noteIdx=7 result=REJECT reason=no_events_in_buffer
+//           - HIT_DECISION noteIdx=7 result=MISS reason=timeout_no_match
+// CORRECTION: Bypass stability filter for ONSET_TRIGGER events (line ~805)
+//   - isTriggerEvent = onsetState == OnsetState.trigger
+//   - if (!isTriggerEvent && stabilityFrames < kPitchStabilityMinFrames) skip
+//   - ONSET_TRIGGER already gated by ratio>1.4 + cooldown, doesn't need
+//     multi-frame stability confirmation. Only BURST/PROBE need filter.
+// RISQUE: Minimal - TRIGGER events are high-confidence attacks by definition
+//   - ratio check (>1.4) ensures strong signal delta
+//   - cooldown check prevents double-trigger
+//   - YIN conf check (>=0.75) filters noise
+// TEST: session-028 - last note (noteIdx=7, midi=70) should produce:
+//   - STABILITY_BYPASS_TRIGGER midi=70 pc=10 frames=1 ...
+//   - NOTE_START midi=70 pc=10 t=~9000ms ...
+//   - HIT_DECISION noteIdx=7 result=HIT
+// ============================================================================
 // PATCH LEDGER - SESSION-025 (2026-01-24) - WRONG FLASH UI GATE FIX
 // ============================================================================
 // CAUSE: _registerWrongHit gate uses _successFlashDuration (200ms) not aligned
@@ -794,7 +819,15 @@ class MicEngine {
 
           // SESSION-021 FIX #4: Require minimum stability frames before emission.
           // This filters single-frame pitch glitches and sub-harmonic flickers.
-          if (stabilityFrames < kPitchStabilityMinFrames) {
+          //
+          // SESSION-027 FIX: Bypass stability filter for ONSET_TRIGGER events.
+          // CAUSE: First-time detections of a pitch class are blocked by stability=1 < required=2
+          // PREUVE: session-027 YIN_CALLED midi=70 conf=1.00 at t=9091ms but no NOTE_START
+          //         because midi=70 was never played before in session (stability=1)
+          // FIX: ONSET_TRIGGER is already gated by ratio check (>1.4) + cooldown, so it
+          //      doesn't need multi-frame stability confirmation. Only BURST/PROBE need it.
+          final bool isTriggerEvent = onsetState == OnsetState.trigger;
+          if (!isTriggerEvent && stabilityFrames < kPitchStabilityMinFrames) {
             if (kDebugMode && verboseDebug) {
               debugPrint(
                 'PITCH_STABILITY_SKIP midi=${re.midi} pc=$pitchClass '
@@ -803,6 +836,15 @@ class MicEngine {
               );
             }
             continue;
+          }
+
+          // SESSION-027: Log when stability bypass is applied for TRIGGER events
+          if (kDebugMode && isTriggerEvent && stabilityFrames < kPitchStabilityMinFrames) {
+            debugPrint(
+              'STABILITY_BYPASS_TRIGGER midi=${re.midi} pc=$pitchClass '
+              'frames=$stabilityFrames required=$kPitchStabilityMinFrames '
+              't=${elapsedMs.toStringAsFixed(0)}ms reason=onset_trigger_gate',
+            );
           }
 
           // SESSION-015 P4: NoteTracker gate - prevent tail/sustain from generating attacks

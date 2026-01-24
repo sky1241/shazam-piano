@@ -310,14 +310,37 @@ class PracticeController extends StateNotifier<PracticeViewState> {
     }
 
     // FIX BUG #3 (SESSION4): Log match failure avec détails filtrage
+    // SESSION-026 FIX: Improved logging to show true active note vs stale pointer
+    // PREUVE: logcat showed dist=0 FAIL when _nextExpectedIndex pointed to already-resolved note
+    // CAUSE: _nextExpectedIndex doesn't advance immediately after forceMatch (waits for timeout)
+    // NOW: Log shows both pointer state AND first unresolved note for accurate debugging
     if (kDebugMode && _nextExpectedIndex < _expectedNotes.length) {
       final nextExpected = _expectedNotes[_nextExpectedIndex];
+      final isResolved = _resolvedExpectedIndices.contains(_nextExpectedIndex);
+
+      // Find first truly unresolved note for comparison
+      int? firstUnresolvedIdx;
+      int? firstUnresolvedMidi;
+      for (var i = _nextExpectedIndex; i < scanEndIndex; i++) {
+        if (!_resolvedExpectedIndices.contains(i)) {
+          firstUnresolvedIdx = i;
+          firstUnresolvedMidi = _expectedNotes[i].midi;
+          break;
+        }
+      }
+
+      // Calculate timing info
+      final dtFromPointer = playedEvent.tPlayedMs - nextExpected.tExpectedMs;
+      final inWindow = dtFromPointer.abs() <= _matcher.windowMs;
+
       debugPrint(
         'SESSION4_MATCH_FAIL: '
         'rawMidi=${event.midi} usedMidi=${playedEvent.midi} '
         'tPlayedMs=${playedEvent.tPlayedMs.toStringAsFixed(1)} '
         'tPlayedSec=${(playedEvent.tPlayedMs / 1000.0).toStringAsFixed(3)} '
-        'nextExpectedMidi=${nextExpected.midi} '
+        'pointerIdx=$_nextExpectedIndex pointerMidi=${nextExpected.midi} '
+        'pointerResolved=$isResolved dtFromPointer=${dtFromPointer.toStringAsFixed(0)}ms inWindow=$inWindow '
+        'firstUnresolved=${firstUnresolvedIdx != null ? "idx=$firstUnresolvedIdx midi=$firstUnresolvedMidi" : "none"} '
         'dist=${(playedEvent.midi - nextExpected.midi).abs()}',
       );
     }
@@ -470,6 +493,41 @@ class PracticeController extends StateNotifier<PracticeViewState> {
 
     // Update UI with last grade
     state = state.copyWith(lastGrade: grade, scoringState: _scoringState);
+
+    // SESSION-026 FIX: Advance pointer immediately after resolution
+    // PREUVE: Before fix, _nextExpectedIndex stayed stale after forceMatch
+    // CAUSE: Only onTimeUpdate() advanced pointer (via timeout), not resolution
+    // NOW: Pointer advances immediately, fixing wrong-detection latency + log coherence
+    _advancePointerToFirstUnresolved();
+  }
+
+  /// SESSION-026 FIX: Advance _nextExpectedIndex to first unresolved note
+  ///
+  /// Called after any resolution (HIT via forceMatch, MISS via timeout, normal match)
+  /// to keep pointer synchronized with actual state.
+  ///
+  /// Benefits:
+  /// - minExpectedTime in onTimeUpdate() uses correct value for wrong detection
+  /// - Reduces unnecessary rescans in matching loop
+  /// - Logs show coherent state (pointerResolved=false)
+  void _advancePointerToFirstUnresolved() {
+    final oldIndex = _nextExpectedIndex;
+
+    while (_nextExpectedIndex < _expectedNotes.length &&
+        _resolvedExpectedIndices.contains(_nextExpectedIndex)) {
+      _nextExpectedIndex++;
+    }
+
+    if (kDebugMode && _nextExpectedIndex != oldIndex) {
+      final newMidi = _nextExpectedIndex < _expectedNotes.length
+          ? _expectedNotes[_nextExpectedIndex].midi
+          : null;
+      debugPrint(
+        'POINTER_ADVANCED: $oldIndex→$_nextExpectedIndex '
+        'newExpectedMidi=${newMidi ?? "END"} '
+        'resolvedCount=${_resolvedExpectedIndices.length}/${_expectedNotes.length}',
+      );
+    }
   }
 
   /// Handle a wrong note (played but never matched)
