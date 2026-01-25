@@ -4,6 +4,27 @@ import 'package:flutter/foundation.dart';
 import 'package:shazapiano/core/practice/pitch/practice_pitch_router.dart';
 
 // ============================================================================
+// PATCH LEDGER - SESSION-028 (2026-01-24) - PRE-EMISSION SUSTAIN WRONG SUPPRESS
+// ============================================================================
+// CAUSE: False WRONG_FLASH (red) emitted after HIT due to sustain/tail re-detection
+//   PREUVE: logcat session-028 at 18:25:01.739-740:
+//           - HIT_DECISION noteIdx=3 detectedMidi=61 result=HIT
+//           - WRONG_FLASH noteIdx=4 expectedMidi=63 detectedMidi=61 ← FALSE RED!
+//           - SESSION4_SKIP_SUSTAIN_WRONG: Skip midi=61 dt=88ms ← SKIP TOO LATE!
+//   The WRONG_FLASH is emitted BEFORE the UI-layer skip logic runs.
+// CORRECTION: Add GATE 4 (sustainSuppressOk) BEFORE emitting WRONG_FLASH
+//   - Check if detectedPC has recent HIT in _recentlyHitPitchClasses
+//   - If msSinceHit < kSustainWrongSuppressMs (500ms), suppress WRONG_FLASH
+//   - New constant: kSustainWrongSuppressMs = 500
+//   - Applied in both OCTAVE_ERROR (line ~1572) and MISMATCH (line ~1725) paths
+//   - New log: SUPPRESS_SUSTAIN_WRONG_PRE midi=.. pc=.. msSinceHit=..
+// RISQUE: Minimal - only suppresses WRONG for same pitchClass as recent HIT
+//   - Does NOT suppress spam of different notes (e.g., C5 spam is unaffected)
+//   - 500ms window is generous for piano sustain but short enough for real errors
+// TEST: session-029 - after HIT, sustain should NOT produce red flash
+//   - Expect SUPPRESS_SUSTAIN_WRONG_PRE instead of WRONG_FLASH
+//   - Expect no SESSION4_SKIP_SUSTAIN_WRONG (suppressed before reaching UI)
+// ============================================================================
 // PATCH LEDGER - SESSION-027 (2026-01-24) - STABILITY BYPASS FOR TRIGGER FIX
 // ============================================================================
 // CAUSE: First-time pitch class detections blocked by stability filter
@@ -131,6 +152,15 @@ const bool kYinSnapTolerance1Semitone = true;
 /// When true, uses 800ms instead of 600ms for sustainFilterMs.
 /// This prevents sustain of previous note from polluting buffer during long holds.
 const int kSustainFilterMsExtended = 800;
+
+/// SESSION-028 FIX: Suppress WRONG_FLASH for recent HIT sustain.
+/// When a note is hit, its sustain/tail may be re-detected while the NEXT
+/// expected note is active, causing a false WRONG_FLASH. This constant
+/// defines the window (ms) after a HIT during which WRONG_FLASH for the
+/// same pitch class is suppressed.
+/// Value: 500ms is generous enough for piano sustain decay but short enough
+/// to not mask real errors.
+const int kSustainWrongSuppressMs = 500;
 
 /// SESSION-021 FIX #3: Enable spike clamp for latency estimation.
 /// When true, rejects latency samples > 2x current median to filter spikes.
@@ -302,6 +332,9 @@ class MicEngine {
 
   String? _sessionId;
   final List<PitchEvent> _events = [];
+
+  // SESSION-028: One-time flag to log patch confirmation at first session start
+  static bool _patchConfirmLogged = false;
   int _detectedChannels = 1;
   int _detectedSampleRate = 44100;
   bool _configLogged = false;
@@ -498,6 +531,15 @@ class MicEngine {
 
   void reset(String sessionId) {
     _sessionId = sessionId;
+
+    // SESSION-028: Log patch confirmation once at first session
+    if (kDebugMode && !_patchConfirmLogged) {
+      _patchConfirmLogged = true;
+      debugPrint(
+        'PATCH_ACTIVE: SESSION-028 kSustainWrongSuppressMs=$kSustainWrongSuppressMs '
+        'sustainSuppressOk_gate=ENABLED',
+      );
+    }
     _events.clear();
     _detectedChannels = 1;
     _detectedSampleRate = 44100;
@@ -1560,7 +1602,21 @@ class MicEngine {
             // GATE 3: Confidence check
             final confOk = bestEvent.conf >= wrongFlashMinConf;
 
-            if (globalCooldownOk && perNoteDedupOk && confOk) {
+            // SESSION-028 FIX: GATE 4 - Suppress sustain of recent HIT
+            // If the detected pitchClass was recently HIT, suppress WRONG_FLASH
+            // to avoid false red flash from note sustain/tail.
+            final recentHitTimeForDetected =
+                _recentlyHitPitchClasses[detectedPC];
+            final msSinceHitForDetected = recentHitTimeForDetected != null
+                ? now.difference(recentHitTimeForDetected).inMilliseconds
+                : null;
+            final sustainSuppressOk = msSinceHitForDetected == null ||
+                msSinceHitForDetected > kSustainWrongSuppressMs;
+
+            if (globalCooldownOk &&
+                perNoteDedupOk &&
+                confOk &&
+                sustainSuppressOk) {
               // All gates passed - emit WRONG_FLASH for octave error
               decisions.add(
                 NoteDecision(
@@ -1587,6 +1643,15 @@ class MicEngine {
                   'octaveOffset=$octaveDistance '
                   'cooldownOk=$globalCooldownOk dedupOk=$perNoteDedupOk confOk=$confOk '
                   'trigger=OCTAVE_ERROR',
+                );
+              }
+            } else if (!sustainSuppressOk) {
+              // SESSION-028: Suppressed due to recent HIT sustain
+              if (kDebugMode) {
+                debugPrint(
+                  'SUPPRESS_SUSTAIN_WRONG_PRE midi=${bestEvent.midi} pc=$detectedPC '
+                  'msSinceHit=$msSinceHitForDetected noteIdx=$idx expectedMidi=${note.pitch} '
+                  'trigger=OCTAVE_ERROR reason=recent_hit_sustain',
                 );
               }
             } else {
@@ -1690,7 +1755,21 @@ class MicEngine {
               final confirmationOk =
                   candidateList.length >= wrongFlashConfirmCount;
 
-              if (globalCooldownOk && perNoteDedupOk && confirmationOk) {
+              // SESSION-028 FIX: GATE 4 - Suppress sustain of recent HIT
+              // If the detected pitchClass was recently HIT, suppress WRONG_FLASH
+              // to avoid false red flash from note sustain/tail.
+              final recentHitTimeForDetected =
+                  _recentlyHitPitchClasses[detectedPC];
+              final msSinceHitForDetected = recentHitTimeForDetected != null
+                  ? now.difference(recentHitTimeForDetected).inMilliseconds
+                  : null;
+              final sustainSuppressOk = msSinceHitForDetected == null ||
+                  msSinceHitForDetected > kSustainWrongSuppressMs;
+
+              if (globalCooldownOk &&
+                  perNoteDedupOk &&
+                  confirmationOk &&
+                  sustainSuppressOk) {
                 // All gates passed - emit WRONG_FLASH
                 decisions.add(
                   NoteDecision(
@@ -1716,6 +1795,15 @@ class MicEngine {
                     'source=${mismatchEvent.source.name} '
                     'cooldownOk=$globalCooldownOk dedupOk=$perNoteDedupOk confirmOk=$confirmationOk '
                     'trigger=HIT_DECISION_REJECT_MISMATCH',
+                  );
+                }
+              } else if (!sustainSuppressOk) {
+                // SESSION-028: Suppressed due to recent HIT sustain
+                if (kDebugMode) {
+                  debugPrint(
+                    'SUPPRESS_SUSTAIN_WRONG_PRE midi=${mismatchEvent.midi} pc=$detectedPC '
+                    'msSinceHit=$msSinceHitForDetected noteIdx=$idx expectedMidi=${note.pitch} '
+                    'trigger=HIT_DECISION_REJECT_MISMATCH reason=recent_hit_sustain',
                   );
                 }
               } else {
