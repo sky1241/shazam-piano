@@ -122,13 +122,25 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
             // ═══════════════════════════════════════════════════════════════
             // SESSION 4: Send wrong note to NEW controller
             // ═══════════════════════════════════════════════════════════════
-            if (_useNewScoringSystem &&
-                _newController != null &&
-                decision.detectedMidi != null) {
-              // FIX BUG #1 SUSTAIN + BUG #2 DOUBLE-FLASH :
-              // Skip wrongFlash si même MIDI que _lastHitMidi récent (<500ms)
-              // Cause : MicEngine génère wrongFlash sur sustain trop court,
-              // mais note déjà matchée correct par NEW system
+            // SESSION-032 FIX: Add UI-level log to trace wrongFlash decision processing
+            // PREUVE session-032: WRONG_FLASH_EMIT logged in MicEngine but no UI log
+            // to confirm decision was received → added WRONGFLASH_UI_RECEIVED
+            if (kDebugMode) {
+              debugPrint(
+                'WRONGFLASH_UI_RECEIVED midi=${decision.detectedMidi} '
+                'noteIdx=${decision.noteIndex} conf=${decision.confidence?.toStringAsFixed(2)} '
+                'hasController=${_newController != null} useNew=$_useNewScoringSystem',
+              );
+            }
+
+            // SESSION-032 FIX: Red flash trigger moved OUTSIDE scoring system guard
+            // CAUSE: At session start, wrongFlash decisions were received but
+            // _registerWrongHit was ONLY called inside the guard block.
+            // PREUVE: logcat shows NO_EVENTS_FALLBACK_USED but no red flash visible
+            // NOW: Red flash triggered for ANY wrongFlash decision with valid midi
+            if (decision.detectedMidi != null) {
+              // FIX BUG #1 SUSTAIN: Skip if same MIDI as recent hit (<500ms)
+              // Cause: MicEngine génère wrongFlash sur sustain trop court
               if (_lastHitMidi == decision.detectedMidi &&
                   _lastHitAt != null &&
                   now.difference(_lastHitAt!).inMilliseconds < 500) {
@@ -137,7 +149,8 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
                     'SESSION4_SKIP_SUSTAIN_WRONG: Skip wrongFlash midi=${decision.detectedMidi} (same as recent hit, dt=${now.difference(_lastHitAt!).inMilliseconds}ms)',
                   );
                 }
-                break; // Ignore sustain check fail, note déjà traitée
+                // Skip red flash AND scoring, decision already handled
+                break;
               }
 
               // Anti-spam check (avoid duplicate wrongs)
@@ -156,20 +169,25 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
               _lastWrongMidi = decision.detectedMidi;
               _lastWrongAt = now;
 
-              final playedEvent = PracticeController.createPlayedEvent(
-                midi: decision.detectedMidi!,
-                tPlayedMs: elapsed * 1000.0,
-                source: NoteSource.microphone,
-              );
-              _newController!.onPlayedNote(playedEvent);
-
-              // FIX BUG SESSION-008 #3: Always trigger red keyboard flash for wrongFlash
-              // Before: Only called _registerWrongHit if wrongCount increased
-              // Problem: PracticeController.onPlayedNote() doesn't immediately mark
-              // notes as "wrong" - detection happens later in onTimeUpdate()
-              // Result: wrongCount didn't increase → no red flash on keyboard
-              // Now: Always show red feedback when MicEngine detects a wrong note
+              // Trigger red keyboard flash (independent of scoring system state)
               _registerWrongHit(detectedNote: decision.detectedMidi!, now: now);
+              if (kDebugMode) {
+                debugPrint(
+                  'WRONGFLASH_UI_TRIGGERED midi=${decision.detectedMidi} '
+                  'noteIdx=${decision.noteIndex} elapsed=${(elapsed * 1000).toStringAsFixed(0)}ms',
+                );
+              }
+
+              // Send to NEW scoring controller (if enabled)
+              if (_useNewScoringSystem && _newController != null) {
+                final playedEvent = PracticeController.createPlayedEvent(
+                  midi: decision.detectedMidi!,
+                  tPlayedMs: elapsed * 1000.0,
+                  source: NoteSource.microphone,
+                );
+                _newController!.onPlayedNote(playedEvent);
+              }
+
               setState(() {});
             }
 
@@ -251,6 +269,14 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
         _lastWrongHitAt != null &&
         now.difference(_lastWrongHitAt!) < _wrongFlashGateDuration;
     if (tooSoon && _lastWrongNote == detectedNote) {
+      // SESSION-032 FIX: Log when gate blocks (for debugging)
+      if (kDebugMode) {
+        debugPrint(
+          'WRONGFLASH_REGISTER_BLOCKED midi=$detectedNote '
+          'reason=tooSoon_sameMidi lastWrongAt=${_lastWrongHitAt != null ? now.difference(_lastWrongHitAt!).inMilliseconds : "null"}ms '
+          'gate=${_wrongFlashGateDuration.inMilliseconds}ms',
+        );
+      }
       return;
     }
     _lastWrongHitAt = now;

@@ -4,6 +4,122 @@ import 'package:flutter/foundation.dart';
 import 'package:shazapiano/core/practice/pitch/practice_pitch_router.dart';
 
 // ============================================================================
+// PATCH LEDGER - SESSION-032 (2026-01-26) - WRONG FLASH FUNCTIONAL FIX
+// ============================================================================
+// BUG: session-032 video shows NO red flash at session start despite
+//      WRONG_FLASH_EMIT/NO_EVENTS_FALLBACK_USED logged in MicEngine.
+//   PREUVE: frame 88-90 (elapsed~1.6s) keyboard plain, no red on C5
+//           logcat 3558: NO_EVENTS_FALLBACK_USED noteIdx=1 flashedMidi=72
+//           No SESSION4_SKIP logs = decision reached UI but was silently dropped
+//
+// ROOT CAUSE IDENTIFIED:
+//   In practice_notes_logic.part.dart, _registerWrongHit() was INSIDE guard:
+//     if (_useNewScoringSystem && _newController != null && decision.detectedMidi != null)
+//   At session start, while _useNewScoringSystem=true and _newController was init'd,
+//   the guard structure caused wrongFlash to be processed but NOT trigger red flash
+//   if any sub-condition failed or if early break occurred before _registerWrongHit.
+//
+// CORRECTION:
+//   A) UI FIX: Move _registerWrongHit() OUTSIDE scoring system guard
+//      - Red flash now triggers for ANY wrongFlash decision with valid detectedMidi
+//      - Sustain/anti-spam checks still apply (prevent false flashes)
+//      - Scoring controller send remains inside guard (optional feature)
+//   B) TRACEABILITY: Add logs at each pipeline stage
+//      - MicEngine: WRONG_FLASH_EMIT ... trigger=NO_EVENTS_FALLBACK
+//      - UI: WRONGFLASH_UI_RECEIVED midi=X hasController=Y useNew=Z
+//      - UI: WRONGFLASH_UI_TRIGGERED midi=X elapsed=Yms
+//      - UI: WRONGFLASH_REGISTER_BLOCKED midi=X reason=tooSoon_sameMidi
+//
+// VALIDATION CRITERIA:
+//   1. At session start, play wrong note → red flash visible
+//   2. Logcat shows: WRONG_FLASH_EMIT → WRONGFLASH_UI_RECEIVED → UI_TRIGGERED
+//   3. No cooldownOk=false on FIRST wrong flash attempt
+//
+// TEST: session-033 - verify red flash at elapsed<2s when playing wrong note
+// ============================================================================
+// PATCH LEDGER - SESSION-031 (2026-01-26) - WRONG FLASH RESTORATION
+// ============================================================================
+// BUG A: "ALLOW puis SKIP" - Multiple wrong flash paths check/update same
+//        cooldown state, causing confusing ALLOW→SKIP logs without emission.
+//   PREUVE: session-031 logcat shows:
+//           - WRONG_FLASH ... cooldownOk=true ... trigger=HIT_DECISION_REJECT_MISMATCH
+//           - WRONG_FLASH_ALLOW reason=highConfAttack midi=71
+//           - WRONG_FLASH_SKIP reason=gated ... globalCooldownOk=false perMidiDedupOk=false
+//   CAUSE: First path emits and updates _lastWrongFlashAt, second path checks
+//          and finds cooldown consumed → logs SKIP (but decision already added)
+//
+// BUG B: "no_events_in_buffer" - When main buffer empty, no wrong flash emitted
+//        even though audio detects wrong notes (PROBE/failsafe).
+//   PREUVE: session-031 noteIdx=7 expectedMidi=60:
+//           - HIT_DECISION REJECT reason=no_events_in_buffer (repeated)
+//           - Audio continues detecting but buffer empty → no red flash
+//
+// CORRECTION:
+//   A) Per-tick flag: _wrongFlashEmittedThisTick reset at start of _matchNotes
+//      - All paths check flag before emitting, set flag when emitting
+//      - WRONG_FLASH_ALLOW only logged if flag not set (cleaner logs)
+//      - Log: WRONG_FLASH_EMIT (unified, replaces old WRONG_FLASH log)
+//   B) Fallback ring buffer: _recentWrongSamples captures ALL high-conf detections
+//      - Added BEFORE NoteTracker gate (includes suppressed events)
+//      - On no_events_in_buffer REJECT, check buffer for wrong midi
+//      - Emit wrong flash if: conf >= 0.95, midi != expected, has energy
+//      - Log: NO_EVENTS_FALLBACK_USED noteIdx expectedMidi flashedMidi sampleAgeMs
+//
+// GARDE-FOUS: Sustain protection for fallback (avoid false red):
+//   - Skip if midi pitchClass was recently hit AND not trigger/failsafe
+//   - Skip if midi matches expected pitch class (octave of correct note)
+//   - Require energy signal (rms >= 0.08 OR dRms >= 0.015 OR isTriggerOrFailsafe)
+//
+// TEST: session-032 - At least 1 WRONG_FLASH_EMIT when wrong note played
+// ============================================================================
+// PATCH LEDGER - SESSION-030 (2026-01-25) - HIT_ROBUST STRICT GARDE-FOUS
+// ============================================================================
+// CAUSE: False "white" (MISS) when user replays a note but events are suppressed
+//   PREUVE: session-030 noteIdx=6 expectedMidi=60, window=[5.950..7.900]
+//           - 7276ms: ONSET_TRIGGER (ratio=3.05) → user replays C4
+//           - 7361ms: NOTE_SUPPRESS reason=cooldown (85ms < 160ms)
+//           - 7541ms: NOTE_SUPPRESS reason=tail_falling (dRms=-0.04)
+//           - 7926ms: HIT_DECISION MISS timeout_no_match ← buffer empty!
+//
+// CORRECTION v2 (STRICT GARDE-FOUS - avoid false greens):
+//   A) cooldownOnly: ONLY accept reason=cooldown (NOT tail_falling)
+//      → tail_falling = resonance, cooldown = real replay too fast
+//   B) exactMidiMatch: candidate.midi == expectedMidi (NOT just pitchClass)
+//      → avoid octave confusion C3≠C4
+//   C) onsetLink: dtFromOnset <= 250ms (linked to real ONSET_TRIGGER)
+//      → proves candidate follows real user attack
+//   D) energySignal: rms >= 0.08 OR dRms >= 0.015
+//      → proves candidate has real energy, not just resonance
+//   E) edgeTolerance: 50ms max outside window
+//      → tight tolerance for fallback matching
+//   F) cleanup: TTL <= 1000ms, cap <= 64, clear on reset/pointer advance
+//      → prevent stale candidates from causing delayed false greens
+//
+// IMPLEMENTATION:
+//   - HitCandidate class: {midi, tMs, rms, conf, source, suppressReason, dtFromOnsetMs, dRms}
+//   - _lastOnsetTriggerMsByPc[pitchClass] = elapsedMs on each ONSET_TRIGGER
+//   - Candidate added ONLY IF: cooldownOnly ∧ exactMidiMatch ∧ onsetLink ∧ energySignal
+//   - Fallback in _matchNotes: exact midi + edge tolerance + closest dtFromOnset
+//   - Logs: HIT_CANDIDATE_ADD (accept/reject), HIT_CANDIDATE_MATCH (fallback)
+//
+// TEST: session-031 - noteIdx=6 should HIT via HIT_CANDIDATE_MATCH
+//   Validation logs: HIT_CANDIDATE_ADD accept=true reason=cooldown dtFromOnset=85ms
+// ============================================================================
+// PATCH LEDGER - SESSION-029 (2026-01-25) - TAIL-AWARE SUSTAIN SUPPRESSION
+// ============================================================================
+// CAUSE: Fixed 500ms window too short for long piano sustain, but too long might
+//   mask real errors when user intentionally plays wrong note shortly after HIT.
+//   PREUVE: session-029 logcat shows SUPPRESS up to 459ms, then WRONG at 543ms
+//   The first WRONG at 543ms is likely still sustain, but later ones are real errors.
+// CORRECTION: Tail-aware suppression based on event source:
+//   - TRIGGER events (new attacks): use short window (350ms) to catch real errors
+//   - PROBE events (sustain/tail): use long window (600ms) for piano resonance
+//   - New constants: kSustainWrongSuppressTriggerMs=350, kSustainWrongSuppressProbeMs=600
+//   - Log now includes: source=trigger/probe thresholdMs=350/600
+// RISQUE: Minimal - probes are inherently low-energy sustain detections
+//   - Real new attacks produce TRIGGER events which have shorter window
+// TEST: session-030 - expect more SUPPRESS for probe, fewer false WRONG
+// ============================================================================
 // PATCH LEDGER - SESSION-028 (2026-01-24) - PRE-EMISSION SUSTAIN WRONG SUPPRESS
 // ============================================================================
 // CAUSE: False WRONG_FLASH (red) emitted after HIT due to sustain/tail re-detection
@@ -14,16 +130,7 @@ import 'package:shazapiano/core/practice/pitch/practice_pitch_router.dart';
 //   The WRONG_FLASH is emitted BEFORE the UI-layer skip logic runs.
 // CORRECTION: Add GATE 4 (sustainSuppressOk) BEFORE emitting WRONG_FLASH
 //   - Check if detectedPC has recent HIT in _recentlyHitPitchClasses
-//   - If msSinceHit < kSustainWrongSuppressMs (500ms), suppress WRONG_FLASH
-//   - New constant: kSustainWrongSuppressMs = 500
-//   - Applied in both OCTAVE_ERROR (line ~1572) and MISMATCH (line ~1725) paths
-//   - New log: SUPPRESS_SUSTAIN_WRONG_PRE midi=.. pc=.. msSinceHit=..
-// RISQUE: Minimal - only suppresses WRONG for same pitchClass as recent HIT
-//   - Does NOT suppress spam of different notes (e.g., C5 spam is unaffected)
-//   - 500ms window is generous for piano sustain but short enough for real errors
-// TEST: session-029 - after HIT, sustain should NOT produce red flash
-//   - Expect SUPPRESS_SUSTAIN_WRONG_PRE instead of WRONG_FLASH
-//   - Expect no SESSION4_SKIP_SUSTAIN_WRONG (suppressed before reaching UI)
+//   - (SESSION-029: now uses tail-aware thresholds instead of fixed 500ms)
 // ============================================================================
 // PATCH LEDGER - SESSION-027 (2026-01-24) - STABILITY BYPASS FOR TRIGGER FIX
 // ============================================================================
@@ -155,12 +262,74 @@ const int kSustainFilterMsExtended = 800;
 
 /// SESSION-028 FIX: Suppress WRONG_FLASH for recent HIT sustain.
 /// When a note is hit, its sustain/tail may be re-detected while the NEXT
-/// expected note is active, causing a false WRONG_FLASH. This constant
-/// defines the window (ms) after a HIT during which WRONG_FLASH for the
-/// same pitch class is suppressed.
-/// Value: 500ms is generous enough for piano sustain decay but short enough
-/// to not mask real errors.
-const int kSustainWrongSuppressMs = 500;
+/// expected note is active, causing a false WRONG_FLASH.
+///
+/// SESSION-029 FIX: Tail-aware suppression - different windows based on source:
+/// - TRIGGER events (new attacks) use shorter window to not mask real errors
+/// - PROBE events (sustain/tail) use longer window for piano resonance
+const int kSustainWrongSuppressTriggerMs = 350; // New attack - short window
+const int kSustainWrongSuppressProbeMs = 600;   // Sustain/tail - long window
+
+/// SESSION-030 FIX: HIT_ROBUST - Dual-path suppression for HIT matching.
+/// Fixes "false white" (MISS despite real hit) when NoteTracker suppresses
+/// valid events due to cooldown.
+///
+/// PREUVE: session-030 noteIdx=6 expectedMidi=60:
+/// - 7276ms: ONSET_TRIGGER (user replays C4)
+/// - 7361ms: NOTE_SUPPRESS reason=cooldown (85ms < 160ms)
+/// - 7926ms: HIT_DECISION MISS timeout_no_match (buffer empty!)
+///
+/// FIX: Store suppressed cooldown events as HitCandidates for fallback matching.
+///
+/// STRICT GARDE-FOUS (anti faux-verts):
+/// A) cooldownOnly: ONLY accept reason=cooldown (not tail_falling)
+/// B) exactMidiMatch: candidate.midi == expectedMidi (not just pitchClass)
+/// C) onsetLink: (tCandidate - lastOnsetTriggerMs) <= kHitOnsetLinkMs
+/// D) energySignal: rms >= kHitCandidateRmsMin OR dRms >= kHitCandidateDRmsMin
+/// E) edgeTolerance: accept within window ± kHitEdgeToleranceMs
+/// F) cleanup: TTL <= 1000ms, cap <= 64, clear on reset/pointer advance
+const bool kHitRobustEnabled = true;
+
+/// Maximum time (ms) between ONSET_TRIGGER and candidate to accept it.
+/// Ensures candidate is linked to a real attack, not resonance.
+const int kHitOnsetLinkMs = 250;
+
+/// Minimum RMS for a candidate to be considered a real attack.
+const double kHitCandidateRmsMin = 0.08;
+
+/// Minimum dRms for a candidate (alternative to rms check).
+const double kHitCandidateDRmsMin = 0.015;
+
+/// Edge tolerance (ms) for hit candidates at window boundaries.
+const int kHitEdgeToleranceMs = 50;
+
+/// Maximum age (ms) for a candidate before it's pruned.
+const int kHitCandidateTtlMs = 1000;
+
+/// Maximum number of candidates to keep (cap to prevent memory issues).
+const int kHitCandidateMaxCount = 64;
+
+/// SESSION-031 FIX: Wrong flash restoration + no_events_in_buffer fallback.
+///
+/// BUG A: ALLOW→SKIP pattern - multiple paths check/update same cooldown,
+///        causing confusing logs and blocking emissions.
+/// BUG B: no_events_in_buffer - when _events buffer is empty, no wrong flash
+///        even though audio continues detecting wrong notes.
+///
+/// FIX A: Use _wrongFlashEmittedThisTick flag to prevent duplicate emissions
+///        in same _matchNotes call. State only updates on actual emit.
+/// FIX B: Use _recentWrongSamples ring buffer to detect wrong notes even
+///        when main buffer is empty (fallback for probe/failsafe detections).
+const bool kWrongFlashRestoreEnabled = true;
+
+/// Maximum age (ms) for a wrong sample to be considered for fallback.
+const int kWrongSampleMaxAgeMs = 200;
+
+/// Maximum number of recent wrong samples to keep.
+const int kWrongSampleMaxCount = 16;
+
+/// Minimum confidence for a wrong sample fallback.
+const double kWrongSampleMinConf = 0.95;
 
 /// SESSION-021 FIX #3: Enable spike clamp for latency estimation.
 /// When true, rejects latency samples > 2x current median to filter spikes.
@@ -333,6 +502,15 @@ class MicEngine {
   String? _sessionId;
   final List<PitchEvent> _events = [];
 
+  /// SESSION-030: HitCandidates for dual-path HIT matching.
+  /// Stores suppressed cooldown events that may still be valid for HIT detection.
+  /// Strict garde-fous: cooldownOnly, exactMidi, onsetLink, energySignal.
+  final List<HitCandidate> _hitCandidates = [];
+
+  /// SESSION-030: Track last ONSET_TRIGGER timestamp per pitchClass (0-11).
+  /// Used to verify candidates are linked to a real attack (dtFromOnset <= 250ms).
+  final Map<int, double> _lastOnsetTriggerMsByPc = {};
+
   // SESSION-028: One-time flag to log patch confirmation at first session start
   static bool _patchConfirmLogged = false;
   int _detectedChannels = 1;
@@ -380,6 +558,14 @@ class MicEngine {
   // SESSION-017: Per-noteIdx confirmation history for mismatch WRONG_FLASH
   // Key: noteIdx to track confirmations per target note
   final Map<int, List<double>> _mismatchConfirmHistory = {};
+
+  // SESSION-031: Flag to prevent duplicate wrong flash emissions in same tick.
+  // Reset at start of _matchNotes, set when any path emits.
+  bool _wrongFlashEmittedThisTick = false;
+
+  // SESSION-031: Ring buffer for recent pitch samples (fallback for no_events_in_buffer).
+  // Stores all detections (including PROBE) for wrong flash when main buffer empty.
+  final List<WrongSample> _recentWrongSamples = [];
 
   // SESSION-009: Track recently hit pitch classes to filter sustain/reverb
   // Maps pitchClass (0-11) to timestamp when it was last hit
@@ -532,15 +718,19 @@ class MicEngine {
   void reset(String sessionId) {
     _sessionId = sessionId;
 
-    // SESSION-028: Log patch confirmation once at first session
+    // SESSION-028/029/030: Log patch confirmation once at first session
     if (kDebugMode && !_patchConfirmLogged) {
       _patchConfirmLogged = true;
       debugPrint(
-        'PATCH_ACTIVE: SESSION-028 kSustainWrongSuppressMs=$kSustainWrongSuppressMs '
-        'sustainSuppressOk_gate=ENABLED',
+        'PATCH_ACTIVE: SESSION-030 HIT_ROBUST=${kHitRobustEnabled ? "ENABLED" : "DISABLED"} '
+        'edgeToleranceMs=$kHitEdgeToleranceMs onsetLinkMs=$kHitOnsetLinkMs '
+        'candidateRmsMin=$kHitCandidateRmsMin dRmsMin=$kHitCandidateDRmsMin mode=cooldownOnly '
+        'tailAware=ENABLED triggerMs=$kSustainWrongSuppressTriggerMs probeMs=$kSustainWrongSuppressProbeMs',
       );
     }
     _events.clear();
+    _hitCandidates.clear(); // SESSION-030: Clear hit candidates on reset
+    _lastOnsetTriggerMsByPc.clear(); // SESSION-030: Clear onset tracking
     _detectedChannels = 1;
     _detectedSampleRate = 44100;
     _configLogged = false;
@@ -562,6 +752,8 @@ class MicEngine {
     _wrongCandidateHistory.clear(); // SESSION-015: Reset confirmation tracking
     _mismatchDedupHistory.clear(); // SESSION-017: Reset mismatch dedup
     _mismatchConfirmHistory.clear(); // SESSION-017: Reset mismatch confirmation
+    _recentWrongSamples.clear(); // SESSION-031: Reset wrong samples
+    _wrongFlashEmittedThisTick = false; // SESSION-031: Reset per-tick flag
     _pitchClassStability.clear();
     _lastDetectedPitchClass = null;
     _onsetDetector.reset(); // Reset onset gate for new session
@@ -869,6 +1061,12 @@ class MicEngine {
           // FIX: ONSET_TRIGGER is already gated by ratio check (>1.4) + cooldown, so it
           //      doesn't need multi-frame stability confirmation. Only BURST/PROBE need it.
           final bool isTriggerEvent = onsetState == OnsetState.trigger;
+
+          // SESSION-030: Track ONSET_TRIGGER timestamp for HIT_ROBUST onsetLink check
+          if (kHitRobustEnabled && isTriggerEvent) {
+            _lastOnsetTriggerMsByPc[pitchClass] = elapsedMs;
+          }
+
           if (!isTriggerEvent && stabilityFrames < kPitchStabilityMinFrames) {
             if (kDebugMode && verboseDebug) {
               debugPrint(
@@ -888,6 +1086,41 @@ class MicEngine {
               't=${elapsedMs.toStringAsFixed(0)}ms reason=onset_trigger_gate',
             );
           }
+
+          // ═══════════════════════════════════════════════════════════════════
+          // SESSION-031: Capture sample for wrong flash fallback (no_events_in_buffer)
+          // Add ALL high-confidence detections to ring buffer BEFORE NoteTracker gate.
+          // This allows wrong flash detection even when main buffer is empty.
+          // ═══════════════════════════════════════════════════════════════════
+          if (kWrongFlashRestoreEnabled && re.conf >= kWrongSampleMinConf) {
+            // Compute dRms from previous RMS
+            final dRmsWrong = (_lastRms != null) ? (re.rms - _lastRms!) : 0.0;
+            final isTriggerOrFailsafe = isTriggerEvent ||
+                eventSource == PitchEventSource.probe;
+
+            // Prune old samples
+            _recentWrongSamples.removeWhere(
+              (s) => elapsedMs - s.tMs > kWrongSampleMaxAgeMs,
+            );
+
+            // Cap to max count
+            while (_recentWrongSamples.length >= kWrongSampleMaxCount) {
+              _recentWrongSamples.removeAt(0);
+            }
+
+            _recentWrongSamples.add(
+              WrongSample(
+                midi: re.midi,
+                tMs: elapsedMs,
+                rms: re.rms,
+                conf: re.conf,
+                source: eventSource,
+                dRms: dRmsWrong,
+                isTriggerOrFailsafe: isTriggerOrFailsafe,
+              ),
+            );
+          }
+          // ═══════════════════════════════════════════════════════════════════
 
           // SESSION-015 P4: NoteTracker gate - prevent tail/sustain from generating attacks
           final trackerResult = _noteTracker.feed(
@@ -914,7 +1147,107 @@ class MicEngine {
               _lastConfidence = re.conf;
               _lastMidi = re.midi;
             }
-            // Tail/held/cooldown - skip adding to buffer
+
+            // ═══════════════════════════════════════════════════════════════════
+            // SESSION-030 FIX: HIT_ROBUST - Save suppressed cooldown events as candidates
+            // STRICT GARDE-FOUS (anti faux-verts):
+            // A) cooldownOnly: ONLY accept reason=cooldown
+            // B) exactMidiMatch: candidate.midi must be in activeExpectedMidis
+            // C) onsetLink: dtFromOnset <= kHitOnsetLinkMs (250ms)
+            // D) energySignal: rms >= 0.08 OR dRms >= 0.015
+            // E) cap: max 64 candidates
+            // ═══════════════════════════════════════════════════════════════════
+            if (kHitRobustEnabled && re.conf >= minConfForPitch) {
+              // A) cooldownOnly: ONLY accept reason=cooldown
+              final isCooldownReason = trackerResult.reason == 'cooldown';
+              if (!isCooldownReason) {
+                // Skip non-cooldown suppressions (tail_falling, held, etc.)
+                // These are more likely resonance than real attacks
+                continue;
+              }
+
+              // B) exactMidiMatch: candidate.midi must be in activeExpectedMidis
+              final matchesExactMidi = activeExpectedMidis.contains(re.midi);
+              if (!matchesExactMidi) {
+                if (kDebugMode) {
+                  debugPrint(
+                    'HIT_CANDIDATE_DROP midi=${re.midi} t=${elapsedMs.toStringAsFixed(0)}ms '
+                    'reason=notExpected expectedSet=$activeExpectedMidis',
+                  );
+                }
+                continue;
+              }
+
+              // C) onsetLink: check dtFromOnset <= kHitOnsetLinkMs
+              final lastOnsetMs = _lastOnsetTriggerMsByPc[pitchClass];
+              final dtFromOnsetMs = lastOnsetMs != null
+                  ? elapsedMs - lastOnsetMs
+                  : double.infinity;
+              if (dtFromOnsetMs > kHitOnsetLinkMs) {
+                if (kDebugMode) {
+                  debugPrint(
+                    'HIT_CANDIDATE_DROP midi=${re.midi} t=${elapsedMs.toStringAsFixed(0)}ms '
+                    'reason=tooFarFromOnset dtFromOnset=${dtFromOnsetMs.toStringAsFixed(0)}ms '
+                    'maxAllowed=$kHitOnsetLinkMs',
+                  );
+                }
+                continue;
+              }
+
+              // D) energySignal: rms >= kHitCandidateRmsMin OR dRms >= kHitCandidateDRmsMin
+              // Calculate dRms from previous RMS for this pitchClass
+              final prevRms = _lastRms ?? 0.0;
+              final dRms = re.rms - prevRms;
+              final hasEnergy = re.rms >= kHitCandidateRmsMin ||
+                  dRms >= kHitCandidateDRmsMin;
+              if (!hasEnergy) {
+                if (kDebugMode) {
+                  debugPrint(
+                    'HIT_CANDIDATE_DROP midi=${re.midi} t=${elapsedMs.toStringAsFixed(0)}ms '
+                    'reason=lowEnergy rms=${re.rms.toStringAsFixed(3)} dRms=${dRms.toStringAsFixed(3)} '
+                    'minRms=$kHitCandidateRmsMin minDRms=$kHitCandidateDRmsMin',
+                  );
+                }
+                continue;
+              }
+
+              // E) cap: enforce max candidates
+              if (_hitCandidates.length >= kHitCandidateMaxCount) {
+                if (kDebugMode) {
+                  debugPrint(
+                    'HIT_CANDIDATE_DROP midi=${re.midi} t=${elapsedMs.toStringAsFixed(0)}ms '
+                    'reason=cap count=${_hitCandidates.length} max=$kHitCandidateMaxCount',
+                  );
+                }
+                continue;
+              }
+
+              // All garde-fous passed - add candidate
+              _hitCandidates.add(
+                HitCandidate(
+                  midi: re.midi,
+                  tMs: elapsedMs,
+                  rms: re.rms,
+                  conf: re.conf,
+                  source: eventSource,
+                  suppressReason: trackerResult.reason,
+                  dtFromOnsetMs: dtFromOnsetMs,
+                  dRms: dRms,
+                ),
+              );
+
+              if (kDebugMode) {
+                debugPrint(
+                  'HIT_CANDIDATE_ADD midi=${re.midi} t=${elapsedMs.toStringAsFixed(0)}ms '
+                  'suppressReason=${trackerResult.reason} rms=${re.rms.toStringAsFixed(3)} '
+                  'dRms=${dRms.toStringAsFixed(3)} dtFromOnset=${dtFromOnsetMs.toStringAsFixed(0)}ms '
+                  'expectedSet=$activeExpectedMidis',
+                );
+              }
+            }
+            // ═══════════════════════════════════════════════════════════════════
+
+            // Tail/held/cooldown - skip adding to main buffer
             continue;
           }
 
@@ -1250,6 +1583,11 @@ class MicEngine {
   List<NoteDecision> _matchNotes(double elapsed, DateTime now) {
     final decisions = <NoteDecision>[];
 
+    // SESSION-031: Reset per-tick flag at start of matching
+    if (kWrongFlashRestoreEnabled) {
+      _wrongFlashEmittedThisTick = false;
+    }
+
     // CRITICAL FIX: Guard against hitNotes/noteEvents desync
     // Can occur if notes reloaded or list reassigned during active session
     if (hitNotes.length != noteEvents.length) {
@@ -1259,6 +1597,12 @@ class MicEngine {
         );
       }
       return decisions; // Abort scoring to prevent crash
+    }
+
+    // SESSION-030: Prune old hit candidates (TTL = 1000ms)
+    if (kHitRobustEnabled) {
+      final elapsedMs = elapsed * 1000.0;
+      _hitCandidates.removeWhere((c) => elapsedMs - c.tMs > kHitCandidateTtlMs);
     }
 
     // FIX BUG SESSION-005: Track WRONG events separately (notes played but not matching any expected)
@@ -1291,11 +1635,28 @@ class MicEngine {
           ),
         );
         if (kDebugMode) {
+          // SESSION-030: Enhanced MISS diagnostic with candidate info
+          final windowStartMs = windowStart * 1000.0;
+          final windowEndMs = windowEnd * 1000.0;
+          final candidatesInWindow = kHitRobustEnabled
+              ? _hitCandidates.where((c) {
+                  return c.midi == note.pitch &&
+                      c.tMs >= windowStartMs - kHitEdgeToleranceMs &&
+                      c.tMs <= windowEndMs + kHitEdgeToleranceMs;
+                }).length
+              : 0;
           debugPrint(
             'HIT_DECISION sessionId=$_sessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
             'expectedMidi=${note.pitch} window=[${windowStart.toStringAsFixed(3)}..${windowEnd.toStringAsFixed(3)}] '
             'result=MISS reason=timeout_no_match',
           );
+          if (kHitRobustEnabled) {
+            debugPrint(
+              'HIT_MISS_DIAG noteIdx=$idx expectedMidi=${note.pitch} '
+              'reason=no_events_in_buffer candidatesInWindow=$candidatesInWindow '
+              'totalCandidates=${_hitCandidates.length}',
+            );
+          }
         }
         continue;
       }
@@ -1420,6 +1781,84 @@ class MicEngine {
         }
       }
 
+      // ═══════════════════════════════════════════════════════════════════════
+      // SESSION-030 FIX: HIT_ROBUST fallback - check _hitCandidates
+      // If no match in main buffer, use candidates that passed strict garde-fous:
+      // - cooldownOnly, exactMidiMatch, onsetLink, energySignal
+      // ═══════════════════════════════════════════════════════════════════════
+      HitCandidate? matchedCandidate;
+      if (kHitRobustEnabled && bestEvent == null) {
+        final windowStartMs = windowStart * 1000.0;
+        final windowEndMs = windowEnd * 1000.0;
+        final extendedWindowStartMs = windowStartMs - kHitEdgeToleranceMs;
+        final extendedWindowEndMs = windowEndMs + kHitEdgeToleranceMs;
+
+        HitCandidate? bestCandidate;
+        double bestCandidateDt = double.infinity;
+
+        for (final candidate in _hitCandidates) {
+          // B) exactMidiMatch: candidate.midi must equal expectedMidi
+          if (candidate.midi != note.pitch) {
+            continue;
+          }
+
+          // Check extended time window (with edge tolerance)
+          if (candidate.tMs < extendedWindowStartMs ||
+              candidate.tMs > extendedWindowEndMs) {
+            continue;
+          }
+
+          // Skip consumed candidates
+          final candidateTSec = candidate.tMs / 1000.0;
+          if (consumedEventTimes.contains(candidateTSec)) {
+            continue;
+          }
+
+          // Select closest to window center
+          final windowCenterMs = (windowStartMs + windowEndMs) / 2.0;
+          final dtToCenter = (candidate.tMs - windowCenterMs).abs();
+          if (dtToCenter < bestCandidateDt) {
+            bestCandidateDt = dtToCenter;
+            bestCandidate = candidate;
+          }
+        }
+
+        if (bestCandidate != null) {
+          // Convert candidate to PitchEvent for compatibility with existing code
+          final candidateTSec = bestCandidate.tMs / 1000.0;
+          bestEvent = PitchEvent(
+            tSec: candidateTSec,
+            midi: bestCandidate.midi,
+            freq: 0.0, // Not available from candidate
+            conf: bestCandidate.conf,
+            rms: bestCandidate.rms,
+            stabilityFrames: 1,
+            source: bestCandidate.source,
+          );
+          bestDistance = 0.0; // Exact midi match
+          matchedCandidate = bestCandidate;
+
+          // Log candidate match
+          final isEdge = bestCandidate.tMs < windowStartMs ||
+              bestCandidate.tMs > windowEndMs;
+          final dtToWindowMs = isEdge
+              ? (bestCandidate.tMs < windowStartMs
+                  ? windowStartMs - bestCandidate.tMs
+                  : bestCandidate.tMs - windowEndMs)
+              : 0.0;
+          if (kDebugMode) {
+            debugPrint(
+              'HIT_CANDIDATE_MATCH noteIdx=$idx expectedMidi=${note.pitch} '
+              'candMidi=${bestCandidate.midi} t=${bestCandidate.tMs.toStringAsFixed(0)}ms '
+              'dtToWindow=${dtToWindowMs.toStringAsFixed(0)}ms usedFallback=true '
+              'dtFromOnset=${bestCandidate.dtFromOnsetMs.toStringAsFixed(0)}ms '
+              'rms=${bestCandidate.rms.toStringAsFixed(3)}',
+            );
+          }
+        }
+      }
+      // ═══════════════════════════════════════════════════════════════════════
+
       // Check HIT with very tolerant distance (≤3 semitones for real piano+mic)
       if (bestEvent != null && bestDistance <= 3.0) {
         hitNotes[idx] = true;
@@ -1427,6 +1866,11 @@ class MicEngine {
         // FIX BUG SESSION-003 #4: Mark this event as consumed so it can't
         // validate another note with the same pitch class
         consumedEventTimes.add(bestEvent.tSec);
+
+        // SESSION-030: Remove matched candidate from list
+        if (kHitRobustEnabled && matchedCandidate != null) {
+          _hitCandidates.remove(matchedCandidate);
+        }
 
         // SESSION-015: Apply latency compensation to event timestamp
         // If detection arrives late (positive latencyCompMs), shift event earlier
@@ -1566,6 +2010,102 @@ class MicEngine {
           );
         }
 
+        // ═══════════════════════════════════════════════════════════════════
+        // SESSION-031 FIX: Fallback wrong flash for no_events_in_buffer
+        // When main buffer is empty but we have recent pitch samples, check
+        // if any of them are wrong notes and emit wrong flash.
+        // ═══════════════════════════════════════════════════════════════════
+        if (kWrongFlashRestoreEnabled &&
+            bestEvent == null &&
+            !_wrongFlashEmittedThisTick) {
+          final elapsedMs = elapsed * 1000.0;
+
+          // Prune old samples
+          _recentWrongSamples.removeWhere(
+            (s) => elapsedMs - s.tMs > kWrongSampleMaxAgeMs,
+          );
+
+          // Find best wrong sample (high conf, wrong midi, good energy)
+          WrongSample? bestWrongSample;
+          for (final sample in _recentWrongSamples) {
+            // Skip if same as expected (not wrong)
+            if (sample.midi == note.pitch) continue;
+
+            // Skip if pitch class matches expected (might be octave of correct note)
+            if (sample.midi % 12 == expectedPitchClass) continue;
+
+            // Skip if same as recently hit (sustain, not new attack)
+            final recentHit = _recentlyHitPitchClasses[sample.midi % 12];
+            if (recentHit != null) {
+              final msSinceHit = now.difference(recentHit).inMilliseconds;
+              // Allow only if trigger/failsafe or enough time passed
+              if (!sample.isTriggerOrFailsafe && msSinceHit < 350) continue;
+            }
+
+            // Energy check: require trigger/failsafe OR significant dRms
+            final hasEnergy = sample.isTriggerOrFailsafe ||
+                sample.rms >= kHitCandidateRmsMin ||
+                sample.dRms >= kHitCandidateDRmsMin;
+            if (!hasEnergy) continue;
+
+            // Take highest confidence
+            if (bestWrongSample == null || sample.conf > bestWrongSample.conf) {
+              bestWrongSample = sample;
+            }
+          }
+
+          if (bestWrongSample != null) {
+            // Emit fallback wrong flash
+            final globalCooldownOk =
+                _lastWrongFlashAt == null ||
+                now.difference(_lastWrongFlashAt!).inMilliseconds >
+                    (wrongFlashCooldownSec * 1000);
+            final lastFlashForMidi =
+                _lastWrongFlashByMidi[bestWrongSample.midi];
+            final perMidiDedupOk = lastFlashForMidi == null ||
+                now.difference(lastFlashForMidi).inMilliseconds >
+                    wrongFlashDedupMs;
+
+            if (globalCooldownOk && perMidiDedupOk) {
+              decisions.add(
+                NoteDecision(
+                  type: DecisionType.wrongFlash,
+                  noteIndex: idx,
+                  expectedMidi: note.pitch,
+                  detectedMidi: bestWrongSample.midi,
+                  confidence: bestWrongSample.conf,
+                ),
+              );
+              _lastWrongFlashAt = now;
+              _lastWrongFlashByMidi[bestWrongSample.midi] = now;
+              _wrongFlashEmittedThisTick = true;
+
+              if (kDebugMode) {
+                final sampleAgeMs = elapsedMs - bestWrongSample.tMs;
+                // SESSION-032 FIX: Unified WRONG_FLASH_EMIT log for fallback path
+                // PREUVE session-032: NO_EVENTS_FALLBACK_USED logged but no EMIT log
+                // This caused confusion about whether decision was actually added
+                debugPrint(
+                  'WRONG_FLASH_EMIT sessionId=$_sessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
+                  'expectedMidi=${note.pitch} expectedPC=$expectedPitchClass '
+                  'detectedMidi=${bestWrongSample.midi} detectedPC=${bestWrongSample.midi % 12} '
+                  'conf=${bestWrongSample.conf.toStringAsFixed(2)} '
+                  'source=${bestWrongSample.source.name} '
+                  'trigger=NO_EVENTS_FALLBACK',
+                );
+                debugPrint(
+                  'NO_EVENTS_FALLBACK_USED noteIdx=$idx expectedMidi=${note.pitch} '
+                  'flashedMidi=${bestWrongSample.midi} sampleAgeMs=${sampleAgeMs.toStringAsFixed(0)} '
+                  'conf=${bestWrongSample.conf.toStringAsFixed(2)} source=${bestWrongSample.source.name} '
+                  'isTriggerOrFailsafe=${bestWrongSample.isTriggerOrFailsafe} '
+                  'rms=${bestWrongSample.rms.toStringAsFixed(3)} dRms=${bestWrongSample.dRms.toStringAsFixed(3)}',
+                );
+              }
+            }
+          }
+        }
+        // ═══════════════════════════════════════════════════════════════════
+
         // ─────────────────────────────────────────────────────────────────────
         // SESSION-017 FIX: Emit WRONG_FLASH on pitch_class_mismatch REJECT
         // When user plays wrong pitch during an active note window, show red flash
@@ -1605,18 +2145,27 @@ class MicEngine {
             // SESSION-028 FIX: GATE 4 - Suppress sustain of recent HIT
             // If the detected pitchClass was recently HIT, suppress WRONG_FLASH
             // to avoid false red flash from note sustain/tail.
+            // SESSION-029 FIX: Tail-aware - use longer window for probe (sustain)
             final recentHitTimeForDetected =
                 _recentlyHitPitchClasses[detectedPC];
             final msSinceHitForDetected = recentHitTimeForDetected != null
                 ? now.difference(recentHitTimeForDetected).inMilliseconds
                 : null;
+            final sustainThresholdMs =
+                bestEvent.source == PitchEventSource.probe
+                    ? kSustainWrongSuppressProbeMs
+                    : kSustainWrongSuppressTriggerMs;
             final sustainSuppressOk = msSinceHitForDetected == null ||
-                msSinceHitForDetected > kSustainWrongSuppressMs;
+                msSinceHitForDetected > sustainThresholdMs;
+
+            // SESSION-031: Check per-tick flag
+            final tickOk = !kWrongFlashRestoreEnabled || !_wrongFlashEmittedThisTick;
 
             if (globalCooldownOk &&
                 perNoteDedupOk &&
                 confOk &&
-                sustainSuppressOk) {
+                sustainSuppressOk &&
+                tickOk) {
               // All gates passed - emit WRONG_FLASH for octave error
               decisions.add(
                 NoteDecision(
@@ -1630,27 +2179,30 @@ class MicEngine {
               _lastWrongFlashAt = now;
               _mismatchDedupHistory[dedupKey] = now;
               _lastWrongFlashByMidi[bestEvent.midi] = now;
+              if (kWrongFlashRestoreEnabled) {
+                _wrongFlashEmittedThisTick = true;
+              }
 
               if (kDebugMode) {
                 final octaveDistance = ((bestEvent.midi - note.pitch) / 12)
                     .round();
                 debugPrint(
-                  'WRONG_FLASH sessionId=$_sessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
+                  'WRONG_FLASH_EMIT sessionId=$_sessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
                   'expectedMidi=${note.pitch} expectedPC=$expectedPitchClass '
                   'detectedMidi=${bestEvent.midi} detectedPC=$detectedPC '
                   'conf=${bestEvent.conf.toStringAsFixed(2)} '
                   'source=${bestEvent.source.name} distance=${bestDistance.toStringAsFixed(1)} '
                   'octaveOffset=$octaveDistance '
-                  'cooldownOk=$globalCooldownOk dedupOk=$perNoteDedupOk confOk=$confOk '
                   'trigger=OCTAVE_ERROR',
                 );
               }
             } else if (!sustainSuppressOk) {
-              // SESSION-028: Suppressed due to recent HIT sustain
+              // SESSION-028/029: Suppressed due to recent HIT sustain (tail-aware)
               if (kDebugMode) {
                 debugPrint(
                   'SUPPRESS_SUSTAIN_WRONG_PRE midi=${bestEvent.midi} pc=$detectedPC '
-                  'msSinceHit=$msSinceHitForDetected noteIdx=$idx expectedMidi=${note.pitch} '
+                  'msSinceHit=$msSinceHitForDetected thresholdMs=$sustainThresholdMs '
+                  'source=${bestEvent.source.name} noteIdx=$idx expectedMidi=${note.pitch} '
                   'trigger=OCTAVE_ERROR reason=recent_hit_sustain',
                 );
               }
@@ -1758,18 +2310,27 @@ class MicEngine {
               // SESSION-028 FIX: GATE 4 - Suppress sustain of recent HIT
               // If the detected pitchClass was recently HIT, suppress WRONG_FLASH
               // to avoid false red flash from note sustain/tail.
+              // SESSION-029 FIX: Tail-aware - use longer window for probe (sustain)
               final recentHitTimeForDetected =
                   _recentlyHitPitchClasses[detectedPC];
               final msSinceHitForDetected = recentHitTimeForDetected != null
                   ? now.difference(recentHitTimeForDetected).inMilliseconds
                   : null;
+              final sustainThresholdMs =
+                  mismatchEvent.source == PitchEventSource.probe
+                      ? kSustainWrongSuppressProbeMs
+                      : kSustainWrongSuppressTriggerMs;
               final sustainSuppressOk = msSinceHitForDetected == null ||
-                  msSinceHitForDetected > kSustainWrongSuppressMs;
+                  msSinceHitForDetected > sustainThresholdMs;
+
+              // SESSION-031: Check per-tick flag
+              final tickOk = !kWrongFlashRestoreEnabled || !_wrongFlashEmittedThisTick;
 
               if (globalCooldownOk &&
                   perNoteDedupOk &&
                   confirmationOk &&
-                  sustainSuppressOk) {
+                  sustainSuppressOk &&
+                  tickOk) {
                 // All gates passed - emit WRONG_FLASH
                 decisions.add(
                   NoteDecision(
@@ -1785,24 +2346,27 @@ class MicEngine {
                 // SESSION-020 FIX: Also update per-midi dedup to prevent spam from post-match scan
                 _lastWrongFlashByMidi[mismatchEvent.midi] = now;
                 _mismatchConfirmHistory.remove(confirmKey);
+                if (kWrongFlashRestoreEnabled) {
+                  _wrongFlashEmittedThisTick = true;
+                }
 
                 if (kDebugMode) {
                   debugPrint(
-                    'WRONG_FLASH sessionId=$_sessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
+                    'WRONG_FLASH_EMIT sessionId=$_sessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
                     'expectedMidi=${note.pitch} expectedPC=$expectedPitchClass '
                     'detectedMidi=${mismatchEvent.midi} detectedPC=$detectedPC '
                     'conf=${mismatchEvent.conf.toStringAsFixed(2)} '
                     'source=${mismatchEvent.source.name} '
-                    'cooldownOk=$globalCooldownOk dedupOk=$perNoteDedupOk confirmOk=$confirmationOk '
                     'trigger=HIT_DECISION_REJECT_MISMATCH',
                   );
                 }
               } else if (!sustainSuppressOk) {
-                // SESSION-028: Suppressed due to recent HIT sustain
+                // SESSION-028/029: Suppressed due to recent HIT sustain (tail-aware)
                 if (kDebugMode) {
                   debugPrint(
                     'SUPPRESS_SUSTAIN_WRONG_PRE midi=${mismatchEvent.midi} pc=$detectedPC '
-                    'msSinceHit=$msSinceHitForDetected noteIdx=$idx expectedMidi=${note.pitch} '
+                    'msSinceHit=$msSinceHitForDetected thresholdMs=$sustainThresholdMs '
+                    'source=${mismatchEvent.source.name} noteIdx=$idx expectedMidi=${note.pitch} '
                     'trigger=HIT_DECISION_REJECT_MISMATCH reason=recent_hit_sustain',
                   );
                 }
@@ -2064,8 +2628,9 @@ class MicEngine {
         }
 
         // This event doesn't match any expected note = WRONG (confirmed!)
-        // SESSION-016: Log WRONG_FLASH_ALLOW for debugging (proves the gate was passed)
-        if (kDebugMode) {
+        // SESSION-031: Only log ALLOW if we haven't already emitted this tick
+        // This prevents confusing ALLOW→SKIP sequences in logs
+        if (kDebugMode && !(kWrongFlashRestoreEnabled && _wrongFlashEmittedThisTick)) {
           final reason = highConfAttack
               ? 'highConfAttack'
               : probeOverride
@@ -2105,6 +2670,9 @@ class MicEngine {
             bestWrongEvent.conf >= silenceModeMinConf);
 
     if (bestWrongEvent != null && silenceGateOk) {
+      // SESSION-031: Check per-tick flag first (skip if already emitted this tick)
+      final tickOk = !kWrongFlashRestoreEnabled || !_wrongFlashEmittedThisTick;
+
       // Global cooldown check
       final globalCooldownOk =
           _lastWrongFlashAt == null ||
@@ -2117,7 +2685,7 @@ class MicEngine {
           lastFlashForMidi == null ||
           now.difference(lastFlashForMidi).inMilliseconds > wrongFlashDedupMs;
 
-      if (globalCooldownOk && perMidiDedupOk) {
+      if (tickOk && globalCooldownOk && perMidiDedupOk) {
         // SESSION-018 FIX: Find dominant active note (closest to elapsed time)
         // In silence mode, these will be null (no active note)
         int? dominantNoteIdx;
@@ -2155,6 +2723,9 @@ class MicEngine {
         _wrongCandidateHistory.remove(
           bestWrongMidi,
         ); // SESSION-015: Clear confirmation history
+        if (kWrongFlashRestoreEnabled) {
+          _wrongFlashEmittedThisTick = true;
+        }
 
         if (kDebugMode) {
           // SESSION-018: Unified log with mode indicator
@@ -2172,6 +2743,15 @@ class MicEngine {
             'detectedMidi=$bestWrongMidi detectedPC=${bestWrongMidi % 12} '
             'conf=${bestWrongEvent.conf.toStringAsFixed(2)} source=${bestWrongEvent.source.name} '
             'minDelta=$logMinDelta expectedMidis=$activeExpectedMidis',
+          );
+        }
+      } else if (!tickOk) {
+        // SESSION-031: Skip because already emitted this tick (not an error)
+        if (kDebugMode) {
+          final mode = isSilenceMode ? 'silence' : 'mismatch';
+          debugPrint(
+            'WRONG_FLASH_SKIP reason=already_emitted_this_tick mode=$mode midi=$bestWrongMidi '
+            'conf=${bestWrongEvent.conf.toStringAsFixed(2)}',
           );
         }
       } else {
@@ -2222,6 +2802,52 @@ enum PitchEventSource {
 
   /// Event from legacy MPM path (non-hybrid).
   legacy,
+}
+
+/// SESSION-030: HitCandidate for dual-path HIT matching.
+/// Stores suppressed events that may still be valid for HIT detection.
+class HitCandidate {
+  const HitCandidate({
+    required this.midi,
+    required this.tMs,
+    required this.rms,
+    required this.conf,
+    required this.source,
+    required this.suppressReason,
+    required this.dtFromOnsetMs,
+    required this.dRms,
+  });
+
+  final int midi;
+  final double tMs; // elapsed time in milliseconds
+  final double rms;
+  final double conf;
+  final PitchEventSource source;
+  final String suppressReason; // 'cooldown', 'tail_falling', etc.
+  final double dtFromOnsetMs; // time since last ONSET_TRIGGER for this pitchClass
+  final double dRms; // delta RMS (for energy signal check)
+}
+
+/// SESSION-031: WrongSample for no_events_in_buffer fallback.
+/// Stores recent pitch detections (including PROBE) for wrong flash fallback.
+class WrongSample {
+  const WrongSample({
+    required this.midi,
+    required this.tMs,
+    required this.rms,
+    required this.conf,
+    required this.source,
+    required this.dRms,
+    required this.isTriggerOrFailsafe,
+  });
+
+  final int midi;
+  final double tMs; // elapsed time in milliseconds
+  final double rms;
+  final double conf;
+  final PitchEventSource source;
+  final double dRms;
+  final bool isTriggerOrFailsafe; // true if source=trigger or probe (failsafe)
 }
 
 class PitchEvent {
