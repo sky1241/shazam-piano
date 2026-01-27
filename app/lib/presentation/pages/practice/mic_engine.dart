@@ -622,10 +622,20 @@ class MicEngine {
   final Map<String, int> _wfDedupHistory = {}; // key -> lastEmitMs (int)
   static const int _wfDedupTtlMs = 1500; // TTL for dedup (int)
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // SESSION-043: Block WRONG_FLASH for attackIds that produced a recent HIT
+  // CAUSE: Same attackId can produce HIT for noteIdx=N then WRONG_FLASH for noteIdx=N+1
+  //        because dedup key is "noteIdx_attackId" (different noteIdx = different key)
+  // FIX: Track attackIds that produced HIT, block WRONG_FLASH for same attackId
+  // INVARIANT: If attackId produced HIT within TTL, no WRONG_FLASH for that attackId
+  // ══════════════════════════════════════════════════════════════════════════
+  final Map<int, int> _hitAttackIdHistory = {}; // attackId -> hitMs (int)
+  static const int _hitAttackIdTtlMs = 500; // TTL for HIT->WRONG block (int)
+
   /// SESSION-042: Centralized dedup helper for wrong-flash emission.
   /// Returns true if emission is ALLOWED, false if BLOCKED by TTL.
   /// If allowed, automatically records the emit time in history.
-  /// If blocked, logs S42_DEDUP_SKIP and caller must bail out.
+  /// If blocked, logs S42_DEDUP_SKIP or S43_HIT_BLOCK and caller must bail out.
   bool _wfDedupAllow({
     required int noteIdx,
     required int attackId,
@@ -639,7 +649,24 @@ class MicEngine {
       _wfDedupHistory.removeWhere((k, lastMs) => (nowMs - lastMs) > _wfDedupTtlMs * 2);
     }
 
-    // Check if within TTL window
+    // SESSION-043: Check if this attackId produced a recent HIT
+    // CAUSE: Same attack can produce HIT for noteIdx=N, then WRONG for noteIdx=N+1
+    // This is incoherent - if an attack produced a HIT, it shouldn't also produce WRONG
+    final hitMs = _hitAttackIdHistory[attackId];
+    if (hitMs != null) {
+      final ageMs = nowMs - hitMs;
+      if (ageMs < _hitAttackIdTtlMs) {
+        // BLOCKED: this attackId produced a HIT recently
+        if (kDebugMode) {
+          debugPrint(
+            'S43_HIT_BLOCK attackId=$attackId ageMs=$ageMs ttl=$_hitAttackIdTtlMs noteIdx=$noteIdx path=$path',
+          );
+        }
+        return false;
+      }
+    }
+
+    // Check if within TTL window (original S42 dedup)
     final lastEmitMs = _wfDedupHistory[key];
     if (lastEmitMs != null) {
       final ageMs = nowMs - lastEmitMs;
@@ -949,6 +976,7 @@ class MicEngine {
     _mismatchConfirmHistory.clear(); // SESSION-017: Reset mismatch confirmation
     _wrongFlashTripleDedupHistory.clear(); // SESSION-040: Reset triple dedup
     _wfDedupHistory.clear(); // SESSION-042: Reset centralized TTL dedup on new session
+    _hitAttackIdHistory.clear(); // SESSION-043: Reset HIT attackId history on new session
     _recentWrongSamples.clear(); // SESSION-031: Reset wrong samples
     _wrongFlashEmittedThisTick = false; // SESSION-031: Reset per-tick flag
     // SESSION-038: Reset engine counters for new session
@@ -2302,6 +2330,16 @@ class MicEngine {
 
         // SESSION-009: Track this pitch class as recently hit for sustain filtering
         _recentlyHitPitchClasses[expectedPitchClass] = now;
+
+        // SESSION-043: Record attackId that produced this HIT to block WRONG_FLASH
+        // CAUSE: Same attack can produce HIT for noteIdx=N, then WRONG for noteIdx=N+1
+        final hitAttackId = _lastOnsetTriggerElapsedMs.round();
+        final hitNowMs = (elapsed * 1000).round();
+        _hitAttackIdHistory[hitAttackId] = hitNowMs;
+        // Purge old entries to prevent unbounded growth
+        if (_hitAttackIdHistory.length > 20) {
+          _hitAttackIdHistory.removeWhere((k, v) => (hitNowMs - v) > _hitAttackIdTtlMs * 2);
+        }
 
         // SESSION-015 P4: Release NoteTracker hold for this pitchClass
         // HOTFIX P4: Pass nowMs to keep cooldown active (prevents tail re-attack)
