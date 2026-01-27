@@ -51,6 +51,27 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
         _micSampleCount++;
       }
 
+      // ═══════════════════════════════════════════════════════════════
+      // SESSION-036: Anticipated flash - onset-first zero-lag feedback
+      // ═══════════════════════════════════════════════════════════════
+      // 1) Check timeout first (before processing new onset)
+      _checkAnticipatedTimeout(elapsedMs);
+
+      // 2) Check if noteIdx changed (cancel stale anticipated flash)
+      _checkAnticipatedNoteIdxChange(_micEngine!.onsetActiveNoteIdx);
+
+      // 3) Process onset trigger for anticipated flash
+      _processOnsetForAnticipatedFlash(elapsedMs);
+      // ═══════════════════════════════════════════════════════════════
+
+      // ═══════════════════════════════════════════════════════════════
+      // SESSION-036c: Detected note flash (BLUE) - "REAL-TIME FEEL"
+      // Update detected flash from MicEngine's last detected pitch
+      // This shows what the mic heard, independent of scoring
+      // ═══════════════════════════════════════════════════════════════
+      _updateDetectedFlash(elapsedMs);
+      // ═══════════════════════════════════════════════════════════════
+
       // Apply decisions (HIT/MISS/wrongFlash)
       for (final decision in decisions) {
         switch (decision.type) {
@@ -87,6 +108,16 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
 
               // SUSTAIN SCORING: Accumulate sustain ratio for precision calculation
               _cumulativeSustainRatio += decision.sustainRatio;
+
+              // SESSION-036: Confirm anticipated flash as success (if active on this noteIdx)
+              if (_anticipatedFlashNoteIdx == decision.noteIndex) {
+                _confirmAnticipatedAsSuccess(
+                  noteIdx: decision.noteIndex!,
+                  midi: decision.detectedMidi!,
+                  dtMs: (decision.dtSec ?? 0) * 1000.0,
+                  nowMs: elapsedMs,
+                );
+              }
 
               // Flash green (forceMatch guarantees hit registered)
               // FIX BUG SESSION-005 #1+2: Pass noteIndex for unique flash targeting
@@ -169,6 +200,16 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
               _lastWrongMidi = decision.detectedMidi;
               _lastWrongAt = now;
 
+              // SESSION-036: Confirm anticipated flash as wrong (if active on this noteIdx)
+              if (_anticipatedFlashNoteIdx == decision.noteIndex) {
+                _confirmAnticipatedAsWrong(
+                  noteIdx: decision.noteIndex!,
+                  expectedMidi: decision.expectedMidi ?? 0,
+                  detectedMidi: decision.detectedMidi!,
+                  nowMs: elapsedMs,
+                );
+              }
+
               // Trigger red keyboard flash (independent of scoring system state)
               _registerWrongHit(detectedNote: decision.detectedMidi!, now: now);
               if (kDebugMode) {
@@ -247,12 +288,45 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
     required DateTime now,
     int? noteIndex, // FIX BUG SESSION-005 #1+2: Track specific note index
   }) {
+    // SESSION-034 FIX: Use explicit expiry timestamp for guaranteed flash visibility
+    // More robust than diff<=duration: even if build is delayed, flash stays visible
+    // until the expiry time is reached (DateTime.now().isBefore(_successFlashUntil))
+    final registerTime = DateTime.now();
+    final expiryTime = registerTime.add(_successFlashDuration);
+
     _lastCorrectNote = targetNote;
     _lastCorrectNoteIndex = noteIndex; // FIX BUG SESSION-005 #1+2
-    _lastCorrectHitAt = now;
+    _lastCorrectHitAt = registerTime;
+    _successFlashUntil = expiryTime; // SESSION-034: Set explicit expiry
+
+    // SESSION-035 FIX: ALWAYS clear wrong flash on ANY correct hit
+    // CAUSE: Rouge persistait après HIT si le WRONG était sur une note différente
+    // PREUVE: t=7.257s HIT noteIdx=6 mais ROUGE visible (wrong flash non effacé)
+    // BEFORE: Only cleared if _lastWrongNote == detectedNote || targetNote
+    // AFTER: Always clear - any correct HIT should dismiss red feedback
+    if (_wrongFlashUntil != null) {
+      final clearedMidi = _lastWrongNote;
+      _wrongFlashUntil = null;
+      _lastWrongNote = null; // SESSION-035: Also clear the note to prevent stale state
+      if (kDebugMode) {
+        debugPrint(
+          'WRONGFLASH_CLEARED_BY_HIT hitMidi=$detectedNote targetMidi=$targetNote '
+          'clearedWrongMidi=$clearedMidi reason=any_correct_hit_clears_wrong',
+        );
+      }
+    }
 
     // FIX BUG P0 (FALSE RED): Track this note as recently hit
-    _recentlyHitNotes[detectedNote] = now;
+    _recentlyHitNotes[detectedNote] = registerTime;
+
+    // SESSION-035: Log for debugging flash timing with expiry
+    if (kDebugMode) {
+      debugPrint(
+        'GOODFLASH_REGISTERED midi=$targetNote noteIdx=$noteIndex '
+        'untilMs=${expiryTime.millisecondsSinceEpoch} '
+        'deltaCbMs=${registerTime.difference(now).inMilliseconds}',
+      );
+    }
 
     HapticFeedback.lightImpact();
     if (mounted) {
@@ -261,26 +335,44 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
   }
 
   void _registerWrongHit({required int detectedNote, required DateTime now}) {
+    // SESSION-034 FIX: Use explicit expiry timestamp for guaranteed flash visibility
+    // More robust than diff<=duration: even if build is delayed, flash stays visible
+    // until the expiry time is reached (DateTime.now().isBefore(_wrongFlashUntil))
+    final registerTime = DateTime.now();
+
     // SESSION-025 FIX: Use _wrongFlashGateDuration (150ms) instead of _successFlashDuration (200ms)
     // PREUVE: logcat session-025 shows ~50% of MicEngine WRONG_FLASH being silently blocked
     //         because intervals (161ms, 186ms, 180ms, 151ms, 172ms) < 200ms
     // Gate is now aligned with MicEngine (wrongFlashCooldownSec=150ms, wrongFlashDedupMs=150ms)
     final tooSoon =
         _lastWrongHitAt != null &&
-        now.difference(_lastWrongHitAt!) < _wrongFlashGateDuration;
+        registerTime.difference(_lastWrongHitAt!) < _wrongFlashGateDuration;
     if (tooSoon && _lastWrongNote == detectedNote) {
       // SESSION-032 FIX: Log when gate blocks (for debugging)
       if (kDebugMode) {
         debugPrint(
           'WRONGFLASH_REGISTER_BLOCKED midi=$detectedNote '
-          'reason=tooSoon_sameMidi lastWrongAt=${_lastWrongHitAt != null ? now.difference(_lastWrongHitAt!).inMilliseconds : "null"}ms '
+          'reason=tooSoon_sameMidi lastWrongAt=${_lastWrongHitAt != null ? registerTime.difference(_lastWrongHitAt!).inMilliseconds : "null"}ms '
           'gate=${_wrongFlashGateDuration.inMilliseconds}ms',
         );
       }
       return;
     }
-    _lastWrongHitAt = now;
+
+    final expiryTime = registerTime.add(_successFlashDuration);
+    _lastWrongHitAt = registerTime;
     _lastWrongNote = detectedNote;
+    _wrongFlashUntil = expiryTime; // SESSION-034: Set explicit expiry
+
+    // SESSION-035: Log for debugging flash timing with expiry
+    if (kDebugMode) {
+      debugPrint(
+        'WRONGFLASH_REGISTERED midi=$detectedNote '
+        'untilMs=${expiryTime.millisecondsSinceEpoch} '
+        'deltaCbMs=${registerTime.difference(now).inMilliseconds}',
+      );
+    }
+
     HapticFeedback.selectionClick();
     if (mounted) {
       setState(() {});
@@ -412,5 +504,412 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
     }
 
     return merged;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SESSION-036: Anticipated flash methods (zero-lag feel / onset-first)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Debounce constant for anticipated flash (120ms between emits)
+  static const double _anticipatedFlashDebounceMs = 120.0;
+
+  /// TTL for anticipated flash (450ms before auto-cancel)
+  static const double _anticipatedFlashTtlMs = 450.0;
+
+  /// SESSION-036b: Throttle for SUPPRESSED log (200ms between logs)
+  static const double _suppressedLogThrottleMs = 200.0;
+  double? _lastSuppressedLogMs;
+
+  /// Emit a new anticipated flash (first onset for this noteIdx)
+  void _emitAnticipatedFlash({
+    required int noteIdx,
+    required int expectedMidi,
+    required double nowMs,
+  }) {
+    final debounceMs = _lastAnticipatedEmitMs != null
+        ? nowMs - _lastAnticipatedEmitMs!
+        : double.infinity;
+
+    _anticipatedFlashMidi = expectedMidi;
+    _anticipatedFlashNoteIdx = noteIdx;
+    _anticipatedFlashUntilMs = nowMs + _anticipatedFlashTtlMs;
+    _lastAnticipatedEmitMs = nowMs;
+
+    if (kDebugMode) {
+      debugPrint(
+        'ANTICIPATED_FLASH_EMIT noteIdx=$noteIdx expectedMidi=$expectedMidi '
+        'untilMs=${_anticipatedFlashUntilMs!.toStringAsFixed(0)} debounceMs=${debounceMs.toStringAsFixed(0)}',
+      );
+    }
+
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  /// Refresh TTL of existing anticipated flash (same noteIdx, no setState)
+  void _refreshAnticipatedFlash({
+    required int noteIdx,
+    required double nowMs,
+  }) {
+    _anticipatedFlashUntilMs = nowMs + _anticipatedFlashTtlMs;
+
+    if (kDebugMode) {
+      debugPrint(
+        'ANTICIPATED_FLASH_REFRESH noteIdx=$noteIdx expectedMidi=$_anticipatedFlashMidi '
+        'untilMs=${_anticipatedFlashUntilMs!.toStringAsFixed(0)}',
+      );
+    }
+    // No setState - avoid unnecessary rebuild for TTL refresh only
+  }
+
+  /// Confirm anticipated flash as success (HIT) - clear and let green take over
+  void _confirmAnticipatedAsSuccess({
+    required int noteIdx,
+    required int midi,
+    required double dtMs,
+    required double nowMs,
+  }) {
+    if (kDebugMode) {
+      // SESSION-036b: Calculate msSinceOnset for timing correlation
+      final onsetTriggerMs = _micEngine?.lastOnsetTriggerElapsedMs ?? -10000.0;
+      final msSinceOnset = nowMs - onsetTriggerMs;
+      debugPrint(
+        'ANTICIPATED_FLASH_CONFIRM_SUCCESS noteIdx=$noteIdx midi=$midi dtMs=${dtMs.toStringAsFixed(0)} '
+        'msSinceOnset=${msSinceOnset.toStringAsFixed(0)} nowMs=${nowMs.toStringAsFixed(0)}',
+      );
+    }
+
+    _clearAnticipatedFlashState();
+    // No setState here - _registerCorrectHit will handle it
+  }
+
+  /// Confirm anticipated flash as wrong - clear and let red take over
+  void _confirmAnticipatedAsWrong({
+    required int noteIdx,
+    required int expectedMidi,
+    required int detectedMidi,
+    required double nowMs,
+  }) {
+    if (kDebugMode) {
+      // SESSION-036b: Calculate msSinceOnset for timing correlation
+      final onsetTriggerMs = _micEngine?.lastOnsetTriggerElapsedMs ?? -10000.0;
+      final msSinceOnset = nowMs - onsetTriggerMs;
+      debugPrint(
+        'ANTICIPATED_FLASH_CONFIRM_WRONG noteIdx=$noteIdx expected=$expectedMidi detected=$detectedMidi '
+        'msSinceOnset=${msSinceOnset.toStringAsFixed(0)} nowMs=${nowMs.toStringAsFixed(0)}',
+      );
+    }
+
+    _clearAnticipatedFlashState();
+    // No setState here - _registerWrongHit will handle it
+  }
+
+  /// Cancel anticipated flash (timeout, noteIdx change, or hit decision)
+  void _cancelAnticipatedFlash({
+    required String reason,
+    int? oldIdx,
+    int? newIdx,
+  }) {
+    if (kDebugMode) {
+      final idxInfo = oldIdx != null && newIdx != null
+          ? ' oldIdx=$oldIdx newIdx=$newIdx'
+          : ' noteIdx=$_anticipatedFlashNoteIdx';
+      debugPrint(
+        'ANTICIPATED_FLASH_CANCEL reason=$reason$idxInfo',
+      );
+    }
+
+    _clearAnticipatedFlashState();
+
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  /// Clear anticipated flash state (no setState)
+  void _clearAnticipatedFlashState() {
+    _anticipatedFlashMidi = null;
+    _anticipatedFlashNoteIdx = null;
+    _anticipatedFlashUntilMs = null;
+    // Note: Don't clear _lastAnticipatedEmitMs - keep for debounce tracking
+  }
+
+  /// Check if anticipated flash has timed out
+  void _checkAnticipatedTimeout(double nowMs) {
+    if (_anticipatedFlashMidi == null || _anticipatedFlashUntilMs == null) {
+      return;
+    }
+
+    if (nowMs > _anticipatedFlashUntilMs!) {
+      _cancelAnticipatedFlash(reason: 'timeout');
+    }
+  }
+
+  /// Check if noteIdx changed and cancel if stale
+  void _checkAnticipatedNoteIdxChange(int? currentActiveNoteIdx) {
+    if (_anticipatedFlashNoteIdx == null) return;
+
+    if (currentActiveNoteIdx != _anticipatedFlashNoteIdx) {
+      _cancelAnticipatedFlash(
+        reason: 'noteidx_change',
+        oldIdx: _anticipatedFlashNoteIdx,
+        newIdx: currentActiveNoteIdx,
+      );
+    }
+  }
+
+  /// Check if anticipated flash is active (for UI rendering)
+  // ignore: unused_element (called from _PracticeUiVideoMixin)
+  bool _isAnticipatedFlashActive(double nowMs) {
+    return _anticipatedFlashMidi != null &&
+        _anticipatedFlashUntilMs != null &&
+        nowMs <= _anticipatedFlashUntilMs!;
+  }
+
+  /// Process onset trigger for anticipated flash
+  void _processOnsetForAnticipatedFlash(double nowMs) {
+    if (_micEngine == null) return;
+
+    final onsetState = _micEngine!.lastOnsetState;
+    final inWindow = _micEngine!.onsetInActiveWindow;
+    final noteIdx = _micEngine!.onsetActiveNoteIdx;
+    final expectedMidi = _micEngine!.onsetExpectedMidi;
+    final rmsRatio = _micEngine!.onsetRmsRatio;
+    final dRms = _micEngine!.onsetDRms;
+
+    // SESSION-036b: Helper to log SUPPRESSED with throttle
+    void logSuppressed(String reason) {
+      if (!kDebugMode) return;
+      // Throttle: only log once per 200ms
+      final throttleOk = _lastSuppressedLogMs == null ||
+          (nowMs - _lastSuppressedLogMs!) >= _suppressedLogThrottleMs;
+      if (!throttleOk) return;
+      _lastSuppressedLogMs = nowMs;
+
+      final debounceMs = _lastAnticipatedEmitMs != null
+          ? nowMs - _lastAnticipatedEmitMs!
+          : -1.0;
+      debugPrint(
+        'ANTICIPATED_FLASH_SUPPRESSED reason=$reason noteIdx=$noteIdx expectedMidi=$expectedMidi '
+        'nowMs=${nowMs.toStringAsFixed(0)} onset=${onsetState.name} inWindow=$inWindow '
+        'ratio=${rmsRatio.toStringAsFixed(2)} dRms=${dRms.toStringAsFixed(4)} '
+        'debounceMs=${debounceMs.toStringAsFixed(0)}',
+      );
+    }
+
+    // Only process trigger events
+    if (onsetState != mic.OnsetState.trigger) {
+      // Don't log for non-trigger states (too noisy)
+      return;
+    }
+
+    // Check: not in active window
+    if (!inWindow) {
+      logSuppressed('not_in_window');
+      return;
+    }
+
+    // Check: no active note
+    if (noteIdx == null) {
+      logSuppressed('no_active_note');
+      return;
+    }
+
+    // Check: missing expected midi
+    if (expectedMidi == null) {
+      logSuppressed('missing_expected_midi');
+      return;
+    }
+
+    // Check debounce (120ms)
+    final debounceOk = _lastAnticipatedEmitMs == null ||
+        (nowMs - _lastAnticipatedEmitMs!) >= _anticipatedFlashDebounceMs;
+
+    if (!debounceOk) {
+      logSuppressed('debounce');
+      return;
+    }
+
+    // Check if anticipated already active on different noteIdx
+    if (_anticipatedFlashNoteIdx != null && _anticipatedFlashNoteIdx != noteIdx) {
+      logSuppressed('already_active_other_noteidx');
+      // Note: We still emit for the new noteIdx, this is just informational
+    }
+
+    // Check if this is same noteIdx (refresh) or new (emit)
+    if (_anticipatedFlashNoteIdx == noteIdx) {
+      // Same note - refresh TTL
+      _refreshAnticipatedFlash(noteIdx: noteIdx, nowMs: nowMs);
+    } else {
+      // New note - emit
+      _emitAnticipatedFlash(
+        noteIdx: noteIdx,
+        expectedMidi: expectedMidi,
+        nowMs: nowMs,
+      );
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SESSION-036c: Detected note flash (BLUE) - "REAL-TIME FEEL"
+  // Shows what the mic actually hears, independent of scoring/matching
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// TTL for detected flash (150ms - short to avoid lingering)
+  static const double _detectedFlashTtlMs = 150.0;
+
+  /// SESSION-037: TTL window for considering raw detection "recent"
+  static const double _rawDetectionWindowSec = 0.250; // 250ms
+
+  /// SESSION-037: Release gating constants
+  static const double _releaseMinRms = 0.008; // RMS below this = sound ended
+  static const double _releaseGracePeriodMs = 60.0; // Grace period before clearing
+  static const double _hardCapMs = 180.0; // Max duration without new pitch
+
+  /// Update detected flash from MicEngine's last detected pitch
+  /// SESSION-037: Now with release gating + hard cap to prevent stuck blue
+  void _updateDetectedFlash(double nowMs) {
+    if (_micEngine == null) return;
+
+    final nowSec = nowMs / 1000.0;
+    final rmsNow = _micEngine!.lastRms ?? 0.0;
+
+    // ══════════════════════════════════════════════════════════════════════
+    // SESSION-037 FIX: Release gating - clear BLUE when sound ends
+    // ══════════════════════════════════════════════════════════════════════
+    if (_detectedFlashMidi != null) {
+      final soundEnded = rmsNow < _releaseMinRms;
+      final pitchAgeMs = nowMs - _lastPitchUpdateMs;
+      final flashAgeMs = _detectedFlashFirstEmitMs != null
+          ? nowMs - _detectedFlashFirstEmitMs!
+          : 0.0;
+
+      // Clear conditions:
+      // 1. TTL expired (original behavior)
+      // 2. Sound ended (RMS below threshold) for grace period
+      // 3. Hard cap: flash active too long without new pitch
+      final ttlExpired = _detectedFlashUntilMs != null && nowMs > _detectedFlashUntilMs!;
+      final releaseGated = soundEnded && pitchAgeMs > _releaseGracePeriodMs;
+      final hardCapHit = flashAgeMs > _hardCapMs && pitchAgeMs > 80.0;
+
+      if (ttlExpired || releaseGated || hardCapHit) {
+        final reason = ttlExpired
+            ? 'ttl_expired'
+            : releaseGated
+                ? 'release_gated'
+                : 'hard_cap';
+        if (kDebugMode) {
+          debugPrint(
+            'UI_DETECTED_CLEAR reason=$reason midi=$_detectedFlashMidi '
+            'nowMs=${nowMs.toStringAsFixed(0)} rms=${rmsNow.toStringAsFixed(4)} '
+            'pitchAgeMs=${pitchAgeMs.toStringAsFixed(0)} flashAgeMs=${flashAgeMs.toStringAsFixed(0)}',
+          );
+        }
+        _detectedFlashMidi = null;
+        _detectedFlashUntilMs = null;
+        _detectedFlashFreq = null;
+        _detectedFlashConf = null;
+        _detectedFlashFirstEmitMs = null;
+        if (mounted) setState(() {});
+        return;
+      }
+    }
+
+    // Get last detected from MicEngine (high-conf, post-filter)
+    final detectedMidi = _micEngine!.lastDetectedMidi;
+    final detectedElapsedMs = _micEngine!.lastDetectedElapsedMs;
+    final detectedFreq = _micEngine!.lastDetectedFreq;
+    final detectedConf = _micEngine!.lastDetectedConf;
+    final detectedSource = _micEngine!.lastDetectedSource;
+
+    // SESSION-037: Get raw detection (low-conf, pre-filter) for REAL-TIME FEEL
+    final rawMidi = _micEngine!.lastRawMidi;
+    final rawTSec = _micEngine!.lastRawTSec;
+    final rawFreq = _micEngine!.lastRawFreq;
+    final rawConf = _micEngine!.lastRawConf;
+    final rawSource = _micEngine!.lastRawSource;
+
+    // Determine which detection to use:
+    // 1. Prefer high-conf detection if recent (within 200ms)
+    // 2. Fall back to raw detection if recent (within 250ms) - SESSION-037 FIX
+    int? useMidi;
+    double? useFreq;
+    double? useConf;
+    String useSource = 'none';
+    bool isNewPitch = false;
+
+    final highConfRecent = detectedMidi != null && (nowMs - detectedElapsedMs) <= 200;
+    final rawRecent = rawMidi != null && (nowSec - rawTSec) <= _rawDetectionWindowSec;
+
+    if (highConfRecent) {
+      // Use high-confidence detection
+      useMidi = detectedMidi;
+      useFreq = detectedFreq;
+      useConf = detectedConf;
+      useSource = detectedSource;
+      // Check if this is a NEW pitch update (not stale)
+      isNewPitch = detectedElapsedMs > _lastPitchUpdateMs;
+      if (isNewPitch) _lastPitchUpdateMs = detectedElapsedMs;
+    } else if (rawRecent) {
+      // SESSION-037: Use raw detection for REAL-TIME FEEL
+      useMidi = rawMidi;
+      useFreq = rawFreq;
+      useConf = rawConf;
+      useSource = 'raw_$rawSource';
+      // Raw uses seconds, convert for comparison
+      final rawMs = rawTSec * 1000.0;
+      isNewPitch = rawMs > _lastPitchUpdateMs;
+      if (isNewPitch) _lastPitchUpdateMs = rawMs;
+    }
+
+    // No recent detection at all
+    if (useMidi == null) {
+      return;
+    }
+
+    // Check if midi changed or new detection
+    final midiChanged = _detectedFlashMidi != useMidi;
+    final isNew = _detectedFlashMidi == null;
+
+    if (midiChanged || isNew) {
+      // New or changed detected note - emit
+      _detectedFlashMidi = useMidi;
+      _detectedFlashUntilMs = nowMs + _detectedFlashTtlMs;
+      _detectedFlashFreq = useFreq;
+      _detectedFlashConf = useConf;
+      _detectedFlashFirstEmitMs = nowMs; // Track start for hard cap
+
+      if (kDebugMode) {
+        debugPrint(
+          'UI_DETECTED_SET midi=$useMidi source=$useSource '
+          'conf=${useConf?.toStringAsFixed(2) ?? "?"} rms=${rmsNow.toStringAsFixed(4)} '
+          'nowMs=${nowMs.toStringAsFixed(0)} holdMs=${_detectedFlashTtlMs.toStringAsFixed(0)}',
+        );
+      }
+
+      if (mounted) {
+        setState(() {});
+      }
+    } else if (isNewPitch) {
+      // SESSION-037 FIX: Only refresh TTL if there's a NEW pitch update
+      // This prevents infinite refresh from stale timestamps
+      _detectedFlashUntilMs = nowMs + _detectedFlashTtlMs;
+      if (kDebugMode) {
+        final pitchAgeMs = nowMs - _lastPitchUpdateMs;
+        debugPrint(
+          'UI_DETECTED_REFRESH midi=$useMidi nowMs=${nowMs.toStringAsFixed(0)} '
+          'pitchAgeMs=${pitchAgeMs.toStringAsFixed(0)} untilMs=${_detectedFlashUntilMs!.toStringAsFixed(0)}',
+        );
+      }
+    }
+    // If same midi but NOT a new pitch, don't refresh TTL - let it expire naturally
+  }
+
+  /// Check if detected flash is active (for UI rendering)
+  bool _isDetectedFlashActive(double nowMs) {
+    return _detectedFlashMidi != null &&
+        _detectedFlashUntilMs != null &&
+        nowMs <= _detectedFlashUntilMs!;
   }
 }

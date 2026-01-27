@@ -10,6 +10,8 @@ mixin _PracticeUiStageMixin on _PracticePageStateBase {
   bool _isSuccessFlashActive(DateTime now);
   bool _isWrongFlashActive(DateTime now);
   bool _isMissFlashActive(DateTime now);
+  bool _isAnticipatedFlashActiveForUi(); // SESSION-036
+  bool _isDetectedFlashActiveForUi(); // SESSION-036c
   Set<int> _getRecentlyHitNotes(DateTime now);
   int? _uiDetectedNote();
   void _handleRetryMicPermission();
@@ -54,7 +56,51 @@ mixin _PracticeUiStageMixin on _PracticePageStateBase {
             targetNotes: targetNotes,
             showMidiNumbers: _showMidiNumbers,
           ),
+          // SESSION-036c: Mini debug overlay (kDebugMode only)
+          if (kDebugMode && _practiceRunning) _buildMiniDebugOverlay(),
         ],
+      ),
+    );
+  }
+
+  // SESSION-036c/037: Mini debug overlay showing real-time detection info
+  Widget _buildMiniDebugOverlay() {
+    // Get values from MicEngine (if available)
+    final expectedMidi = _micEngine?.onsetExpectedMidi;
+    final detectedMidi = _detectedFlashMidi;
+    final noteIdx = _micEngine?.onsetActiveNoteIdx;
+    final inWindow = _micEngine?.onsetInActiveWindow ?? false;
+    final conf = _detectedFlashConf;
+
+    // SESSION-037: Get raw detection info
+    final rawMidi = _micEngine?.lastRawMidi;
+    final rawConf = _micEngine?.lastRawConf;
+    final anticipated = _anticipatedFlashMidi;
+
+    // Format display strings
+    final expectedStr = expectedMidi != null ? '$expectedMidi' : '--';
+    final detectedStr = detectedMidi != null ? '$detectedMidi' : '--';
+    final rawStr = rawMidi != null ? '$rawMidi' : '--';
+    final noteIdxStr = noteIdx != null ? '$noteIdx' : '--';
+    final inWindowStr = inWindow ? 'Y' : 'N';
+    final confStr = conf != null ? conf.toStringAsFixed(2) : '--';
+    final rawConfStr = rawConf != null ? rawConf.toStringAsFixed(2) : '--';
+    final antStr = anticipated != null ? '$anticipated' : '--';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      margin: const EdgeInsets.only(top: 4),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        'exp:$expectedStr det:$detectedStr raw:$rawStr ant:$antStr | idx:$noteIdxStr win:$inWindowStr | conf:$confStr raw:$rawConfStr',
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 9,
+          fontFamily: 'monospace',
+        ),
       ),
     );
   }
@@ -240,9 +286,23 @@ mixin _PracticeUiStageMixin on _PracticePageStateBase {
     final successFlashActive = _isSuccessFlashActive(now);
     final wrongFlashActive = _isWrongFlashActive(now);
     final missFlashActive = _isMissFlashActive(now); // FIX BUG SESSION-005 #4
+    final anticipatedFlashActive = _isAnticipatedFlashActiveForUi(); // SESSION-036
+    final detectedFlashActive = _isDetectedFlashActiveForUi(); // SESSION-036c
     final recentlyHitNotes = _getRecentlyHitNotes(
       now,
     ); // FIX: Get recently validated notes
+
+    // SESSION-033/036/036c: Log keyboard flash props for debugging
+    if (kDebugMode && (successFlashActive || wrongFlashActive || anticipatedFlashActive || detectedFlashActive)) {
+      debugPrint(
+        'FLASH_KEY_BUILD greenActive=$successFlashActive greenMidi=$_lastCorrectNote '
+        'redActive=$wrongFlashActive redMidi=$_lastWrongNote '
+        'cyanActive=$anticipatedFlashActive cyanMidi=$_anticipatedFlashMidi '
+        'blueActive=$detectedFlashActive blueMidi=$_detectedFlashMidi '
+        'keyRange=$_displayFirstKey-$_displayLastKey',
+      );
+    }
+
     return PracticeKeyboard(
       key: const Key('practice_keyboard'),
       totalWidth: totalWidth,
@@ -262,6 +322,10 @@ mixin _PracticeUiStageMixin on _PracticePageStateBase {
       wrongFlashActive: wrongFlashActive,
       missFlashNote: _lastMissNote, // FIX BUG SESSION-005 #4
       missFlashActive: missFlashActive, // FIX BUG SESSION-005 #4
+      anticipatedFlashNote: _anticipatedFlashMidi, // SESSION-036: Zero-lag CYAN
+      anticipatedFlashActive: anticipatedFlashActive, // SESSION-036
+      detectedFlashNote: _detectedFlashMidi, // SESSION-036c: Real-time BLUE
+      detectedFlashActive: detectedFlashActive, // SESSION-036c
       noteToXFn: noteToXFn,
       showDebugLabels: showDebugLabels,
       showMidiNumbers: showMidiNumbers,

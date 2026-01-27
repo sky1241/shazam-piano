@@ -164,6 +164,11 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
     _lastWrongNote = null;
     _lastMissNote = null; // FIX BUG SESSION-005 #4
     _lastMissHitAt = null; // FIX BUG SESSION-005 #4
+    // SESSION-037: Reset detected flash state
+    _detectedFlashMidi = null;
+    _detectedFlashUntilMs = null;
+    _detectedFlashFirstEmitMs = null;
+    _lastPitchUpdateMs = -10000.0;
     _recentlyHitNotes
         .clear(); // FIX BUG P0: Clear recently hit notes for new session
     // Phase B instrumentation: Reset RMS stats for new session
@@ -423,10 +428,17 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
     _lastCorrectHitAt = null;
     _lastCorrectNote = null;
     _lastCorrectNoteIndex = null; // FIX BUG SESSION-005 #1+2
+    _successFlashUntil = null; // SESSION-034: Reset explicit expiry
     _lastWrongHitAt = null;
     _lastWrongNote = null;
+    _wrongFlashUntil = null; // SESSION-034: Reset explicit expiry
     _lastMissHitAt = null; // FIX BUG SESSION-005 #4
     _lastMissNote = null; // FIX BUG SESSION-005 #4
+    // SESSION-037: Reset detected flash state
+    _detectedFlashMidi = null;
+    _detectedFlashUntilMs = null;
+    _detectedFlashFirstEmitMs = null;
+    _lastPitchUpdateMs = -10000.0;
     // BUG FIX #15: Do NOT set _startTime here - it will be set when countdown finishes
     // If set here, clock advances during countdown and guidanceElapsed starts at 2s instead of 0
     // _startTime = DateTime.now(); // REMOVED
@@ -591,10 +603,19 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
       _lastCorrectHitAt = null;
       _lastCorrectNote = null;
       _lastCorrectNoteIndex = null; // FIX BUG SESSION-005 #1+2
+      _successFlashUntil = null; // SESSION-034: Reset explicit expiry
       _lastWrongHitAt = null;
       _lastWrongNote = null;
+      _wrongFlashUntil = null; // SESSION-034: Reset explicit expiry
       _lastMissHitAt = null; // FIX BUG SESSION-005 #4
       _lastMissNote = null; // FIX BUG SESSION-005 #4
+      // SESSION-037: Reset detected flash state
+      _detectedFlashMidi = null;
+      _detectedFlashUntilMs = null;
+      _detectedFlashFreq = null;
+      _detectedFlashConf = null;
+      _detectedFlashFirstEmitMs = null;
+      _lastPitchUpdateMs = -10000.0;
       // D1, D3: Reset mic config logging and latency comp for new session
       _micConfigLogged = false;
       _micLatencyCompSec = 0.0;

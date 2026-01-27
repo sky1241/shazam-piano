@@ -11,15 +11,46 @@ mixin _PracticeUiVideoMixin on _PracticePageStateBase {
   }
 
   bool _isSuccessFlashActive(DateTime now) {
-    return _lastCorrectHitAt != null &&
+    // SESSION-034 FIX: Use explicit expiry timestamp for guaranteed flash visibility
+    // More robust: flash active = now is before expiry time (not diff <= duration)
+    // This guarantees the flash stays visible for the full duration even with delayed builds
+    final active = _successFlashUntil != null &&
         _lastCorrectNote != null &&
-        now.difference(_lastCorrectHitAt!) <= _successFlashDuration;
+        now.isBefore(_successFlashUntil!);
+
+    // SESSION-035: Log flash timing for debugging (only when flash state exists)
+    // Logs ONLY when flash state is set to avoid spam during normal play
+    if (kDebugMode && _successFlashUntil != null && _lastCorrectNote != null) {
+      final remainingMs = _successFlashUntil!.difference(now).inMilliseconds;
+      final noteIdx = _lastCorrectNoteIndex;
+      debugPrint(
+        'FLASH_TIMING_GREEN midi=$_lastCorrectNote noteIdx=$noteIdx '
+        'remainingMs=${remainingMs}ms untilMs=${_successFlashUntil!.millisecondsSinceEpoch} '
+        'nowMs=${now.millisecondsSinceEpoch} active=$active',
+      );
+    }
+    return active;
   }
 
   bool _isWrongFlashActive(DateTime now) {
-    return _lastWrongHitAt != null &&
+    // SESSION-034 FIX: Use explicit expiry timestamp for guaranteed flash visibility
+    // More robust: flash active = now is before expiry time (not diff <= duration)
+    // This guarantees the flash stays visible for the full duration even with delayed builds
+    final active = _wrongFlashUntil != null &&
         _lastWrongNote != null &&
-        now.difference(_lastWrongHitAt!) <= _successFlashDuration;
+        now.isBefore(_wrongFlashUntil!);
+
+    // SESSION-035: Log flash timing for debugging (only when flash state exists)
+    // Logs ONLY when flash state is set to avoid spam during normal play
+    if (kDebugMode && _wrongFlashUntil != null && _lastWrongNote != null) {
+      final remainingMs = _wrongFlashUntil!.difference(now).inMilliseconds;
+      debugPrint(
+        'FLASH_TIMING_RED midi=$_lastWrongNote '
+        'remainingMs=${remainingMs}ms untilMs=${_wrongFlashUntil!.millisecondsSinceEpoch} '
+        'nowMs=${now.millisecondsSinceEpoch} active=$active',
+      );
+    }
+    return active;
   }
 
   // FIX BUG SESSION-005 #4: Check if miss flash is active
@@ -29,6 +60,37 @@ mixin _PracticeUiVideoMixin on _PracticePageStateBase {
         _lastMissNote != null &&
         now.difference(_lastMissHitAt!) <= _successFlashDuration;
   }
+
+  // SESSION-036: Check if anticipated flash is active (for zero-lag feel)
+  // Uses monotonic elapsedMs instead of DateTime to avoid drift
+  // ignore: unused_element (called from _PracticeUiStageMixin)
+  bool _isAnticipatedFlashActiveForUi() {
+    if (_anticipatedFlashMidi == null || _anticipatedFlashUntilMs == null) {
+      return false;
+    }
+    // Get current elapsed time from guidance
+    final elapsed = _guidanceElapsedSec();
+    if (elapsed == null) return false;
+    final nowMs = elapsed * 1000.0;
+    return nowMs <= _anticipatedFlashUntilMs!;
+  }
+
+  // SESSION-036c: Check if detected flash is active (for "REAL-TIME FEEL")
+  // Uses monotonic elapsedMs instead of DateTime to avoid drift
+  // ignore: unused_element (called from _PracticeUiStageMixin)
+  bool _isDetectedFlashActiveForUi() {
+    if (_detectedFlashMidi == null || _detectedFlashUntilMs == null) {
+      return false;
+    }
+    // Get current elapsed time from guidance
+    final elapsed = _guidanceElapsedSec();
+    if (elapsed == null) return false;
+    final nowMs = elapsed * 1000.0;
+    return nowMs <= _detectedFlashUntilMs!;
+  }
+
+  // Abstract method declaration - implemented in the main class
+  double? _guidanceElapsedSec();
 
   Widget _buildCroppedVideoLayer({
     required Widget child,

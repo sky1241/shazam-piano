@@ -4,6 +4,35 @@ import 'package:flutter/foundation.dart';
 import 'package:shazapiano/core/practice/pitch/practice_pitch_router.dart';
 
 // ============================================================================
+// PATCH LEDGER - SESSION-035 (2026-01-26) - FALSE RED AFTER HIT FIX
+// ============================================================================
+// BUG: False red flash appears immediately after correct HIT
+//   PREUVE: session-035 elapsed=7.317:
+//           - HIT_DECISION noteIdx=5 midi=61 result=HIT
+//           - WRONG_FLASH_EMIT noteIdx=6 expected=60 detected=61 ← FALSE RED!
+//           - Frame 245-247: Red flash visible on keyboard during correct play
+//
+// ROOT CAUSE IDENTIFIED:
+//   In NO_EVENTS_FALLBACK path (line ~2042), the sustain skip condition was:
+//     if (!sample.isTriggerOrFailsafe && msSinceHit < 350) continue;
+//   When isTriggerOrFailsafe=true, samples bypassed the msSinceHit<350 gate
+//   even when msSinceHit=0ms (HIT just happened in same tick).
+//   This caused the pitch event that validated noteIdx=5 to also trigger
+//   WRONG_FLASH for noteIdx=6 which expected a different pitch.
+//
+// CORRECTION:
+//   Add hard gate: ALWAYS skip if msSinceHit < 10ms (same tick)
+//   New condition: if (msSinceHit < 10 || (!isTriggerOrFailsafe && msSinceHit < 350))
+//   This ensures pitch events consumed by HIT are never reused for WRONG_FLASH.
+//
+// VALIDATION CRITERIA:
+//   1. Play sequence: HIT noteIdx=N, then immediately noteIdx=N+1 with different pitch
+//   2. No WRONG_FLASH should be emitted with detectedMidi matching the HIT pitch
+//   3. Red flash should NOT appear when playing correct notes
+//
+// TEST: Replay session-035 sequence (C# spam then correct notes)
+// ============================================================================
+// ============================================================================
 // PATCH LEDGER - SESSION-032 (2026-01-26) - WRONG FLASH FUNCTIONAL FIX
 // ============================================================================
 // BUG: session-032 video shows NO red flash at session start despite
@@ -234,6 +263,9 @@ import 'package:shazapiano/core/practice/pitch/practice_pitch_router.dart';
 import 'package:shazapiano/core/practice/pitch/onset_detector.dart';
 import 'package:shazapiano/core/practice/pitch/note_tracker.dart';
 import 'package:shazapiano/core/practice/pitch/mic_tuning.dart';
+
+// SESSION-036: Re-export OnsetState for use with 'mic' prefix in practice_page.dart
+export 'package:shazapiano/core/practice/pitch/onset_detector.dart' show OnsetState;
 
 /// Feature flag: Enable hybrid YIN/Goertzel detection.
 /// - OFF: Use existing MPM path.
@@ -616,6 +648,73 @@ class MicEngine {
   /// SESSION-016: Dynamic onset minimum RMS (after auto-baseline).
   double get dynamicOnsetMinRms => _dynamicOnsetMinRms;
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // SESSION-036: Onset state exposure for anticipated flash (zero-lag feel)
+  // ══════════════════════════════════════════════════════════════════════════
+  OnsetState _lastOnsetState = OnsetState.skip;
+  double _lastOnsetTriggerElapsedMs = -10000.0;
+  int? _onsetActiveNoteIdx;
+  int? _onsetExpectedMidi;
+  bool _onsetInActiveWindow = false;
+  double _onsetRmsRatio = 0.0;
+  double _onsetDRms = 0.0;
+
+  /// SESSION-036: Last onset state from OnsetDetector.
+  OnsetState get lastOnsetState => _lastOnsetState;
+
+  /// SESSION-036: ElapsedMs when last ONSET_TRIGGER fired.
+  double get lastOnsetTriggerElapsedMs => _lastOnsetTriggerElapsedMs;
+
+  /// SESSION-036: Active note index at time of onset (if in window).
+  int? get onsetActiveNoteIdx => _onsetActiveNoteIdx;
+
+  /// SESSION-036: Expected MIDI at time of onset (if in window).
+  int? get onsetExpectedMidi => _onsetExpectedMidi;
+
+  /// SESSION-036: Whether onset occurred within an active HIT window.
+  bool get onsetInActiveWindow => _onsetInActiveWindow;
+
+  /// SESSION-036: RMS ratio at onset (for debugging).
+  double get onsetRmsRatio => _onsetRmsRatio;
+
+  /// SESSION-036: Delta RMS at onset (for debugging).
+  double get onsetDRms => _onsetDRms;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SESSION-036c: Last detected pitch exposure for "REAL-TIME FEEL" keyboard
+  // This allows UI to show what the mic actually hears (independent of scoring)
+  // ══════════════════════════════════════════════════════════════════════════
+  int? _lastDetectedMidi;
+  double? _lastDetectedFreq;
+  double? _lastDetectedConf;
+  double _lastDetectedElapsedMs = -10000.0;
+  String _lastDetectedSource = 'none'; // 'yin', 'goertzel', 'none'
+
+  /// SESSION-036c: Last detected MIDI note (regardless of scoring/filtering).
+  int? get lastDetectedMidi => _lastDetectedMidi;
+
+  /// SESSION-036c: Last detected frequency in Hz.
+  double? get lastDetectedFreq => _lastDetectedFreq;
+
+  /// SESSION-036c: Last detected confidence (0-1).
+  double? get lastDetectedConf => _lastDetectedConf;
+
+  /// SESSION-036c: ElapsedMs when last pitch was detected.
+  double get lastDetectedElapsedMs => _lastDetectedElapsedMs;
+
+  /// SESSION-036c: Detection source ('yin', 'goertzel', 'none').
+  String get lastDetectedSource => _lastDetectedSource;
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SESSION-037: Raw detection (BEFORE confidence filtering) for "REAL-TIME FEEL"
+  // These expose the router's raw detection even for low-conf pitches
+  // ═══════════════════════════════════════════════════════════════════════════
+  int? get lastRawMidi => _router.lastRawMidi;
+  double? get lastRawFreq => _router.lastRawFreq;
+  double? get lastRawConf => _router.lastRawConf;
+  double get lastRawTSec => _router.lastRawTSec;
+  String get lastRawSource => _router.lastRawSource;
+
   /// Epsilon for grouping chord notes with nearly-simultaneous starts.
   /// Notes within this time window are considered part of the same chord.
   /// 30ms is safe for piano MIDI where chord notes may have slightly different starts.
@@ -773,6 +872,25 @@ class MicEngine {
     _baselineSampleCount = 0;
     _lastOnsetTriggerMs = -10000.0;
     _lastBaselineLogMs = -10000.0;
+
+    // SESSION-036: Reset onset state exposure
+    _lastOnsetState = OnsetState.skip;
+    _lastOnsetTriggerElapsedMs = -10000.0;
+    _onsetActiveNoteIdx = null;
+    _onsetExpectedMidi = null;
+    _onsetInActiveWindow = false;
+    _onsetRmsRatio = 0.0;
+    _onsetDRms = 0.0;
+
+    // SESSION-036c: Reset detected pitch exposure
+    _lastDetectedMidi = null;
+    _lastDetectedFreq = null;
+    _lastDetectedConf = null;
+    _lastDetectedElapsedMs = -10000.0;
+    _lastDetectedSource = 'none';
+
+    // SESSION-037: Reset raw detection in router
+    _router.clearRawDetection();
 
     if (kDebugMode) {
       // PITCH_PIPELINE: Non-filterable startup log proving pipeline configuration
@@ -955,15 +1073,36 @@ class MicEngine {
 
         // Debug log (grep-friendly PITCH_ROUTER format)
         // Always log to verify hybrid is working (essential for debugging)
+        final modeStr = _router.lastMode == DetectionMode.yin
+            ? 'YIN'
+            : _router.lastMode == DetectionMode.goertzel
+            ? 'GOERTZEL'
+            : 'NONE';
         if (kDebugMode) {
-          final modeStr = _router.lastMode == DetectionMode.yin
-              ? 'YIN'
-              : _router.lastMode == DetectionMode.goertzel
-              ? 'GOERTZEL'
-              : 'NONE';
           debugPrint(
             'PITCH_ROUTER expected=$activeExpectedMidis mode=$modeStr events=${routerEvents.length} t=${elapsedSec.toStringAsFixed(3)}',
           );
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
+        // SESSION-036c: Update last detected pitch (BEFORE filtering)
+        // This ensures UI always shows what the mic heard, regardless of scoring
+        // ═══════════════════════════════════════════════════════════════════
+        if (routerEvents.isNotEmpty) {
+          final re = routerEvents.first;
+          _lastDetectedMidi = re.midi;
+          _lastDetectedFreq = re.freq;
+          _lastDetectedConf = re.conf;
+          _lastDetectedElapsedMs = elapsedMs;
+          _lastDetectedSource = modeStr.toLowerCase();
+
+          if (kDebugMode) {
+            debugPrint(
+              'DETECTED_NOTE_UPDATE midi=${re.midi} freq=${re.freq.toStringAsFixed(1)} '
+              'conf=${re.conf.toStringAsFixed(2)} source=$_lastDetectedSource '
+              'nowMs=${elapsedMs.toStringAsFixed(0)}',
+            );
+          }
         }
 
         // SESSION-014: Convert OnsetState to PitchEventSource for tracking
@@ -984,6 +1123,48 @@ class MicEngine {
             eventSource = PitchEventSource.legacy; // Should not happen
             break;
         }
+
+        // ═══════════════════════════════════════════════════════════════════
+        // SESSION-036: Expose onset state for anticipated flash (zero-lag)
+        // ═══════════════════════════════════════════════════════════════════
+        _lastOnsetState = onsetState;
+        final prevRmsForDelta = _lastRms ?? rms;
+        _onsetDRms = rms - prevRmsForDelta;
+        _onsetRmsRatio = _onsetDetector.rmsEma > 0.0001
+            ? rms / _onsetDetector.rmsEma
+            : 0.0;
+
+        // Find the first active note in window to get expected midi
+        _onsetActiveNoteIdx = null;
+        _onsetExpectedMidi = null;
+        _onsetInActiveWindow = false;
+
+        for (var idx = 0; idx < noteEvents.length; idx++) {
+          if (hitNotes.length > idx && hitNotes[idx]) continue;
+          final note = noteEvents[idx];
+          final windowStart = note.start - headWindowSec;
+          final windowEnd = note.end + tailWindowSec;
+          if (elapsedSec >= windowStart && elapsedSec <= windowEnd) {
+            _onsetActiveNoteIdx = idx;
+            _onsetExpectedMidi = note.pitch;
+            _onsetInActiveWindow = true;
+            break;
+          }
+        }
+
+        // Track trigger elapsed time
+        if (onsetState == OnsetState.trigger) {
+          _lastOnsetTriggerElapsedMs = elapsedMs;
+
+          if (kDebugMode && _onsetInActiveWindow) {
+            debugPrint(
+              'ONSET_TRIGGER_EXPOSED t=${elapsedMs.toStringAsFixed(0)}ms '
+              'noteIdx=$_onsetActiveNoteIdx expectedMidi=$_onsetExpectedMidi '
+              'ratio=${_onsetRmsRatio.toStringAsFixed(2)} dRms=${_onsetDRms.toStringAsFixed(4)}',
+            );
+          }
+        }
+        // ═══════════════════════════════════════════════════════════════════
 
         // SESSION-019 FIX P2: Extend UI during silent sustain
         // If no pitch detected but we have a recent _uiMidi, extend its lifetime
@@ -2038,8 +2219,11 @@ class MicEngine {
             final recentHit = _recentlyHitPitchClasses[sample.midi % 12];
             if (recentHit != null) {
               final msSinceHit = now.difference(recentHit).inMilliseconds;
-              // Allow only if trigger/failsafe or enough time passed
-              if (!sample.isTriggerOrFailsafe && msSinceHit < 350) continue;
+              // SESSION-035 FIX: Always skip if HIT just happened (< 10ms)
+              // PREUVE: elapsed=7.317 HIT noteIdx=5 midi=61, then WRONG noteIdx=6
+              //         with same midi=61 because isTriggerOrFailsafe bypassed check
+              // Bug: trigger/failsafe samples bypassed msSinceHit<350 gate
+              if (msSinceHit < 10 || (!sample.isTriggerOrFailsafe && msSinceHit < 350)) continue;
             }
 
             // Energy check: require trigger/failsafe OR significant dRms

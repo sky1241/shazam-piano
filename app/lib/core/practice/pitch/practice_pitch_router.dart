@@ -66,6 +66,32 @@ class PracticePitchRouter {
   DetectionMode _lastMode = DetectionMode.none;
   DetectionMode get lastMode => _lastMode;
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SESSION-037: Raw detection (BEFORE confidence filtering) for "REAL-TIME FEEL"
+  // These fields capture what YIN detected even if confidence is too low
+  // for scoring. This allows UI to show BLUE feedback for any detected pitch.
+  // ═══════════════════════════════════════════════════════════════════════════
+  int? _lastRawMidi;
+  double? _lastRawFreq;
+  double? _lastRawConf;
+  double _lastRawTSec = -1000.0;
+  String _lastRawSource = 'none';
+
+  int? get lastRawMidi => _lastRawMidi;
+  double? get lastRawFreq => _lastRawFreq;
+  double? get lastRawConf => _lastRawConf;
+  double get lastRawTSec => _lastRawTSec;
+  String get lastRawSource => _lastRawSource;
+
+  /// Clear raw detection state (on reset)
+  void clearRawDetection() {
+    _lastRawMidi = null;
+    _lastRawFreq = null;
+    _lastRawConf = null;
+    _lastRawTSec = -1000.0;
+    _lastRawSource = 'none';
+  }
+
   /// Decide which algorithm to use and produce pitch events.
   ///
   /// Parameters:
@@ -157,7 +183,15 @@ class PracticePitchRouter {
     // Compute confidence from RMS (same heuristic as MicEngine)
     final conf = (rms / 0.05).clamp(0.0, 1.0);
 
-    // Filter weak detections
+    // SESSION-037: Capture raw detection BEFORE confidence filtering
+    // This allows UI to show BLUE feedback even for low-conf detections
+    _lastRawMidi = detectedMidi;
+    _lastRawFreq = freq;
+    _lastRawConf = conf;
+    _lastRawTSec = tSec;
+    _lastRawSource = 'yin';
+
+    // Filter weak detections (for scoring, not for raw UI feedback)
     if (conf < minConfidence) {
       return [];
     }
@@ -212,6 +246,19 @@ class PracticePitchRouter {
       harmonics: harmonics,
       minConfidence: minConfidence,
     );
+
+    // SESSION-037: Capture raw detection from highest-confidence Goertzel bin
+    // This captures even sub-threshold detections for BLUE UI feedback
+    if (presenceMap.isNotEmpty) {
+      final sortedAll = presenceMap.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+      final best = sortedAll.first;
+      _lastRawMidi = best.key;
+      _lastRawFreq = GoertzelDetector.midiToFrequency(best.key);
+      _lastRawConf = best.value;
+      _lastRawTSec = tSec;
+      _lastRawSource = 'goertzel';
+    }
 
     // Filter notes above threshold and sort by confidence (descending)
     final detected =
