@@ -372,15 +372,21 @@ class NoteTracker {
           rmsNow > silenceRmsThreshold * 2; // Not in silence
 
       if (isReattack) {
-        // Force release, then fall through to attack logic
+        // SESSION-040 FIX: Return directly with new attack instead of falling through
+        // CAUSE: cooldownOk was computed BEFORE re-attack reset, causing stale gate check
         final heldMs = nowMs - _attackStartMs[pc];
         _isHeld[pc] = false;
         _belowThresholdFrames[pc] = 0;
         _silentFrames[pc] = 0;
         _lastReattackMs[pc] = nowMs;
-        // Reset cooldown to allow immediate re-attack
-        _lastAttackMs[pc] = nowMs - cooldownMs - 1; // Ensure cooldownOk = true
         _statsReattacks++;
+
+        // Start new attack immediately (no fall-through needed)
+        _lastAttackMs[pc] = nowMs;
+        _attackStartMs[pc] = nowMs;
+        _peakRms[pc] = rmsNow;
+        _isHeld[pc] = true;
+        _statsAttacks++;
 
         if (kDebugMode) {
           debugPrint(
@@ -389,9 +395,18 @@ class NoteTracker {
             'conf=${conf.toStringAsFixed(2)} heldMs=${heldMs.toStringAsFixed(0)} '
             'interOnsetMs=${msSinceLastReattack.toStringAsFixed(0)} reason=strong_rms_jump',
           );
+          debugPrint(
+            'REATTACK_ALLOWED midi=$midi pc=$pc t=${nowMs.toStringAsFixed(0)}ms '
+            'reason=direct_emit_no_fallthrough',
+          );
         }
 
-        // Fall through to IDLE state (will trigger new attack below)
+        // SESSION-040: Return directly with new attack (fixes stale cooldownOk bug)
+        return const NoteTrackerResult(
+          shouldEmit: true,
+          reason: 'reattack',
+          isNewAttack: true,
+        );
       }
       // ───────────────────────────────────────────────────────────────────────
       // SESSION-022 V1 FIX #3: TTL auto-release (safety net for stuck notes)

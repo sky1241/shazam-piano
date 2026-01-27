@@ -363,11 +363,22 @@ const int kWrongSampleMaxCount = 16;
 /// Minimum confidence for a wrong sample fallback.
 const double kWrongSampleMinConf = 0.95;
 
+/// SESSION-038 FIX: Grace period before emitting fallback wrong flash.
+/// Don't emit fallback wrong in first 400ms of note window (player reaction time).
+/// PREUVE: session-038 shows 6 WRONG_FLASH_EMIT before player had time to play.
+const double kFallbackGracePeriodMs = 400.0;
+
 /// SESSION-021 FIX #3: Enable spike clamp for latency estimation.
 /// When true, rejects latency samples > 2x current median to filter spikes.
 /// This prevents outliers like 485ms from skewing the average.
 const bool kLatencySpikeClamp = true;
 const double kLatencySpikeClampRatio = 2.0;
+
+/// SESSION-040 FIX: Maximum allowed dt (ms) for a HIT to be valid.
+/// Events with |dt| > this are rejected even if distance is OK.
+/// CAUSE: session-040 HIT with dt=-443ms (way too early after latency comp).
+/// 250ms = reasonable window for human reaction + latency compensation error.
+const double kHitDtMaxMs = 250.0;
 
 /// SESSION-021 FIX #4: Pitch stability frames required before emission.
 /// Require N consecutive frames detecting the same pitchClass before emitting.
@@ -595,6 +606,22 @@ class MicEngine {
   // Reset at start of _matchNotes, set when any path emits.
   bool _wrongFlashEmittedThisTick = false;
 
+  // SESSION-040: Per-(noteIdx, expectedMidi, detectedMidi) dedup to prevent multi-emit
+  // when sources alternate (burst/trigger/probe). Key: "noteIdx_expected_detected"
+  // TTL: 200ms - same triple can only emit once per window regardless of source.
+  final Map<String, DateTime> _wrongFlashTripleDedupHistory = {};
+  static const int _wrongFlashTripleDedupMs = 200;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SESSION-038: WrongFlash Engine Counters (kDebugMode only)
+  // Track where wrong flashes are emitted/skipped at MicEngine level
+  // ══════════════════════════════════════════════════════════════════════════
+  int _engineEmitCount = 0; // Total WRONG_FLASH_EMIT from MicEngine
+  int _engineSkipGatedCount = 0; // Skipped due to cooldown gating
+  int _engineSkipAlreadyEmittedTickCount = 0; // Skipped due to already_emitted_this_tick
+  int _engineSkipPerMidiDedupCount = 0; // Skipped due to per-midi dedup (if applicable)
+  int _engineSkipOtherCount = 0; // Other skip reasons (low_conf, no_candidate, etc.)
+
   // SESSION-031: Ring buffer for recent pitch samples (fallback for no_events_in_buffer).
   // Stores all detections (including PROBE) for wrong flash when main buffer empty.
   final List<WrongSample> _recentWrongSamples = [];
@@ -634,6 +661,28 @@ class MicEngine {
     'latencySpikeCount': _debugLatencySpikeCount,
     'timebase': 'DateTime.now() elapsed',
   };
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SESSION-038: WrongFlash Engine Telemetry API
+  // ══════════════════════════════════════════════════════════════════════════
+  int get engineEmitCount => _engineEmitCount;
+  int get engineSkipGatedCount => _engineSkipGatedCount;
+  int get engineSkipAlreadyEmittedTickCount => _engineSkipAlreadyEmittedTickCount;
+  int get engineSkipPerMidiDedupCount => _engineSkipPerMidiDedupCount;
+  int get engineSkipOtherCount => _engineSkipOtherCount;
+
+  /// Log WRONGFLASH_ENGINE_SUMMARY (call from UI layer at session end)
+  void logEngineSummary() {
+    if (!kDebugMode) return;
+    debugPrint(
+      'WRONGFLASH_ENGINE_SUMMARY sessionId=$_sessionId '
+      'emits=$_engineEmitCount '
+      'skipGated=$_engineSkipGatedCount '
+      'skipTick=$_engineSkipAlreadyEmittedTickCount '
+      'skipDedup=$_engineSkipPerMidiDedupCount '
+      'skipOther=$_engineSkipOtherCount',
+    );
+  }
 
   // SESSION-016: Auto-baseline noise floor detection
   double _noiseFloorRms = 0.0; // Estimated noise floor during baseline
@@ -851,8 +900,15 @@ class MicEngine {
     _wrongCandidateHistory.clear(); // SESSION-015: Reset confirmation tracking
     _mismatchDedupHistory.clear(); // SESSION-017: Reset mismatch dedup
     _mismatchConfirmHistory.clear(); // SESSION-017: Reset mismatch confirmation
+    _wrongFlashTripleDedupHistory.clear(); // SESSION-040: Reset triple dedup
     _recentWrongSamples.clear(); // SESSION-031: Reset wrong samples
     _wrongFlashEmittedThisTick = false; // SESSION-031: Reset per-tick flag
+    // SESSION-038: Reset engine counters for new session
+    _engineEmitCount = 0;
+    _engineSkipGatedCount = 0;
+    _engineSkipAlreadyEmittedTickCount = 0;
+    _engineSkipPerMidiDedupCount = 0;
+    _engineSkipOtherCount = 0;
     _pitchClassStability.clear();
     _lastDetectedPitchClass = null;
     _onsetDetector.reset(); // Reset onset gate for new session
@@ -1941,11 +1997,9 @@ class MicEngine {
 
         // Now we have pitch class match OR snap allowed, test direct midi
         // (octave shifts ±12/±24 disabled to prevent harmonics false hits)
-        // SESSION-021: If snap allowed, treat distance as 0 (perfect match)
-        final distDirect =
-            shouldSnap && detectedPitchClass != expectedPitchClass
-            ? 0.0 // Snapped match = perfect
-            : (event.midi - note.pitch).abs().toDouble();
+        // SESSION-040 FIX: Always use actual distance (not 0.0 for snap)
+        // CAUSE: distance=0.0 when midi differs was misleading in logs
+        final distDirect = (event.midi - note.pitch).abs().toDouble();
         if (distDirect < bestDistance) {
           bestDistance = distDirect;
           bestEvent = event;
@@ -1956,7 +2010,7 @@ class MicEngine {
             debugPrint(
               'PITCH_SNAP detected=${event.midi} expected=${note.pitch} '
               'conf=${event.conf.toStringAsFixed(2)} stability=${event.stabilityFrames} '
-              't=${event.tSec.toStringAsFixed(3)}',
+              't=${event.tSec.toStringAsFixed(3)} distance=${distDirect.toStringAsFixed(1)}',
             );
           }
         }
@@ -2072,6 +2126,29 @@ class MicEngine {
         } else {
           // Played after note ended (late)
           dtSec = adjustedEventTSec - note.end; // positive
+        }
+
+        // SESSION-040 FIX: Reject HIT if dt is too large (outside temporal guard)
+        // CAUSE: session-040 HIT with dt=-443ms after latency compensation
+        final dtMs = dtSec.abs() * 1000.0;
+        if (dtMs > kHitDtMaxMs) {
+          // Undo the HIT registration - this event is too far from expected
+          hitNotes[idx] = false;
+          consumedEventTimes.remove(bestEvent.tSec);
+          if (kHitRobustEnabled && matchedCandidate != null) {
+            _hitCandidates.add(matchedCandidate); // Re-add removed candidate
+          }
+          if (kDebugMode) {
+            debugPrint(
+              'HIT_DECISION sessionId=$_sessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
+              'expectedMidi=${note.pitch} detectedMidi=${bestEvent.midi} '
+              'distance=${bestDistance.toStringAsFixed(1)} dt=${dtSec.toStringAsFixed(3)}s '
+              'dtMs=${dtMs.toStringAsFixed(0)} result=REJECT reason=dt_exceeds_max_${kHitDtMaxMs.toStringAsFixed(0)}ms',
+            );
+          }
+          // Don't emit HIT decision - continue to check for MISS below
+          // But don't process more notes in this iteration
+          continue;
         }
 
         // SESSION-015: Collect latency sample for auto-estimation
@@ -2250,7 +2327,26 @@ class MicEngine {
                 now.difference(lastFlashForMidi).inMilliseconds >
                     wrongFlashDedupMs;
 
-            if (globalCooldownOk && perMidiDedupOk) {
+            // SESSION-038 FIX: Grace period - don't emit fallback wrong in first 400ms
+            // PREUVE: session-038 noteIdx=1 got 6 WRONG_FLASH_EMIT before player played
+            final timeSinceWindowStartMs = (elapsed - windowStart) * 1000.0;
+            final gracePeriodOk = timeSinceWindowStartMs >= kFallbackGracePeriodMs;
+            if (!gracePeriodOk && kDebugMode) {
+              debugPrint(
+                'WRONG_FLASH_SKIP reason=fallback_grace_period noteIdx=$idx '
+                'expectedMidi=${note.pitch} detectedMidi=${bestWrongSample.midi} '
+                'timeSinceWindowStartMs=${timeSinceWindowStartMs.toStringAsFixed(0)} '
+                'gracePeriodMs=$kFallbackGracePeriodMs',
+              );
+            }
+
+            // SESSION-040: Triple dedup (noteIdx, expected, detected) - prevents multi-emit
+            final tripleKey = '${idx}_${note.pitch}_${bestWrongSample.midi}';
+            final lastTripleFlash = _wrongFlashTripleDedupHistory[tripleKey];
+            final tripleDedupOk = lastTripleFlash == null ||
+                now.difference(lastTripleFlash).inMilliseconds > _wrongFlashTripleDedupMs;
+
+            if (globalCooldownOk && perMidiDedupOk && gracePeriodOk && tripleDedupOk) {
               decisions.add(
                 NoteDecision(
                   type: DecisionType.wrongFlash,
@@ -2262,15 +2358,24 @@ class MicEngine {
               );
               _lastWrongFlashAt = now;
               _lastWrongFlashByMidi[bestWrongSample.midi] = now;
+              _wrongFlashTripleDedupHistory[tripleKey] = now; // SESSION-040
               _wrongFlashEmittedThisTick = true;
+              _engineEmitCount++; // SESSION-038: Count engine emit
 
               if (kDebugMode) {
                 final sampleAgeMs = elapsedMs - bestWrongSample.tMs;
-                // SESSION-032 FIX: Unified WRONG_FLASH_EMIT log for fallback path
+                final attackId = _lastOnsetTriggerElapsedMs.toStringAsFixed(0);
+                // SESSION-032/038 FIX: Unified WRONG_FLASH_EMIT log for fallback path
                 // PREUVE session-032: NO_EVENTS_FALLBACK_USED logged but no EMIT log
                 // This caused confusion about whether decision was actually added
                 debugPrint(
-                  'WRONG_FLASH_EMIT sessionId=$_sessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
+                  'WRONGFLASH_ATTACK_DETECTED attackId=$attackId '
+                  'midi=${bestWrongSample.midi} conf=${bestWrongSample.conf.toStringAsFixed(2)} '
+                  'source=${bestWrongSample.source.name} trigger=NO_EVENTS_FALLBACK',
+                );
+                debugPrint(
+                  'WRONG_FLASH_EMIT sessionId=$_sessionId noteIdx=$idx attackId=$attackId '
+                  'elapsed=${elapsed.toStringAsFixed(3)} '
                   'expectedMidi=${note.pitch} expectedPC=$expectedPitchClass '
                   'detectedMidi=${bestWrongSample.midi} detectedPC=${bestWrongSample.midi % 12} '
                   'conf=${bestWrongSample.conf.toStringAsFixed(2)} '
@@ -2285,6 +2390,11 @@ class MicEngine {
                   'rms=${bestWrongSample.rms.toStringAsFixed(3)} dRms=${bestWrongSample.dRms.toStringAsFixed(3)}',
                 );
               }
+            } else if (lastTripleFlash != null && !tripleDedupOk && kDebugMode) {
+              final dtSkipMs = now.difference(lastTripleFlash).inMilliseconds;
+              debugPrint(
+                'WHY_SKIPPED_DUP_KEY key=$tripleKey dt=${dtSkipMs}ms trigger=NO_EVENTS_FALLBACK',
+              );
             }
           }
         }
@@ -2345,11 +2455,18 @@ class MicEngine {
             // SESSION-031: Check per-tick flag
             final tickOk = !kWrongFlashRestoreEnabled || !_wrongFlashEmittedThisTick;
 
+            // SESSION-040: Triple dedup (noteIdx, expected, detected) - prevents multi-emit
+            final tripleKey = '${idx}_${note.pitch}_${bestEvent.midi}';
+            final lastTripleFlash = _wrongFlashTripleDedupHistory[tripleKey];
+            final tripleDedupOk = lastTripleFlash == null ||
+                now.difference(lastTripleFlash).inMilliseconds > _wrongFlashTripleDedupMs;
+
             if (globalCooldownOk &&
                 perNoteDedupOk &&
                 confOk &&
                 sustainSuppressOk &&
-                tickOk) {
+                tickOk &&
+                tripleDedupOk) {
               // All gates passed - emit WRONG_FLASH for octave error
               decisions.add(
                 NoteDecision(
@@ -2363,15 +2480,24 @@ class MicEngine {
               _lastWrongFlashAt = now;
               _mismatchDedupHistory[dedupKey] = now;
               _lastWrongFlashByMidi[bestEvent.midi] = now;
+              _wrongFlashTripleDedupHistory[tripleKey] = now; // SESSION-040
               if (kWrongFlashRestoreEnabled) {
                 _wrongFlashEmittedThisTick = true;
               }
+              _engineEmitCount++; // SESSION-038: Count engine emit
 
               if (kDebugMode) {
                 final octaveDistance = ((bestEvent.midi - note.pitch) / 12)
                     .round();
+                final attackId = _lastOnsetTriggerElapsedMs.toStringAsFixed(0);
                 debugPrint(
-                  'WRONG_FLASH_EMIT sessionId=$_sessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
+                  'WRONGFLASH_ATTACK_DETECTED attackId=$attackId '
+                  'midi=${bestEvent.midi} conf=${bestEvent.conf.toStringAsFixed(2)} '
+                  'source=${bestEvent.source.name} trigger=OCTAVE_ERROR',
+                );
+                debugPrint(
+                  'WRONG_FLASH_EMIT sessionId=$_sessionId noteIdx=$idx attackId=$attackId '
+                  'elapsed=${elapsed.toStringAsFixed(3)} '
                   'expectedMidi=${note.pitch} expectedPC=$expectedPitchClass '
                   'detectedMidi=${bestEvent.midi} detectedPC=$detectedPC '
                   'conf=${bestEvent.conf.toStringAsFixed(2)} '
@@ -2380,6 +2506,8 @@ class MicEngine {
                   'trigger=OCTAVE_ERROR',
                 );
               }
+            } else if (!tripleDedupOk && kDebugMode) {
+              debugPrint('WHY_SKIPPED_DUP_KEY key=$tripleKey trigger=OCTAVE_ERROR');
             } else if (!sustainSuppressOk) {
               // SESSION-028/029: Suppressed due to recent HIT sustain (tail-aware)
               if (kDebugMode) {
@@ -2392,6 +2520,14 @@ class MicEngine {
               }
             } else {
               // Gates blocked - log skip
+              // SESSION-038: Count gated skip
+              if (!globalCooldownOk) {
+                _engineSkipGatedCount++;
+              } else if (!perNoteDedupOk) {
+                _engineSkipPerMidiDedupCount++;
+              } else {
+                _engineSkipOtherCount++;
+              }
               if (kDebugMode) {
                 debugPrint(
                   'WRONG_FLASH_SKIP reason=octave_gated noteIdx=$idx '
@@ -2416,6 +2552,7 @@ class MicEngine {
 
           if (mismatchMatch == null) {
             // FAIL-SAFE: Parse failed - log and skip
+            _engineSkipOtherCount++; // SESSION-038: Count other skip
             if (kDebugMode) {
               debugPrint(
                 'WRONG_FLASH_SKIP reason=parse_failed noteIdx=$idx '
@@ -2510,11 +2647,18 @@ class MicEngine {
               // SESSION-031: Check per-tick flag
               final tickOk = !kWrongFlashRestoreEnabled || !_wrongFlashEmittedThisTick;
 
+              // SESSION-040: Triple dedup (noteIdx, expected, detected) - prevents multi-emit
+              final tripleKey = '${idx}_${note.pitch}_${mismatchEvent.midi}';
+              final lastTripleFlash = _wrongFlashTripleDedupHistory[tripleKey];
+              final tripleDedupOk = lastTripleFlash == null ||
+                  now.difference(lastTripleFlash).inMilliseconds > _wrongFlashTripleDedupMs;
+
               if (globalCooldownOk &&
                   perNoteDedupOk &&
                   confirmationOk &&
                   sustainSuppressOk &&
-                  tickOk) {
+                  tickOk &&
+                  tripleDedupOk) {
                 // All gates passed - emit WRONG_FLASH
                 decisions.add(
                   NoteDecision(
@@ -2529,14 +2673,23 @@ class MicEngine {
                 _mismatchDedupHistory[dedupKey] = now;
                 // SESSION-020 FIX: Also update per-midi dedup to prevent spam from post-match scan
                 _lastWrongFlashByMidi[mismatchEvent.midi] = now;
+                _wrongFlashTripleDedupHistory[tripleKey] = now; // SESSION-040
                 _mismatchConfirmHistory.remove(confirmKey);
                 if (kWrongFlashRestoreEnabled) {
                   _wrongFlashEmittedThisTick = true;
                 }
+                _engineEmitCount++; // SESSION-038: Count engine emit
 
                 if (kDebugMode) {
+                  final attackId = _lastOnsetTriggerElapsedMs.toStringAsFixed(0);
                   debugPrint(
-                    'WRONG_FLASH_EMIT sessionId=$_sessionId noteIdx=$idx elapsed=${elapsed.toStringAsFixed(3)} '
+                    'WRONGFLASH_ATTACK_DETECTED attackId=$attackId '
+                    'midi=${mismatchEvent.midi} conf=${mismatchEvent.conf.toStringAsFixed(2)} '
+                    'source=${mismatchEvent.source.name} trigger=HIT_DECISION_REJECT_MISMATCH',
+                  );
+                  debugPrint(
+                    'WRONG_FLASH_EMIT sessionId=$_sessionId noteIdx=$idx attackId=$attackId '
+                    'elapsed=${elapsed.toStringAsFixed(3)} '
                     'expectedMidi=${note.pitch} expectedPC=$expectedPitchClass '
                     'detectedMidi=${mismatchEvent.midi} detectedPC=$detectedPC '
                     'conf=${mismatchEvent.conf.toStringAsFixed(2)} '
@@ -2544,6 +2697,8 @@ class MicEngine {
                     'trigger=HIT_DECISION_REJECT_MISMATCH',
                   );
                 }
+              } else if (!tripleDedupOk && kDebugMode) {
+                debugPrint('WHY_SKIPPED_DUP_KEY key=$tripleKey trigger=HIT_DECISION_REJECT_MISMATCH');
               } else if (!sustainSuppressOk) {
                 // SESSION-028/029: Suppressed due to recent HIT sustain (tail-aware)
                 if (kDebugMode) {
@@ -2556,6 +2711,12 @@ class MicEngine {
                 }
               } else {
                 // Gates blocked - log skip with details
+                // SESSION-038: Count gated skip
+                if (!globalCooldownOk) {
+                  _engineSkipGatedCount++;
+                } else if (!perNoteDedupOk) {
+                  _engineSkipPerMidiDedupCount++;
+                }
                 if (kDebugMode) {
                   debugPrint(
                     'WRONG_FLASH_SKIP reason=gated noteIdx=$idx '
@@ -2718,6 +2879,7 @@ class MicEngine {
       // When activeExpectedMidis is empty, minDelta=999 (sentinel) causes false DROP.
       // Instead, SKIP with explicit reason to avoid polluting logs.
       if (activeExpectedMidis.isEmpty) {
+        _engineSkipOtherCount++; // SESSION-038: Count other skip
         if (kDebugMode) {
           debugPrint(
             'WRONG_FLASH_SKIP reason=no_expected_active midi=${event.midi} '
@@ -2910,10 +3072,12 @@ class MicEngine {
         if (kWrongFlashRestoreEnabled) {
           _wrongFlashEmittedThisTick = true;
         }
+        _engineEmitCount++; // SESSION-038: Count engine emit
 
         if (kDebugMode) {
-          // SESSION-018: Unified log with mode indicator
+          // SESSION-018/038: Unified log with mode indicator and attack ID
           final mode = isSilenceMode ? 'silence' : 'mismatch';
+          final attackId = _lastOnsetTriggerElapsedMs.toStringAsFixed(0);
           int logMinDelta = isSilenceMode ? -1 : 999;
           if (!isSilenceMode) {
             for (final expectedMidi in activeExpectedMidis) {
@@ -2921,9 +3085,15 @@ class MicEngine {
               if (delta < logMinDelta) logMinDelta = delta;
             }
           }
+          // SESSION-038: Add WRONGFLASH_ATTACK_DETECTED before emit for traceability
+          debugPrint(
+            'WRONGFLASH_ATTACK_DETECTED attackId=$attackId '
+            'midi=$bestWrongMidi conf=${bestWrongEvent.conf.toStringAsFixed(2)} '
+            'source=${bestWrongEvent.source.name} onsetState=${_lastOnsetState.name}',
+          );
           debugPrint(
             'WRONG_FLASH_EMIT mode=$mode sessionId=$_sessionId noteIdx=$dominantNoteIdx '
-            'elapsed=${elapsed.toStringAsFixed(3)} expectedMidi=$dominantExpectedMidi '
+            'attackId=$attackId elapsed=${elapsed.toStringAsFixed(3)} expectedMidi=$dominantExpectedMidi '
             'detectedMidi=$bestWrongMidi detectedPC=${bestWrongMidi % 12} '
             'conf=${bestWrongEvent.conf.toStringAsFixed(2)} source=${bestWrongEvent.source.name} '
             'minDelta=$logMinDelta expectedMidis=$activeExpectedMidis',
@@ -2931,6 +3101,7 @@ class MicEngine {
         }
       } else if (!tickOk) {
         // SESSION-031: Skip because already emitted this tick (not an error)
+        _engineSkipAlreadyEmittedTickCount++; // SESSION-038: Count skip
         if (kDebugMode) {
           final mode = isSilenceMode ? 'silence' : 'mismatch';
           debugPrint(
@@ -2940,6 +3111,12 @@ class MicEngine {
         }
       } else {
         // Log skip with reason
+        // SESSION-038: Count gated skip (could be global cooldown or per-midi dedup)
+        if (!globalCooldownOk) {
+          _engineSkipGatedCount++;
+        } else if (!perMidiDedupOk) {
+          _engineSkipPerMidiDedupCount++;
+        }
         if (kDebugMode) {
           final mode = isSilenceMode ? 'silence' : 'mismatch';
           debugPrint(
@@ -2949,13 +3126,16 @@ class MicEngine {
           );
         }
       }
-    } else if (bestWrongEvent != null && !silenceGateOk && kDebugMode) {
+    } else if (bestWrongEvent != null && !silenceGateOk) {
       // Log silence gate rejection
-      debugPrint(
-        'WRONG_FLASH_SKIP reason=silence_gate midi=$bestWrongMidi '
-        'conf=${bestWrongEvent.conf.toStringAsFixed(2)} source=${bestWrongEvent.source.name} '
-        'requiredConf=$silenceModeMinConf',
-      );
+      _engineSkipOtherCount++; // SESSION-038: Count other skip
+      if (kDebugMode) {
+        debugPrint(
+          'WRONG_FLASH_SKIP reason=silence_gate midi=$bestWrongMidi '
+          'conf=${bestWrongEvent.conf.toStringAsFixed(2)} source=${bestWrongEvent.source.name} '
+          'requiredConf=$silenceModeMinConf',
+        );
+      }
     }
 
     return decisions;

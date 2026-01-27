@@ -87,6 +87,12 @@ mixin _PracticeUiStageMixin on _PracticePageStateBase {
     final rawConfStr = rawConf != null ? rawConf.toStringAsFixed(2) : '--';
     final antStr = anticipated != null ? '$anticipated' : '--';
 
+    // SESSION-038: Add wrongFlash counters to debug overlay
+    final emitStr = '$_wrongFlashEmitCount';
+    final skipStr = '$_wrongFlashSkipGatedCount';
+    final dupStr = '$_wrongFlashDuplicateAttackCount';
+    final mismatchStr = '$_wrongFlashUiMismatchCount';
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       margin: const EdgeInsets.only(top: 4),
@@ -94,13 +100,27 @@ mixin _PracticeUiStageMixin on _PracticePageStateBase {
         color: Colors.black.withValues(alpha: 0.7),
         borderRadius: BorderRadius.circular(4),
       ),
-      child: Text(
-        'exp:$expectedStr det:$detectedStr raw:$rawStr ant:$antStr | idx:$noteIdxStr win:$inWindowStr | conf:$confStr raw:$rawConfStr',
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 9,
-          fontFamily: 'monospace',
-        ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'exp:$expectedStr det:$detectedStr raw:$rawStr ant:$antStr | idx:$noteIdxStr win:$inWindowStr | conf:$confStr raw:$rawConfStr',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 9,
+              fontFamily: 'monospace',
+            ),
+          ),
+          Text(
+            'wf: emit:$emitStr skip:$skipStr dup:$dupStr mis:$mismatchStr',
+            style: const TextStyle(
+              color: Colors.amber,
+              fontSize: 8,
+              fontFamily: 'monospace',
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -292,13 +312,37 @@ mixin _PracticeUiStageMixin on _PracticePageStateBase {
       now,
     ); // FIX: Get recently validated notes
 
-    // SESSION-033/036/036c: Log keyboard flash props for debugging
-    if (kDebugMode && (successFlashActive || wrongFlashActive || anticipatedFlashActive || detectedFlashActive)) {
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SESSION-038: Unified keyboard state - prevent blue+red on different keys
+    // If wrong flash is active on key A, and detected flash is on key B (A != B),
+    // this is a UI mismatch that should not happen. Log and suppress blue.
+    // ═══════════════════════════════════════════════════════════════════════════
+    final bool hasMismatch = wrongFlashActive &&
+        detectedFlashActive &&
+        _lastWrongNote != null &&
+        _detectedFlashMidi != null &&
+        _lastWrongNote != _detectedFlashMidi;
+
+    // If mismatch detected, suppress blue flash to only show red
+    final effectiveDetectedFlashActive = hasMismatch ? false : detectedFlashActive;
+    final effectiveDetectedFlashMidi = hasMismatch ? null : _detectedFlashMidi;
+
+    // SESSION-038: Log mismatch and increment counter (should be rare/zero after fix)
+    if (kDebugMode && hasMismatch) {
+      _wrongFlashUiMismatchCount++;
       debugPrint(
-        'FLASH_KEY_BUILD greenActive=$successFlashActive greenMidi=$_lastCorrectNote '
-        'redActive=$wrongFlashActive redMidi=$_lastWrongNote '
-        'cyanActive=$anticipatedFlashActive cyanMidi=$_anticipatedFlashMidi '
-        'blueActive=$detectedFlashActive blueMidi=$_detectedFlashMidi '
+        'WRONGFLASH_UI_MISMATCH blue=$_detectedFlashMidi red=$_lastWrongNote '
+        'suppressing_blue=true reason=unified_state count=$_wrongFlashUiMismatchCount',
+      );
+    }
+
+    // SESSION-033/036/036c/038: Log keyboard flash props for debugging
+    if (kDebugMode && (successFlashActive || wrongFlashActive || anticipatedFlashActive || effectiveDetectedFlashActive)) {
+      debugPrint(
+        'KEYBOARD_UI_APPLY activeMidi=${wrongFlashActive ? _lastWrongNote : (effectiveDetectedFlashActive ? effectiveDetectedFlashMidi : _lastCorrectNote)} '
+        'color=${wrongFlashActive ? "red" : (successFlashActive ? "green" : (effectiveDetectedFlashActive ? "blue" : "cyan"))} '
+        'source=${wrongFlashActive ? "wrong" : (successFlashActive ? "hit" : (effectiveDetectedFlashActive ? "detected" : "anticipated"))} '
+        'greenMidi=$_lastCorrectNote redMidi=$_lastWrongNote blueMidi=$effectiveDetectedFlashMidi '
         'keyRange=$_displayFirstKey-$_displayLastKey',
       );
     }
@@ -324,8 +368,9 @@ mixin _PracticeUiStageMixin on _PracticePageStateBase {
       missFlashActive: missFlashActive, // FIX BUG SESSION-005 #4
       anticipatedFlashNote: _anticipatedFlashMidi, // SESSION-036: Zero-lag CYAN
       anticipatedFlashActive: anticipatedFlashActive, // SESSION-036
-      detectedFlashNote: _detectedFlashMidi, // SESSION-036c: Real-time BLUE
-      detectedFlashActive: detectedFlashActive, // SESSION-036c
+      // SESSION-038: Use effective values to prevent blue+red mismatch
+      detectedFlashNote: effectiveDetectedFlashMidi, // SESSION-036c/038: Real-time BLUE (unified)
+      detectedFlashActive: effectiveDetectedFlashActive, // SESSION-036c/038
       noteToXFn: noteToXFn,
       showDebugLabels: showDebugLabels,
       showMidiNumbers: showMidiNumbers,

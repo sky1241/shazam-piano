@@ -91,6 +91,8 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
 
               _lastHitMidi = decision.detectedMidi;
               _lastHitAt = now;
+              // SESSION-039: Track onset of HIT to distinguish sustain vs re-attack
+              _lastHitOnsetMs = _micEngine?.lastOnsetTriggerElapsedMs ?? -10000.0;
 
               final playedEvent = PracticeController.createPlayedEvent(
                 midi: decision.detectedMidi!,
@@ -172,16 +174,36 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
             if (decision.detectedMidi != null) {
               // FIX BUG #1 SUSTAIN: Skip if same MIDI as recent hit (<500ms)
               // Cause: MicEngine génère wrongFlash sur sustain trop court
+              // SESSION-039 FIX: Allow re-attacks (new onset) even if same midi was HIT recently
+              // BEFORE: Blocked ALL wrong flashes on recent HIT midi for 500ms
+              // AFTER: Only block if SAME onset (sustain/reverb), allow NEW onset (re-attack)
+              final currentOnsetMs = _micEngine?.lastOnsetTriggerElapsedMs ?? -10000.0;
+              final isNewOnset = (currentOnsetMs - _lastHitOnsetMs).abs() > 50.0; // 50ms = different attack
+              final dtMs = now.difference(_lastHitAt!).inMilliseconds;
               if (_lastHitMidi == decision.detectedMidi &&
                   _lastHitAt != null &&
-                  now.difference(_lastHitAt!).inMilliseconds < 500) {
+                  dtMs < 500 &&
+                  !isNewOnset) { // SESSION-039: Only block sustain, not re-attacks
                 if (kDebugMode) {
                   debugPrint(
-                    'SESSION4_SKIP_SUSTAIN_WRONG: Skip wrongFlash midi=${decision.detectedMidi} (same as recent hit, dt=${now.difference(_lastHitAt!).inMilliseconds}ms)',
+                    'SESSION4_SKIP_SUSTAIN_WRONG: Skip wrongFlash midi=${decision.detectedMidi} '
+                    '(same as recent hit, dt=${dtMs}ms, sameOnset=true)',
                   );
                 }
                 // Skip red flash AND scoring, decision already handled
                 break;
+              }
+              // SESSION-039: Log when re-attack is ALLOWED (would have been blocked before)
+              if (_lastHitMidi == decision.detectedMidi &&
+                  _lastHitAt != null &&
+                  dtMs < 500 &&
+                  isNewOnset &&
+                  kDebugMode) {
+                debugPrint(
+                  'SESSION039_REATTACK_ALLOWED: wrongFlash midi=${decision.detectedMidi} '
+                  'dt=${dtMs}ms isNewOnset=true hitOnset=${_lastHitOnsetMs.toStringAsFixed(0)} '
+                  'currentOnset=${currentOnsetMs.toStringAsFixed(0)}',
+                );
               }
 
               // Anti-spam check (avoid duplicate wrongs)
@@ -250,6 +272,9 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
         _newController!.onTimeUpdate(elapsed * 1000.0); // Convert sec to ms
       }
       // ═══════════════════════════════════════════════════════════════════
+
+      // SESSION-038: Log periodic health telemetry (every 2s)
+      _logWrongFlashHealth(elapsedMs);
 
       // Update UI with MicEngine's held note (200ms hold)
       final uiMidi = _micEngine!.uiDetectedMidi;
@@ -340,20 +365,47 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
     // until the expiry time is reached (DateTime.now().isBefore(_wrongFlashUntil))
     final registerTime = DateTime.now();
 
-    // SESSION-025 FIX: Use _wrongFlashGateDuration (150ms) instead of _successFlashDuration (200ms)
-    // PREUVE: logcat session-025 shows ~50% of MicEngine WRONG_FLASH being silently blocked
-    //         because intervals (161ms, 186ms, 180ms, 151ms, 172ms) < 200ms
-    // Gate is now aligned with MicEngine (wrongFlashCooldownSec=150ms, wrongFlashDedupMs=150ms)
-    final tooSoon =
-        _lastWrongHitAt != null &&
-        registerTime.difference(_lastWrongHitAt!) < _wrongFlashGateDuration;
-    if (tooSoon && _lastWrongNote == detectedNote) {
-      // SESSION-032 FIX: Log when gate blocks (for debugging)
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SESSION-038: Per-attack collapse (replaces global cooldown)
+    // Only emit 1 wrong flash per unique onset attack. Attacks are identified by
+    // their onset trigger timestamp (from MicEngine.lastOnsetTriggerElapsedMs).
+    // ═══════════════════════════════════════════════════════════════════════════
+    final elapsedMs = (_guidanceElapsedSec() ?? 0.0) * 1000.0;
+    final currentOnsetMs = _micEngine?.lastOnsetTriggerElapsedMs ?? -10000.0;
+
+    // Check if this is the same attack as last wrong flash (collapse duplicates)
+    final sameAttack = currentOnsetMs >= 0 &&
+        _lastWrongFlashOnsetMs >= 0 &&
+        (currentOnsetMs - _lastWrongFlashOnsetMs).abs() < 50.0; // 50ms = same attack
+
+    if (sameAttack) {
+      // SESSION-038: Increment duplicate attack counter
       if (kDebugMode) {
+        _wrongFlashDuplicateAttackCount++;
         debugPrint(
-          'WRONGFLASH_REGISTER_BLOCKED midi=$detectedNote '
-          'reason=tooSoon_sameMidi lastWrongAt=${_lastWrongHitAt != null ? registerTime.difference(_lastWrongHitAt!).inMilliseconds : "null"}ms '
-          'gate=${_wrongFlashGateDuration.inMilliseconds}ms',
+          'WRONGFLASH_PULSE_SKIP attackId=${currentOnsetMs.toStringAsFixed(0)} '
+          'reason=duplicate_attack midi=$detectedNote '
+          'lastOnsetMs=${_lastWrongFlashOnsetMs.toStringAsFixed(0)}',
+        );
+      }
+      return;
+    }
+
+    // SESSION-025/038 FIX: Per-midi minimum interval to prevent stroboscope
+    // NOTE: This is per-MIDI, not global - different notes can flash independently
+    // Uses _wrongFlashGateDuration (150ms) from practice_page.dart for consistency
+    final perMidiTooSoon =
+        _lastWrongHitAt != null &&
+        _lastWrongNote == detectedNote &&
+        registerTime.difference(_lastWrongHitAt!) < _wrongFlashGateDuration;
+    if (perMidiTooSoon) {
+      // SESSION-038: Increment skip gated counter
+      if (kDebugMode) {
+        _wrongFlashSkipGatedCount++;
+        debugPrint(
+          'WRONGFLASH_PULSE_SKIP attackId=${currentOnsetMs.toStringAsFixed(0)} '
+          'reason=per_midi_throttle midi=$detectedNote '
+          'intervalMs=${registerTime.difference(_lastWrongHitAt!).inMilliseconds}',
         );
       }
       return;
@@ -363,13 +415,18 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
     _lastWrongHitAt = registerTime;
     _lastWrongNote = detectedNote;
     _wrongFlashUntil = expiryTime; // SESSION-034: Set explicit expiry
+    _lastWrongFlashOnsetMs = currentOnsetMs; // SESSION-038: Track attack ID
 
-    // SESSION-035: Log for debugging flash timing with expiry
+    // SESSION-038: Increment emit counter and log with attack ID for traceability
+    // NOTE: Do NOT mutate _detectedFlashMidi here - unification happens at render
+    // time via effectiveDetectedFlashMidi to preserve true "detected" state for debugging
     if (kDebugMode) {
+      _wrongFlashEmitCount++;
       debugPrint(
-        'WRONGFLASH_REGISTERED midi=$detectedNote '
+        'WRONGFLASH_PULSE_EMIT attackId=${currentOnsetMs.toStringAsFixed(0)} '
+        'midi=$detectedNote reason=wrong_note '
         'untilMs=${expiryTime.millisecondsSinceEpoch} '
-        'deltaCbMs=${registerTime.difference(now).inMilliseconds}',
+        'elapsedMs=${elapsedMs.toStringAsFixed(0)}',
       );
     }
 
@@ -898,4 +955,33 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
     }
     // If same midi but NOT a new pitch, don't refresh TTL - let it expire naturally
   }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SESSION-038: WrongFlash Health Telemetry (kDebugMode only)
+  // Periodic health log every 2 seconds + summary on session end
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Log WRONGFLASH_HEALTH every 2 seconds (called from _processSamples)
+  void _logWrongFlashHealth(double elapsedMs) {
+    if (!kDebugMode) return;
+
+    // Initialize session start time if not set
+    if (_wrongFlashSessionStartMs <= 0.0 && elapsedMs > 0) {
+      _wrongFlashSessionStartMs = elapsedMs;
+    }
+
+    // Log every 2 seconds
+    const healthIntervalMs = 2000.0;
+    if (elapsedMs - _wrongFlashHealthLastLogMs >= healthIntervalMs) {
+      _wrongFlashHealthLastLogMs = elapsedMs;
+      debugPrint(
+        'WRONGFLASH_HEALTH t=${elapsedMs.toStringAsFixed(0)} '
+        'emits=$_wrongFlashEmitCount '
+        'skipGated=$_wrongFlashSkipGatedCount '
+        'dup=$_wrongFlashDuplicateAttackCount '
+        'mismatch=$_wrongFlashUiMismatchCount',
+      );
+    }
+  }
+
 }

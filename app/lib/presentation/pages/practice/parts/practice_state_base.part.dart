@@ -85,6 +85,8 @@ abstract class _PracticePageStateBase extends ConsumerState<PracticePage>
   // Anti-spam note tenue: cache séparé pour hit vs wrong (FIX BUG #1)
   int? _lastHitMidi;
   DateTime? _lastHitAt;
+  // SESSION-039: Track onset of last HIT to distinguish sustain vs re-attack
+  double _lastHitOnsetMs = -10000.0;
   int? _lastWrongMidi;
   DateTime? _lastWrongAt;
 
@@ -211,6 +213,23 @@ abstract class _PracticePageStateBase extends ConsumerState<PracticePage>
   // SESSION-037: Release gating + hard cap state
   double? _detectedFlashFirstEmitMs; // When this flash first started (for hard cap)
   double _lastPitchUpdateMs = -10000.0; // Last time a NEW pitch was received (not stale)
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SESSION-038: Per-attack collapse for wrong flash
+  // Tracks the onset timestamp of the last wrong flash to collapse duplicates
+  // ══════════════════════════════════════════════════════════════════════════
+  double _lastWrongFlashOnsetMs = -10000.0; // Onset timestamp of last wrong flash
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SESSION-038: WrongFlash Health Telemetry (kDebugMode only)
+  // Counters to objectivize "ça ping pas / ça lag / ça flash pas" feedback
+  // ══════════════════════════════════════════════════════════════════════════
+  int _wrongFlashEmitCount = 0; // Red flashes actually emitted (WRONGFLASH_PULSE_EMIT)
+  int _wrongFlashSkipGatedCount = 0; // Red flashes refused for gating/cooldown
+  int _wrongFlashDuplicateAttackCount = 0; // Flashes skipped (same attack collapse)
+  int _wrongFlashUiMismatchCount = 0; // Times blue≠red mismatch detected
+  double _wrongFlashHealthLastLogMs = -10000.0; // Last WRONGFLASH_HEALTH log time
+  double _wrongFlashSessionStartMs = 0.0; // Session start monotonic time
 
   // FIX BUG SESSION-005 #4: Track MISS notes for red keyboard feedback
   DateTime? _lastMissHitAt;
