@@ -808,7 +808,6 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
         }
         _detectedFlashMidi = null;
         _detectedFlashUntilMs = null;
-        _detectedFlashFreq = null;
         _detectedFlashConf = null;
         _detectedFlashFirstEmitMs = null;
         if (mounted) setState(() {});
@@ -819,14 +818,12 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
     // Get last detected from MicEngine (high-conf, post-filter)
     final detectedMidi = _micEngine!.lastDetectedMidi;
     final detectedElapsedMs = _micEngine!.lastDetectedElapsedMs;
-    final detectedFreq = _micEngine!.lastDetectedFreq;
     final detectedConf = _micEngine!.lastDetectedConf;
     final detectedSource = _micEngine!.lastDetectedSource;
 
     // SESSION-037: Get raw detection (low-conf, pre-filter) for REAL-TIME FEEL
     final rawMidi = _micEngine!.lastRawMidi;
     final rawTSec = _micEngine!.lastRawTSec;
-    final rawFreq = _micEngine!.lastRawFreq;
     final rawConf = _micEngine!.lastRawConf;
     final rawSource = _micEngine!.lastRawSource;
 
@@ -834,7 +831,6 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
     // 1. Prefer high-conf detection if recent (within 200ms)
     // 2. Fall back to raw detection if recent (within 250ms) - SESSION-037 FIX
     int? useMidi;
-    double? useFreq;
     double? useConf;
     String useSource = 'none';
     bool isNewPitch = false;
@@ -845,7 +841,6 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
     if (highConfRecent) {
       // Use high-confidence detection
       useMidi = detectedMidi;
-      useFreq = detectedFreq;
       useConf = detectedConf;
       useSource = detectedSource;
       // Check if this is a NEW pitch update (not stale)
@@ -854,7 +849,6 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
     } else if (rawRecent) {
       // SESSION-037: Use raw detection for REAL-TIME FEEL
       useMidi = rawMidi;
-      useFreq = rawFreq;
       useConf = rawConf;
       useSource = 'raw_$rawSource';
       // Raw uses seconds, convert for comparison
@@ -876,7 +870,6 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
       // New or changed detected note - emit
       _detectedFlashMidi = useMidi;
       _detectedFlashUntilMs = nowMs + _detectedFlashTtlMs;
-      _detectedFlashFreq = useFreq;
       _detectedFlashConf = useConf;
       _detectedFlashFirstEmitMs = nowMs; // Track start for hard cap
 
@@ -904,12 +897,5 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
       }
     }
     // If same midi but NOT a new pitch, don't refresh TTL - let it expire naturally
-  }
-
-  /// Check if detected flash is active (for UI rendering)
-  bool _isDetectedFlashActive(double nowMs) {
-    return _detectedFlashMidi != null &&
-        _detectedFlashUntilMs != null &&
-        nowMs <= _detectedFlashUntilMs!;
   }
 }

@@ -207,7 +207,6 @@ abstract class _PracticePageStateBase extends ConsumerState<PracticePage>
   // ══════════════════════════════════════════════════════════════════════════
   int? _detectedFlashMidi; // Last detected MIDI from pitch detection
   double? _detectedFlashUntilMs; // Monotonic elapsedMs expiry (nowMs + 150)
-  double? _detectedFlashFreq; // Last detected frequency (for debug overlay)
   double? _detectedFlashConf; // Last detected confidence (for debug overlay)
   // SESSION-037: Release gating + hard cap state
   double? _detectedFlashFirstEmitMs; // When this flash first started (for hard cap)

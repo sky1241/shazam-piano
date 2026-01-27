@@ -612,7 +612,6 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
       // SESSION-037: Reset detected flash state
       _detectedFlashMidi = null;
       _detectedFlashUntilMs = null;
-      _detectedFlashFreq = null;
       _detectedFlashConf = null;
       _detectedFlashFirstEmitMs = null;
       _lastPitchUpdateMs = -10000.0;
