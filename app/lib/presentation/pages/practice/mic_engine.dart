@@ -613,14 +613,51 @@ class MicEngine {
   static const int _wrongFlashTripleDedupMs = 200;
 
   // ══════════════════════════════════════════════════════════════════════════
-  // SESSION-041: TTL-based dedup for wrong flash by (noteIdx, attackId)
+  // SESSION-042: Centralized TTL-based dedup for wrong flash
   // INVARIANT: Max 1 WRONG_FLASH_EMIT per (noteIdx, attackId) within TTL window.
   // Cross-tick persistent: NOT cleared per tick, only purged when expired.
-  // Key: "noteIdx_attackId" where attackId = _lastOnsetTriggerElapsedMs.toInt()
-  // Value: elapsedMs when last emitted
+  // Key: "noteIdx_attackId" where attackId = _lastOnsetTriggerElapsedMs.round()
+  // Value: nowMs (int) when last emitted
   // ══════════════════════════════════════════════════════════════════════════
-  final Map<String, double> _wrongFlashAttackIdEmitHistory = {};
-  static const double _wrongFlashAttackIdTtlMs = 1500.0; // TTL for dedup
+  final Map<String, int> _wfDedupHistory = {}; // key -> lastEmitMs (int)
+  static const int _wfDedupTtlMs = 1500; // TTL for dedup (int)
+
+  /// SESSION-042: Centralized dedup helper for wrong-flash emission.
+  /// Returns true if emission is ALLOWED, false if BLOCKED by TTL.
+  /// If allowed, automatically records the emit time in history.
+  /// If blocked, logs S42_DEDUP_SKIP and caller must bail out.
+  bool _wfDedupAllow({
+    required int noteIdx,
+    required int attackId,
+    required int nowMs,
+    required String path,
+  }) {
+    final key = '${noteIdx}_$attackId';
+
+    // Purge old entries (> 2*TTL) to prevent unbounded growth
+    if (_wfDedupHistory.length > 50) {
+      _wfDedupHistory.removeWhere((k, lastMs) => (nowMs - lastMs) > _wfDedupTtlMs * 2);
+    }
+
+    // Check if within TTL window
+    final lastEmitMs = _wfDedupHistory[key];
+    if (lastEmitMs != null) {
+      final ageMs = nowMs - lastEmitMs;
+      if (ageMs < _wfDedupTtlMs) {
+        // BLOCKED: within TTL
+        if (kDebugMode) {
+          debugPrint(
+            'S42_DEDUP_SKIP key=$key ageMs=$ageMs ttl=$_wfDedupTtlMs path=$path',
+          );
+        }
+        return false;
+      }
+    }
+
+    // ALLOWED: record emit time
+    _wfDedupHistory[key] = nowMs;
+    return true;
+  }
 
   // ══════════════════════════════════════════════════════════════════════════
   // SESSION-038: WrongFlash Engine Counters (kDebugMode only)
@@ -911,7 +948,7 @@ class MicEngine {
     _mismatchDedupHistory.clear(); // SESSION-017: Reset mismatch dedup
     _mismatchConfirmHistory.clear(); // SESSION-017: Reset mismatch confirmation
     _wrongFlashTripleDedupHistory.clear(); // SESSION-040: Reset triple dedup
-    _wrongFlashAttackIdEmitHistory.clear(); // SESSION-041: Reset TTL dedup on new session
+    _wfDedupHistory.clear(); // SESSION-042: Reset centralized TTL dedup on new session
     _recentWrongSamples.clear(); // SESSION-031: Reset wrong samples
     _wrongFlashEmittedThisTick = false; // SESSION-031: Reset per-tick flag
     // SESSION-038: Reset engine counters for new session
@@ -2378,23 +2415,16 @@ class MicEngine {
             final tripleDedupOk = lastTripleFlash == null ||
                 now.difference(lastTripleFlash).inMilliseconds > _wrongFlashTripleDedupMs;
 
-            // SESSION-041: TTL-based attackId dedup - cross-tick persistent
-            final attackId = _lastOnsetTriggerElapsedMs.toStringAsFixed(0);
-            final attackKey = '${idx}_$attackId';
-            final lastAttackEmitMs = _wrongFlashAttackIdEmitHistory[attackKey];
-            final attackIdDedupOk = lastAttackEmitMs == null ||
-                (elapsedMs - lastAttackEmitMs) > _wrongFlashAttackIdTtlMs;
-
-            // SESSION-041: Skip with log if TTL dedup fails
-            if (!attackIdDedupOk) {
-              if (kDebugMode) {
-                final ageMs = elapsedMs - lastAttackEmitMs;
-                debugPrint(
-                  'S41_DEDUP_SKIP key=$attackKey ageMs=${ageMs.toStringAsFixed(0)} '
-                  'ttl=$_wrongFlashAttackIdTtlMs trigger=NO_EVENTS_FALLBACK',
-                );
-              }
-              continue; // STRICT: Skip this noteIdx entirely
+            // SESSION-042: Centralized TTL dedup - MUST pass before any emission
+            final attackIdInt = _lastOnsetTriggerElapsedMs.round();
+            final nowMsInt = (elapsed * 1000).round();
+            if (!_wfDedupAllow(
+              noteIdx: idx,
+              attackId: attackIdInt,
+              nowMs: nowMsInt,
+              path: 'NO_EVENTS_FALLBACK',
+            )) {
+              continue; // STRICT: Bail out, no fall-through
             }
 
             if (globalCooldownOk && perMidiDedupOk && gracePeriodOk && tripleDedupOk) {
@@ -2410,35 +2440,16 @@ class MicEngine {
               _lastWrongFlashAt = now;
               _lastWrongFlashByMidi[bestWrongSample.midi] = now;
               _wrongFlashTripleDedupHistory[tripleKey] = now; // SESSION-040
-              _wrongFlashAttackIdEmitHistory[attackKey] = elapsedMs; // SESSION-041: Record emit time
+              // SESSION-042: emit time already recorded by _wfDedupAllow
               _wrongFlashEmittedThisTick = true;
               _engineEmitCount++; // SESSION-038: Count engine emit
 
               if (kDebugMode) {
-                final sampleAgeMs = elapsedMs - bestWrongSample.tMs;
-                // SESSION-032/038 FIX: Unified WRONG_FLASH_EMIT log for fallback path
-                // PREUVE session-032: NO_EVENTS_FALLBACK_USED logged but no EMIT log
-                // This caused confusion about whether decision was actually added
+                // SESSION-042: Unified WRONG_FLASH_EMIT log with key for proof
+                final key = '${idx}_$attackIdInt';
                 debugPrint(
-                  'WRONGFLASH_ATTACK_DETECTED attackId=$attackId '
-                  'midi=${bestWrongSample.midi} conf=${bestWrongSample.conf.toStringAsFixed(2)} '
-                  'source=${bestWrongSample.source.name} trigger=NO_EVENTS_FALLBACK',
-                );
-                debugPrint(
-                  'WRONG_FLASH_EMIT sessionId=$_sessionId noteIdx=$idx attackId=$attackId '
-                  'elapsed=${elapsed.toStringAsFixed(3)} '
-                  'expectedMidi=${note.pitch} expectedPC=$expectedPitchClass '
-                  'detectedMidi=${bestWrongSample.midi} detectedPC=${bestWrongSample.midi % 12} '
-                  'conf=${bestWrongSample.conf.toStringAsFixed(2)} '
-                  'source=${bestWrongSample.source.name} '
-                  'trigger=NO_EVENTS_FALLBACK',
-                );
-                debugPrint(
-                  'NO_EVENTS_FALLBACK_USED noteIdx=$idx expectedMidi=${note.pitch} '
-                  'flashedMidi=${bestWrongSample.midi} sampleAgeMs=${sampleAgeMs.toStringAsFixed(0)} '
-                  'conf=${bestWrongSample.conf.toStringAsFixed(2)} source=${bestWrongSample.source.name} '
-                  'isTriggerOrFailsafe=${bestWrongSample.isTriggerOrFailsafe} '
-                  'rms=${bestWrongSample.rms.toStringAsFixed(3)} dRms=${bestWrongSample.dRms.toStringAsFixed(3)}',
+                  'WRONG_FLASH_EMIT key=$key attackId=$attackIdInt nowMs=$nowMsInt '
+                  'noteIdx=$idx midi=${bestWrongSample.midi} path=NO_EVENTS_FALLBACK',
                 );
               }
             } else if (lastTripleFlash != null && !tripleDedupOk && kDebugMode) {
@@ -2512,24 +2523,16 @@ class MicEngine {
             final tripleDedupOk = lastTripleFlash == null ||
                 now.difference(lastTripleFlash).inMilliseconds > _wrongFlashTripleDedupMs;
 
-            // SESSION-041: TTL-based attackId dedup - cross-tick persistent
-            final attackId = _lastOnsetTriggerElapsedMs.toStringAsFixed(0);
-            final attackKey = '${idx}_$attackId';
-            final nowMs = elapsed * 1000.0;
-            final lastAttackEmitMs = _wrongFlashAttackIdEmitHistory[attackKey];
-            final attackIdDedupOk = lastAttackEmitMs == null ||
-                (nowMs - lastAttackEmitMs) > _wrongFlashAttackIdTtlMs;
-
-            // SESSION-041: Skip with log if TTL dedup fails
-            if (!attackIdDedupOk) {
-              if (kDebugMode) {
-                final ageMs = nowMs - lastAttackEmitMs;
-                debugPrint(
-                  'S41_DEDUP_SKIP key=$attackKey ageMs=${ageMs.toStringAsFixed(0)} '
-                  'ttl=$_wrongFlashAttackIdTtlMs trigger=OCTAVE_ERROR',
-                );
-              }
-              continue; // STRICT: Skip this noteIdx entirely
+            // SESSION-042: Centralized TTL dedup - MUST pass before any emission
+            final attackIdInt = _lastOnsetTriggerElapsedMs.round();
+            final nowMsInt = (elapsed * 1000).round();
+            if (!_wfDedupAllow(
+              noteIdx: idx,
+              attackId: attackIdInt,
+              nowMs: nowMsInt,
+              path: 'OCTAVE_ERROR',
+            )) {
+              continue; // STRICT: Bail out, no fall-through
             }
 
             if (globalCooldownOk &&
@@ -2552,29 +2555,18 @@ class MicEngine {
               _mismatchDedupHistory[dedupKey] = now;
               _lastWrongFlashByMidi[bestEvent.midi] = now;
               _wrongFlashTripleDedupHistory[tripleKey] = now; // SESSION-040
-              _wrongFlashAttackIdEmitHistory[attackKey] = nowMs; // SESSION-041: Record emit time
+              // SESSION-042: emit time already recorded by _wfDedupAllow
               if (kWrongFlashRestoreEnabled) {
                 _wrongFlashEmittedThisTick = true;
               }
               _engineEmitCount++; // SESSION-038: Count engine emit
 
               if (kDebugMode) {
-                final octaveDistance = ((bestEvent.midi - note.pitch) / 12)
-                    .round();
+                // SESSION-042: Unified WRONG_FLASH_EMIT log with key for proof
+                final key = '${idx}_$attackIdInt';
                 debugPrint(
-                  'WRONGFLASH_ATTACK_DETECTED attackId=$attackId '
-                  'midi=${bestEvent.midi} conf=${bestEvent.conf.toStringAsFixed(2)} '
-                  'source=${bestEvent.source.name} trigger=OCTAVE_ERROR',
-                );
-                debugPrint(
-                  'WRONG_FLASH_EMIT sessionId=$_sessionId noteIdx=$idx attackId=$attackId '
-                  'elapsed=${elapsed.toStringAsFixed(3)} '
-                  'expectedMidi=${note.pitch} expectedPC=$expectedPitchClass '
-                  'detectedMidi=${bestEvent.midi} detectedPC=$detectedPC '
-                  'conf=${bestEvent.conf.toStringAsFixed(2)} '
-                  'source=${bestEvent.source.name} distance=${bestDistance.toStringAsFixed(1)} '
-                  'octaveOffset=$octaveDistance '
-                  'trigger=OCTAVE_ERROR',
+                  'WRONG_FLASH_EMIT key=$key attackId=$attackIdInt nowMs=$nowMsInt '
+                  'noteIdx=$idx midi=${bestEvent.midi} path=OCTAVE_ERROR',
                 );
               }
             } else if (!tripleDedupOk && kDebugMode) {
@@ -2724,24 +2716,16 @@ class MicEngine {
               final tripleDedupOk = lastTripleFlash == null ||
                   now.difference(lastTripleFlash).inMilliseconds > _wrongFlashTripleDedupMs;
 
-              // SESSION-041: TTL-based attackId dedup - cross-tick persistent
-              final attackId = _lastOnsetTriggerElapsedMs.toStringAsFixed(0);
-              final attackKey = '${idx}_$attackId';
-              final nowMs = elapsed * 1000.0;
-              final lastAttackEmitMs = _wrongFlashAttackIdEmitHistory[attackKey];
-              final attackIdDedupOk = lastAttackEmitMs == null ||
-                  (nowMs - lastAttackEmitMs) > _wrongFlashAttackIdTtlMs;
-
-              // SESSION-041: Skip with log if TTL dedup fails
-              if (!attackIdDedupOk) {
-                if (kDebugMode) {
-                  final ageMs = nowMs - lastAttackEmitMs;
-                  debugPrint(
-                    'S41_DEDUP_SKIP key=$attackKey ageMs=${ageMs.toStringAsFixed(0)} '
-                    'ttl=$_wrongFlashAttackIdTtlMs trigger=HIT_DECISION_REJECT_MISMATCH',
-                  );
-                }
-                continue; // STRICT: Skip this noteIdx entirely
+              // SESSION-042: Centralized TTL dedup - MUST pass before any emission
+              final attackIdInt = _lastOnsetTriggerElapsedMs.round();
+              final nowMsInt = (elapsed * 1000).round();
+              if (!_wfDedupAllow(
+                noteIdx: idx,
+                attackId: attackIdInt,
+                nowMs: nowMsInt,
+                path: 'HIT_REJECT_MISMATCH',
+              )) {
+                continue; // STRICT: Bail out, no fall-through
               }
 
               if (globalCooldownOk &&
@@ -2765,7 +2749,7 @@ class MicEngine {
                 // SESSION-020 FIX: Also update per-midi dedup to prevent spam from post-match scan
                 _lastWrongFlashByMidi[mismatchEvent.midi] = now;
                 _wrongFlashTripleDedupHistory[tripleKey] = now; // SESSION-040
-                _wrongFlashAttackIdEmitHistory[attackKey] = nowMs; // SESSION-041: Record emit time
+                // SESSION-042: emit time already recorded by _wfDedupAllow
                 _mismatchConfirmHistory.remove(confirmKey);
                 if (kWrongFlashRestoreEnabled) {
                   _wrongFlashEmittedThisTick = true;
@@ -2773,19 +2757,11 @@ class MicEngine {
                 _engineEmitCount++; // SESSION-038: Count engine emit
 
                 if (kDebugMode) {
+                  // SESSION-042: Unified WRONG_FLASH_EMIT log with key for proof
+                  final key = '${idx}_$attackIdInt';
                   debugPrint(
-                    'WRONGFLASH_ATTACK_DETECTED attackId=$attackId '
-                    'midi=${mismatchEvent.midi} conf=${mismatchEvent.conf.toStringAsFixed(2)} '
-                    'source=${mismatchEvent.source.name} trigger=HIT_DECISION_REJECT_MISMATCH',
-                  );
-                  debugPrint(
-                    'WRONG_FLASH_EMIT sessionId=$_sessionId noteIdx=$idx attackId=$attackId '
-                    'elapsed=${elapsed.toStringAsFixed(3)} '
-                    'expectedMidi=${note.pitch} expectedPC=$expectedPitchClass '
-                    'detectedMidi=${mismatchEvent.midi} detectedPC=$detectedPC '
-                    'conf=${mismatchEvent.conf.toStringAsFixed(2)} '
-                    'source=${mismatchEvent.source.name} '
-                    'trigger=HIT_DECISION_REJECT_MISMATCH',
+                    'WRONG_FLASH_EMIT key=$key attackId=$attackIdInt nowMs=$nowMsInt '
+                    'noteIdx=$idx midi=${mismatchEvent.midi} path=HIT_REJECT_MISMATCH',
                   );
                 }
               } else if (!tripleDedupOk && kDebugMode) {
@@ -3144,51 +3120,48 @@ class MicEngine {
           }
         }
 
-        decisions.add(
-          NoteDecision(
-            type: DecisionType.wrongFlash,
-            // SESSION-018: noteIndex/expectedMidi are null in silence mode
-            noteIndex: dominantNoteIdx,
-            expectedMidi: dominantExpectedMidi,
-            detectedMidi: bestWrongMidi,
-            confidence: bestWrongEvent.conf,
-          ),
-        );
-        _lastWrongFlashAt = now;
-        _lastWrongFlashByMidi[bestWrongMidi] =
-            now; // SESSION-014: Track per-midi
-        _wrongCandidateHistory.remove(
-          bestWrongMidi,
-        ); // SESSION-015: Clear confirmation history
-        if (kWrongFlashRestoreEnabled) {
-          _wrongFlashEmittedThisTick = true;
-        }
-        _engineEmitCount++; // SESSION-038: Count engine emit
-
-        if (kDebugMode) {
-          // SESSION-018/038: Unified log with mode indicator and attack ID
-          final mode = isSilenceMode ? 'silence' : 'mismatch';
-          final attackId = _lastOnsetTriggerElapsedMs.toStringAsFixed(0);
-          int logMinDelta = isSilenceMode ? -1 : 999;
-          if (!isSilenceMode) {
-            for (final expectedMidi in activeExpectedMidis) {
-              final delta = (bestWrongMidi - expectedMidi).abs();
-              if (delta < logMinDelta) logMinDelta = delta;
-            }
+        // SESSION-042: Centralized TTL dedup - MUST pass before any emission
+        // Use -1 for noteIdx in silence mode (no dominant note)
+        final attackIdInt = _lastOnsetTriggerElapsedMs.round();
+        final nowMsInt = (elapsed * 1000).round();
+        final pathName = isSilenceMode ? 'SILENCE_MODE' : 'POST_MATCH_MISMATCH';
+        if (!_wfDedupAllow(
+          noteIdx: dominantNoteIdx ?? -1,
+          attackId: attackIdInt,
+          nowMs: nowMsInt,
+          path: pathName,
+        )) {
+          // STRICT: Bail out, skip this emission entirely
+        } else {
+          decisions.add(
+            NoteDecision(
+              type: DecisionType.wrongFlash,
+              // SESSION-018: noteIndex/expectedMidi are null in silence mode
+              noteIndex: dominantNoteIdx,
+              expectedMidi: dominantExpectedMidi,
+              detectedMidi: bestWrongMidi,
+              confidence: bestWrongEvent.conf,
+            ),
+          );
+          _lastWrongFlashAt = now;
+          _lastWrongFlashByMidi[bestWrongMidi] =
+              now; // SESSION-014: Track per-midi
+          _wrongCandidateHistory.remove(
+            bestWrongMidi,
+          ); // SESSION-015: Clear confirmation history
+          if (kWrongFlashRestoreEnabled) {
+            _wrongFlashEmittedThisTick = true;
           }
-          // SESSION-038: Add WRONGFLASH_ATTACK_DETECTED before emit for traceability
-          debugPrint(
-            'WRONGFLASH_ATTACK_DETECTED attackId=$attackId '
-            'midi=$bestWrongMidi conf=${bestWrongEvent.conf.toStringAsFixed(2)} '
-            'source=${bestWrongEvent.source.name} onsetState=${_lastOnsetState.name}',
-          );
-          debugPrint(
-            'WRONG_FLASH_EMIT mode=$mode sessionId=$_sessionId noteIdx=$dominantNoteIdx '
-            'attackId=$attackId elapsed=${elapsed.toStringAsFixed(3)} expectedMidi=$dominantExpectedMidi '
-            'detectedMidi=$bestWrongMidi detectedPC=${bestWrongMidi % 12} '
-            'conf=${bestWrongEvent.conf.toStringAsFixed(2)} source=${bestWrongEvent.source.name} '
-            'minDelta=$logMinDelta expectedMidis=$activeExpectedMidis',
-          );
+          _engineEmitCount++; // SESSION-038: Count engine emit
+
+          if (kDebugMode) {
+            // SESSION-042: Unified WRONG_FLASH_EMIT log with key for proof
+            final key = '${dominantNoteIdx ?? -1}_$attackIdInt';
+            debugPrint(
+              'WRONG_FLASH_EMIT key=$key attackId=$attackIdInt nowMs=$nowMsInt '
+              'noteIdx=${dominantNoteIdx ?? -1} midi=$bestWrongMidi path=$pathName',
+            );
+          }
         }
       } else if (!tickOk) {
         // SESSION-031: Skip because already emitted this tick (not an error)
