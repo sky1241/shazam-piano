@@ -221,6 +221,13 @@ abstract class _PracticePageStateBase extends ConsumerState<PracticePage>
   double _lastWrongFlashOnsetMs = -10000.0; // Onset timestamp of last wrong flash
 
   // ══════════════════════════════════════════════════════════════════════════
+  // SESSION-041: Stable dedup for wrong-flash by (noteIdx, attackId) with TTL
+  // Prevents multi-rouge on same attack cross-ticks. Key = "noteIdx_attackId"
+  // Value = elapsedMs of last emit. TTL defined in _PracticeNotesLogicMixin.
+  // ══════════════════════════════════════════════════════════════════════════
+  final Map<String, double> _wrongFlashDedupMap = {}; // key -> lastEmitElapsedMs
+
+  // ══════════════════════════════════════════════════════════════════════════
   // SESSION-038: WrongFlash Health Telemetry (kDebugMode only)
   // Counters to objectivize "ça ping pas / ça lag / ça flash pas" feedback
   // ══════════════════════════════════════════════════════════════════════════

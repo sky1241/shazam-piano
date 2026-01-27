@@ -8,6 +8,9 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
   bool _isSessionActive(int sessionId);
   void _logMicDebug(DateTime now);
 
+  // SESSION-041: TTL constant for wrong-flash dedup (1500ms)
+  static const double _wrongFlashDedupTtlMs = 1500.0;
+
   void _processSamples(
     List<double> samples, {
     required DateTime now,
@@ -172,39 +175,69 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
             // PREUVE: logcat shows NO_EVENTS_FALLBACK_USED but no red flash visible
             // NOW: Red flash triggered for ANY wrongFlash decision with valid midi
             if (decision.detectedMidi != null) {
-              // FIX BUG #1 SUSTAIN: Skip if same MIDI as recent hit (<500ms)
-              // Cause: MicEngine génère wrongFlash sur sustain trop court
-              // SESSION-039 FIX: Allow re-attacks (new onset) even if same midi was HIT recently
-              // BEFORE: Blocked ALL wrong flashes on recent HIT midi for 500ms
-              // AFTER: Only block if SAME onset (sustain/reverb), allow NEW onset (re-attack)
-              final currentOnsetMs = _micEngine?.lastOnsetTriggerElapsedMs ?? -10000.0;
-              final isNewOnset = (currentOnsetMs - _lastHitOnsetMs).abs() > 50.0; // 50ms = different attack
-              final dtMs = now.difference(_lastHitAt!).inMilliseconds;
-              if (_lastHitMidi == decision.detectedMidi &&
-                  _lastHitAt != null &&
-                  dtMs < 500 &&
-                  !isNewOnset) { // SESSION-039: Only block sustain, not re-attacks
+              // ═══════════════════════════════════════════════════════════════
+              // SESSION-041 FIX: Stable dedup by (noteIdx, attackId) with TTL
+              // INVARIANT: Max 1 rouge par clé (noteIdx_attackId) dans fenêtre TTL
+              // Applies BEFORE any other check to guarantee dedup cross-ticks
+              // ═══════════════════════════════════════════════════════════════
+              final attackId = _micEngine?.lastOnsetTriggerElapsedMs ?? -10000.0;
+              final noteIdx = decision.noteIndex ?? -1;
+              final dedupKey = '${noteIdx}_${attackId.toInt()}';
+
+              // Purge expired entries (TTL cleanup)
+              _wrongFlashDedupMap.removeWhere((key, lastEmitMs) =>
+                  (elapsedMs - lastEmitMs) > _wrongFlashDedupTtlMs);
+
+              // Check if already emitted for this key
+              final lastEmitForKey = _wrongFlashDedupMap[dedupKey];
+              if (lastEmitForKey != null &&
+                  (elapsedMs - lastEmitForKey) < _wrongFlashDedupTtlMs) {
                 if (kDebugMode) {
                   debugPrint(
-                    'SESSION4_SKIP_SUSTAIN_WRONG: Skip wrongFlash midi=${decision.detectedMidi} '
-                    '(same as recent hit, dt=${dtMs}ms, sameOnset=true)',
+                    'S41_DEDUP_SKIP key=$dedupKey elapsedMs=${elapsedMs.toStringAsFixed(0)} '
+                    'lastEmit=${lastEmitForKey.toStringAsFixed(0)} ttl=$_wrongFlashDedupTtlMs',
                   );
                 }
-                // Skip red flash AND scoring, decision already handled
-                break;
+                break; // STRICT: Skip ALL processing for this decision
               }
-              // SESSION-039: Log when re-attack is ALLOWED (would have been blocked before)
-              if (_lastHitMidi == decision.detectedMidi &&
-                  _lastHitAt != null &&
-                  dtMs < 500 &&
-                  isNewOnset &&
-                  kDebugMode) {
-                debugPrint(
-                  'SESSION039_REATTACK_ALLOWED: wrongFlash midi=${decision.detectedMidi} '
-                  'dt=${dtMs}ms isNewOnset=true hitOnset=${_lastHitOnsetMs.toStringAsFixed(0)} '
-                  'currentOnset=${currentOnsetMs.toStringAsFixed(0)}',
-                );
+
+              // ═══════════════════════════════════════════════════════════════
+              // SESSION-041 FIX: Sustain check ONLY if _lastHitAt exists
+              // CAUSE: Crash "Null check operator used on a null value" when
+              // _lastHitAt is null (no HIT yet). Guard strict: skip block entirely.
+              // ═══════════════════════════════════════════════════════════════
+              if (_lastHitAt != null) {
+                // FIX BUG #1 SUSTAIN: Skip if same MIDI as recent hit (<500ms)
+                // SESSION-039: Only block sustain, not re-attacks (new onset)
+                final dtMs = now.difference(_lastHitAt!).inMilliseconds;
+                final currentOnsetMs = _micEngine?.lastOnsetTriggerElapsedMs ?? -10000.0;
+                final isNewOnset = (currentOnsetMs - _lastHitOnsetMs).abs() > 50.0;
+
+                if (_lastHitMidi == decision.detectedMidi &&
+                    dtMs < 500 &&
+                    !isNewOnset) {
+                  if (kDebugMode) {
+                    debugPrint(
+                      'SESSION4_SKIP_SUSTAIN_WRONG: Skip wrongFlash midi=${decision.detectedMidi} '
+                      '(same as recent hit, dt=${dtMs}ms, sameOnset=true)',
+                    );
+                  }
+                  break; // Skip red flash AND scoring
+                }
+
+                // SESSION-039: Log when re-attack is ALLOWED
+                if (_lastHitMidi == decision.detectedMidi &&
+                    dtMs < 500 &&
+                    isNewOnset &&
+                    kDebugMode) {
+                  debugPrint(
+                    'SESSION039_REATTACK_ALLOWED: wrongFlash midi=${decision.detectedMidi} '
+                    'dt=${dtMs}ms isNewOnset=true hitOnset=${_lastHitOnsetMs.toStringAsFixed(0)} '
+                    'currentOnset=${currentOnsetMs.toStringAsFixed(0)}',
+                  );
+                }
               }
+              // If _lastHitAt == null: no previous HIT, skip sustain check entirely
 
               // Anti-spam check (avoid duplicate wrongs)
               if (_lastWrongMidi == decision.detectedMidi &&
@@ -221,6 +254,9 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
 
               _lastWrongMidi = decision.detectedMidi;
               _lastWrongAt = now;
+
+              // SESSION-041: Record emit in dedup map (after all guards passed)
+              _wrongFlashDedupMap[dedupKey] = elapsedMs;
 
               // SESSION-036: Confirm anticipated flash as wrong (if active on this noteIdx)
               if (_anticipatedFlashNoteIdx == decision.noteIndex) {

@@ -612,10 +612,15 @@ class MicEngine {
   final Map<String, DateTime> _wrongFlashTripleDedupHistory = {};
   static const int _wrongFlashTripleDedupMs = 200;
 
-  // SESSION-040 ADDENDUM: Per-(noteIdx, attackId) dedup - stricter than triple
-  // Same attack on same noteIdx can only emit once, regardless of source change.
-  // Key: "noteIdx_attackId" where attackId = _lastOnsetTriggerElapsedMs rounded
-  final Set<String> _wrongFlashAttackIdEmitted = {};
+  // ══════════════════════════════════════════════════════════════════════════
+  // SESSION-041: TTL-based dedup for wrong flash by (noteIdx, attackId)
+  // INVARIANT: Max 1 WRONG_FLASH_EMIT per (noteIdx, attackId) within TTL window.
+  // Cross-tick persistent: NOT cleared per tick, only purged when expired.
+  // Key: "noteIdx_attackId" where attackId = _lastOnsetTriggerElapsedMs.toInt()
+  // Value: elapsedMs when last emitted
+  // ══════════════════════════════════════════════════════════════════════════
+  final Map<String, double> _wrongFlashAttackIdEmitHistory = {};
+  static const double _wrongFlashAttackIdTtlMs = 1500.0; // TTL for dedup
 
   // ══════════════════════════════════════════════════════════════════════════
   // SESSION-038: WrongFlash Engine Counters (kDebugMode only)
@@ -906,7 +911,7 @@ class MicEngine {
     _mismatchDedupHistory.clear(); // SESSION-017: Reset mismatch dedup
     _mismatchConfirmHistory.clear(); // SESSION-017: Reset mismatch confirmation
     _wrongFlashTripleDedupHistory.clear(); // SESSION-040: Reset triple dedup
-    _wrongFlashAttackIdEmitted.clear(); // SESSION-040 ADDENDUM: Reset attackId dedup
+    _wrongFlashAttackIdEmitHistory.clear(); // SESSION-041: Reset TTL dedup on new session
     _recentWrongSamples.clear(); // SESSION-031: Reset wrong samples
     _wrongFlashEmittedThisTick = false; // SESSION-031: Reset per-tick flag
     // SESSION-038: Reset engine counters for new session
@@ -2373,12 +2378,26 @@ class MicEngine {
             final tripleDedupOk = lastTripleFlash == null ||
                 now.difference(lastTripleFlash).inMilliseconds > _wrongFlashTripleDedupMs;
 
-            // SESSION-040 ADDENDUM: attackId dedup - same attack on same noteIdx = skip
+            // SESSION-041: TTL-based attackId dedup - cross-tick persistent
             final attackId = _lastOnsetTriggerElapsedMs.toStringAsFixed(0);
             final attackKey = '${idx}_$attackId';
-            final attackIdDedupOk = !_wrongFlashAttackIdEmitted.contains(attackKey);
+            final lastAttackEmitMs = _wrongFlashAttackIdEmitHistory[attackKey];
+            final attackIdDedupOk = lastAttackEmitMs == null ||
+                (elapsedMs - lastAttackEmitMs) > _wrongFlashAttackIdTtlMs;
 
-            if (globalCooldownOk && perMidiDedupOk && gracePeriodOk && tripleDedupOk && attackIdDedupOk) {
+            // SESSION-041: Skip with log if TTL dedup fails
+            if (!attackIdDedupOk) {
+              if (kDebugMode) {
+                final ageMs = elapsedMs - lastAttackEmitMs;
+                debugPrint(
+                  'S41_DEDUP_SKIP key=$attackKey ageMs=${ageMs.toStringAsFixed(0)} '
+                  'ttl=$_wrongFlashAttackIdTtlMs trigger=NO_EVENTS_FALLBACK',
+                );
+              }
+              continue; // STRICT: Skip this noteIdx entirely
+            }
+
+            if (globalCooldownOk && perMidiDedupOk && gracePeriodOk && tripleDedupOk) {
               decisions.add(
                 NoteDecision(
                   type: DecisionType.wrongFlash,
@@ -2391,7 +2410,7 @@ class MicEngine {
               _lastWrongFlashAt = now;
               _lastWrongFlashByMidi[bestWrongSample.midi] = now;
               _wrongFlashTripleDedupHistory[tripleKey] = now; // SESSION-040
-              _wrongFlashAttackIdEmitted.add(attackKey); // SESSION-040 ADDENDUM
+              _wrongFlashAttackIdEmitHistory[attackKey] = elapsedMs; // SESSION-041: Record emit time
               _wrongFlashEmittedThisTick = true;
               _engineEmitCount++; // SESSION-038: Count engine emit
 
@@ -2422,10 +2441,6 @@ class MicEngine {
                   'rms=${bestWrongSample.rms.toStringAsFixed(3)} dRms=${bestWrongSample.dRms.toStringAsFixed(3)}',
                 );
               }
-            } else if (!attackIdDedupOk && kDebugMode) {
-              debugPrint(
-                'WHY_SKIPPED_DUP_KEY key=$attackKey reason=same_attackId trigger=NO_EVENTS_FALLBACK',
-              );
             } else if (lastTripleFlash != null && !tripleDedupOk && kDebugMode) {
               final dtSkipMs = now.difference(lastTripleFlash).inMilliseconds;
               debugPrint(
@@ -2497,18 +2512,32 @@ class MicEngine {
             final tripleDedupOk = lastTripleFlash == null ||
                 now.difference(lastTripleFlash).inMilliseconds > _wrongFlashTripleDedupMs;
 
-            // SESSION-040 ADDENDUM: attackId dedup - same attack on same noteIdx = skip
+            // SESSION-041: TTL-based attackId dedup - cross-tick persistent
             final attackId = _lastOnsetTriggerElapsedMs.toStringAsFixed(0);
             final attackKey = '${idx}_$attackId';
-            final attackIdDedupOk = !_wrongFlashAttackIdEmitted.contains(attackKey);
+            final nowMs = elapsed * 1000.0;
+            final lastAttackEmitMs = _wrongFlashAttackIdEmitHistory[attackKey];
+            final attackIdDedupOk = lastAttackEmitMs == null ||
+                (nowMs - lastAttackEmitMs) > _wrongFlashAttackIdTtlMs;
+
+            // SESSION-041: Skip with log if TTL dedup fails
+            if (!attackIdDedupOk) {
+              if (kDebugMode) {
+                final ageMs = nowMs - lastAttackEmitMs;
+                debugPrint(
+                  'S41_DEDUP_SKIP key=$attackKey ageMs=${ageMs.toStringAsFixed(0)} '
+                  'ttl=$_wrongFlashAttackIdTtlMs trigger=OCTAVE_ERROR',
+                );
+              }
+              continue; // STRICT: Skip this noteIdx entirely
+            }
 
             if (globalCooldownOk &&
                 perNoteDedupOk &&
                 confOk &&
                 sustainSuppressOk &&
                 tickOk &&
-                tripleDedupOk &&
-                attackIdDedupOk) {
+                tripleDedupOk) {
               // All gates passed - emit WRONG_FLASH for octave error
               decisions.add(
                 NoteDecision(
@@ -2523,7 +2552,7 @@ class MicEngine {
               _mismatchDedupHistory[dedupKey] = now;
               _lastWrongFlashByMidi[bestEvent.midi] = now;
               _wrongFlashTripleDedupHistory[tripleKey] = now; // SESSION-040
-              _wrongFlashAttackIdEmitted.add(attackKey); // SESSION-040 ADDENDUM
+              _wrongFlashAttackIdEmitHistory[attackKey] = nowMs; // SESSION-041: Record emit time
               if (kWrongFlashRestoreEnabled) {
                 _wrongFlashEmittedThisTick = true;
               }
@@ -2548,8 +2577,6 @@ class MicEngine {
                   'trigger=OCTAVE_ERROR',
                 );
               }
-            } else if (!attackIdDedupOk && kDebugMode) {
-              debugPrint('WHY_SKIPPED_DUP_KEY key=$attackKey reason=same_attackId trigger=OCTAVE_ERROR');
             } else if (!tripleDedupOk && kDebugMode) {
               debugPrint('WHY_SKIPPED_DUP_KEY key=$tripleKey trigger=OCTAVE_ERROR');
             } else if (!sustainSuppressOk) {
@@ -2697,18 +2724,32 @@ class MicEngine {
               final tripleDedupOk = lastTripleFlash == null ||
                   now.difference(lastTripleFlash).inMilliseconds > _wrongFlashTripleDedupMs;
 
-              // SESSION-040 ADDENDUM: attackId dedup - same attack on same noteIdx = skip
+              // SESSION-041: TTL-based attackId dedup - cross-tick persistent
               final attackId = _lastOnsetTriggerElapsedMs.toStringAsFixed(0);
               final attackKey = '${idx}_$attackId';
-              final attackIdDedupOk = !_wrongFlashAttackIdEmitted.contains(attackKey);
+              final nowMs = elapsed * 1000.0;
+              final lastAttackEmitMs = _wrongFlashAttackIdEmitHistory[attackKey];
+              final attackIdDedupOk = lastAttackEmitMs == null ||
+                  (nowMs - lastAttackEmitMs) > _wrongFlashAttackIdTtlMs;
+
+              // SESSION-041: Skip with log if TTL dedup fails
+              if (!attackIdDedupOk) {
+                if (kDebugMode) {
+                  final ageMs = nowMs - lastAttackEmitMs;
+                  debugPrint(
+                    'S41_DEDUP_SKIP key=$attackKey ageMs=${ageMs.toStringAsFixed(0)} '
+                    'ttl=$_wrongFlashAttackIdTtlMs trigger=HIT_DECISION_REJECT_MISMATCH',
+                  );
+                }
+                continue; // STRICT: Skip this noteIdx entirely
+              }
 
               if (globalCooldownOk &&
                   perNoteDedupOk &&
                   confirmationOk &&
                   sustainSuppressOk &&
                   tickOk &&
-                  tripleDedupOk &&
-                  attackIdDedupOk) {
+                  tripleDedupOk) {
                 // All gates passed - emit WRONG_FLASH
                 decisions.add(
                   NoteDecision(
@@ -2724,7 +2765,7 @@ class MicEngine {
                 // SESSION-020 FIX: Also update per-midi dedup to prevent spam from post-match scan
                 _lastWrongFlashByMidi[mismatchEvent.midi] = now;
                 _wrongFlashTripleDedupHistory[tripleKey] = now; // SESSION-040
-                _wrongFlashAttackIdEmitted.add(attackKey); // SESSION-040 ADDENDUM
+                _wrongFlashAttackIdEmitHistory[attackKey] = nowMs; // SESSION-041: Record emit time
                 _mismatchConfirmHistory.remove(confirmKey);
                 if (kWrongFlashRestoreEnabled) {
                   _wrongFlashEmittedThisTick = true;
@@ -2747,8 +2788,6 @@ class MicEngine {
                     'trigger=HIT_DECISION_REJECT_MISMATCH',
                   );
                 }
-              } else if (!attackIdDedupOk && kDebugMode) {
-                debugPrint('WHY_SKIPPED_DUP_KEY key=$attackKey reason=same_attackId trigger=HIT_DECISION_REJECT_MISMATCH');
               } else if (!tripleDedupOk && kDebugMode) {
                 debugPrint('WHY_SKIPPED_DUP_KEY key=$tripleKey trigger=HIT_DECISION_REJECT_MISMATCH');
               } else if (!sustainSuppressOk) {
