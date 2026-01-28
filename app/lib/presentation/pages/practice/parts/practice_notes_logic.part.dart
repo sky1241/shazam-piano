@@ -849,8 +849,9 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
   // Shows what the mic actually hears, independent of scoring/matching
   // ══════════════════════════════════════════════════════════════════════════
 
-  /// TTL for detected flash (150ms - short to avoid lingering)
-  static const double _detectedFlashTtlMs = 150.0;
+  /// TTL for detected flash - SESSION-045: Increased 150→400ms for visibility
+  /// User needs to SEE what they played (even wrong notes) on the keyboard
+  static const double _detectedFlashTtlMs = 400.0;
 
   /// SESSION-037: TTL window for considering raw detection "recent"
   static const double _rawDetectionWindowSec = 0.250; // 250ms
@@ -858,7 +859,7 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
   /// SESSION-037: Release gating constants
   static const double _releaseMinRms = 0.008; // RMS below this = sound ended
   static const double _releaseGracePeriodMs = 60.0; // Grace period before clearing
-  static const double _hardCapMs = 180.0; // Max duration without new pitch
+  static const double _hardCapMs = 450.0; // SESSION-045: Increased to match TTL
 
   /// Update detected flash from MicEngine's last detected pitch
   /// SESSION-037: Now with release gating + hard cap to prevent stuck blue

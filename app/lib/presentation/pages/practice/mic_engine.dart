@@ -687,6 +687,59 @@ class MicEngine {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
+  // SESSION-044: Lookahead check - block WRONG_FLASH if detected midi matches
+  // a future note whose window overlaps with the current note.
+  // CAUSE: User plays next note early → WRONG for current + HIT for next = confusing
+  // FIX: If detectedMidi == expectedMidi of a future overlapping note, block WRONG
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// SESSION-044: Check if detected midi matches a future note with overlapping window.
+  /// Returns true if WRONG_FLASH should be BLOCKED (lookahead match found).
+  bool _isLookaheadMatch({
+    required int detectedMidi,
+    required int currentNoteIdx,
+    required List<NoteEvent> noteEvents,
+    required List<bool> hitNotes,
+    required double elapsed,
+    required double headWindowSec,
+    required double tailWindowSec,
+    required String path,
+  }) {
+    if (currentNoteIdx >= noteEvents.length) return false;
+
+    final currentNote = noteEvents[currentNoteIdx];
+    final currentWindowEnd = currentNote.end + tailWindowSec;
+
+    // Check next few notes (limit to 3 to avoid over-reaching)
+    final maxLookahead = (currentNoteIdx + 3).clamp(0, noteEvents.length);
+
+    for (var futureIdx = currentNoteIdx + 1; futureIdx < maxLookahead; futureIdx++) {
+      if (hitNotes[futureIdx]) continue; // Already hit, skip
+
+      final futureNote = noteEvents[futureIdx];
+      final futureWindowStart = futureNote.start - headWindowSec;
+
+      // Check: windows overlap AND midi matches exactly
+      final hasOverlap = currentWindowEnd > futureWindowStart;
+      final midiMatches = detectedMidi == futureNote.pitch;
+
+      if (hasOverlap && midiMatches) {
+        if (kDebugMode) {
+          debugPrint(
+            'S44_LOOKAHEAD_BLOCK noteIdx=$currentNoteIdx futureIdx=$futureIdx '
+            'detectedMidi=$detectedMidi futureMidi=${futureNote.pitch} '
+            'overlap=${(currentWindowEnd - futureWindowStart).toStringAsFixed(3)}s '
+            'path=$path',
+          );
+        }
+        return true; // BLOCK: midi matches future overlapping note
+      }
+    }
+
+    return false; // No lookahead match, allow emission
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
   // SESSION-038: WrongFlash Engine Counters (kDebugMode only)
   // Track where wrong flashes are emitted/skipped at MicEngine level
   // ══════════════════════════════════════════════════════════════════════════
@@ -2465,6 +2518,20 @@ class MicEngine {
               continue; // STRICT: Bail out, no fall-through
             }
 
+            // SESSION-044: Lookahead check - block if midi matches future overlapping note
+            if (_isLookaheadMatch(
+              detectedMidi: bestWrongSample.midi,
+              currentNoteIdx: idx,
+              noteEvents: noteEvents,
+              hitNotes: hitNotes,
+              elapsed: elapsed,
+              headWindowSec: headWindowSec,
+              tailWindowSec: tailWindowSec,
+              path: 'NO_EVENTS_FALLBACK',
+            )) {
+              continue; // STRICT: Bail out, midi will HIT future note
+            }
+
             if (globalCooldownOk && perMidiDedupOk && gracePeriodOk && tripleDedupOk) {
               decisions.add(
                 NoteDecision(
@@ -2571,6 +2638,20 @@ class MicEngine {
               path: 'OCTAVE_ERROR',
             )) {
               continue; // STRICT: Bail out, no fall-through
+            }
+
+            // SESSION-044: Lookahead check - block if midi matches future overlapping note
+            if (_isLookaheadMatch(
+              detectedMidi: bestEvent.midi,
+              currentNoteIdx: idx,
+              noteEvents: noteEvents,
+              hitNotes: hitNotes,
+              elapsed: elapsed,
+              headWindowSec: headWindowSec,
+              tailWindowSec: tailWindowSec,
+              path: 'OCTAVE_ERROR',
+            )) {
+              continue; // STRICT: Bail out, midi will HIT future note
             }
 
             if (globalCooldownOk &&
@@ -2764,6 +2845,20 @@ class MicEngine {
                 path: 'HIT_REJECT_MISMATCH',
               )) {
                 continue; // STRICT: Bail out, no fall-through
+              }
+
+              // SESSION-044: Lookahead check - block if midi matches future overlapping note
+              if (_isLookaheadMatch(
+                detectedMidi: mismatchEvent.midi,
+                currentNoteIdx: idx,
+                noteEvents: noteEvents,
+                hitNotes: hitNotes,
+                elapsed: elapsed,
+                headWindowSec: headWindowSec,
+                tailWindowSec: tailWindowSec,
+                path: 'HIT_REJECT_MISMATCH',
+              )) {
+                continue; // STRICT: Bail out, midi will HIT future note
               }
 
               if (globalCooldownOk &&
