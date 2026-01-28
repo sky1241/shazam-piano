@@ -849,17 +849,21 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
   // Shows what the mic actually hears, independent of scoring/matching
   // ══════════════════════════════════════════════════════════════════════════
 
-  /// TTL for detected flash - SESSION-045: Increased 150→400ms for visibility
-  /// User needs to SEE what they played (even wrong notes) on the keyboard
-  static const double _detectedFlashTtlMs = 400.0;
+  // ══════════════════════════════════════════════════════════════════════════
+  // SESSION-046: Reactive keyboard based on RMS (not fixed TTL)
+  // User wants: key lights up when playing, turns off when sound stops
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// SESSION-046: Fallback TTL only for edge cases (very long, not the main driver)
+  static const double _detectedFlashTtlMs = 2000.0; // 2s fallback only
 
   /// SESSION-037: TTL window for considering raw detection "recent"
   static const double _rawDetectionWindowSec = 0.250; // 250ms
 
-  /// SESSION-037: Release gating constants
-  static const double _releaseMinRms = 0.008; // RMS below this = sound ended
-  static const double _releaseGracePeriodMs = 60.0; // Grace period before clearing
-  static const double _hardCapMs = 450.0; // SESSION-045: Increased to match TTL
+  /// SESSION-046: Release gating constants - MORE REACTIVE
+  static const double _releaseMinRms = 0.025; // RMS below this = sound ended (raised for sensitivity)
+  static const double _releaseGracePeriodMs = 40.0; // Shorter grace = faster off
+  static const double _hardCapMs = 2000.0; // Fallback only, not the main driver
 
   /// Update detected flash from MicEngine's last detected pitch
   /// SESSION-037: Now with release gating + hard cap to prevent stuck blue
@@ -879,19 +883,22 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
           ? nowMs - _detectedFlashFirstEmitMs!
           : 0.0;
 
-      // Clear conditions:
-      // 1. TTL expired (original behavior)
-      // 2. Sound ended (RMS below threshold) for grace period
-      // 3. Hard cap: flash active too long without new pitch
-      final ttlExpired = _detectedFlashUntilMs != null && nowMs > _detectedFlashUntilMs!;
+      // ══════════════════════════════════════════════════════════════════════
+      // SESSION-046: REACTIVE clear - prioritize sound-based release
+      // PRIMARY: Sound ended (RMS below threshold) → turn off immediately
+      // FALLBACK: TTL/hardcap only as safety net for edge cases
+      // ══════════════════════════════════════════════════════════════════════
       final releaseGated = soundEnded && pitchAgeMs > _releaseGracePeriodMs;
-      final hardCapHit = flashAgeMs > _hardCapMs && pitchAgeMs > 80.0;
+      final ttlExpired = _detectedFlashUntilMs != null && nowMs > _detectedFlashUntilMs!;
+      final hardCapHit = flashAgeMs > _hardCapMs && pitchAgeMs > 200.0; // Relaxed: 200ms
 
-      if (ttlExpired || releaseGated || hardCapHit) {
-        final reason = ttlExpired
-            ? 'ttl_expired'
-            : releaseGated
-                ? 'release_gated'
+      // SESSION-046: Primary clear = release gating (sound stopped)
+      // TTL/hardcap are fallbacks only
+      if (releaseGated || ttlExpired || hardCapHit) {
+        final reason = releaseGated
+            ? 'release_gated'
+            : ttlExpired
+                ? 'ttl_expired'
                 : 'hard_cap';
         if (kDebugMode) {
           debugPrint(
