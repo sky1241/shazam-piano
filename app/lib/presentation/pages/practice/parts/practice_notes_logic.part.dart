@@ -95,7 +95,8 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
               _lastHitMidi = decision.detectedMidi;
               _lastHitAt = now;
               // SESSION-039: Track onset of HIT to distinguish sustain vs re-attack
-              _lastHitOnsetMs = _micEngine?.lastOnsetTriggerElapsedMs ?? -10000.0;
+              _lastHitOnsetMs =
+                  _micEngine?.lastOnsetTriggerElapsedMs ?? -10000.0;
 
               final playedEvent = PracticeController.createPlayedEvent(
                 midi: decision.detectedMidi!,
@@ -180,13 +181,16 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
               // INVARIANT: Max 1 rouge par clé (noteIdx_attackId) dans fenêtre TTL
               // Applies BEFORE any other check to guarantee dedup cross-ticks
               // ═══════════════════════════════════════════════════════════════
-              final attackId = _micEngine?.lastOnsetTriggerElapsedMs ?? -10000.0;
+              final attackId =
+                  _micEngine?.lastOnsetTriggerElapsedMs ?? -10000.0;
               final noteIdx = decision.noteIndex ?? -1;
               final dedupKey = '${noteIdx}_${attackId.toInt()}';
 
               // Purge expired entries (TTL cleanup)
-              _wrongFlashDedupMap.removeWhere((key, lastEmitMs) =>
-                  (elapsedMs - lastEmitMs) > _wrongFlashDedupTtlMs);
+              _wrongFlashDedupMap.removeWhere(
+                (key, lastEmitMs) =>
+                    (elapsedMs - lastEmitMs) > _wrongFlashDedupTtlMs,
+              );
 
               // Check if already emitted for this key
               final lastEmitForKey = _wrongFlashDedupMap[dedupKey];
@@ -210,8 +214,10 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
                 // FIX BUG #1 SUSTAIN: Skip if same MIDI as recent hit (<500ms)
                 // SESSION-039: Only block sustain, not re-attacks (new onset)
                 final dtMs = now.difference(_lastHitAt!).inMilliseconds;
-                final currentOnsetMs = _micEngine?.lastOnsetTriggerElapsedMs ?? -10000.0;
-                final isNewOnset = (currentOnsetMs - _lastHitOnsetMs).abs() > 50.0;
+                final currentOnsetMs =
+                    _micEngine?.lastOnsetTriggerElapsedMs ?? -10000.0;
+                final isNewOnset =
+                    (currentOnsetMs - _lastHitOnsetMs).abs() > 50.0;
 
                 if (_lastHitMidi == decision.detectedMidi &&
                     dtMs < 500 &&
@@ -368,7 +374,8 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
     if (_wrongFlashUntil != null) {
       final clearedMidi = _lastWrongNote;
       _wrongFlashUntil = null;
-      _lastWrongNote = null; // SESSION-035: Also clear the note to prevent stale state
+      _lastWrongNote =
+          null; // SESSION-035: Also clear the note to prevent stale state
       if (kDebugMode) {
         debugPrint(
           'WRONGFLASH_CLEARED_BY_HIT hitMidi=$detectedNote targetMidi=$targetNote '
@@ -410,9 +417,11 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
     final currentOnsetMs = _micEngine?.lastOnsetTriggerElapsedMs ?? -10000.0;
 
     // Check if this is the same attack as last wrong flash (collapse duplicates)
-    final sameAttack = currentOnsetMs >= 0 &&
+    final sameAttack =
+        currentOnsetMs >= 0 &&
         _lastWrongFlashOnsetMs >= 0 &&
-        (currentOnsetMs - _lastWrongFlashOnsetMs).abs() < 50.0; // 50ms = same attack
+        (currentOnsetMs - _lastWrongFlashOnsetMs).abs() <
+            50.0; // 50ms = same attack
 
     if (sameAttack) {
       // SESSION-038: Increment duplicate attack counter
@@ -641,10 +650,7 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
   }
 
   /// Refresh TTL of existing anticipated flash (same noteIdx, no setState)
-  void _refreshAnticipatedFlash({
-    required int noteIdx,
-    required double nowMs,
-  }) {
+  void _refreshAnticipatedFlash({required int noteIdx, required double nowMs}) {
     _anticipatedFlashUntilMs = nowMs + _anticipatedFlashTtlMs;
 
     if (kDebugMode) {
@@ -708,9 +714,7 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
       final idxInfo = oldIdx != null && newIdx != null
           ? ' oldIdx=$oldIdx newIdx=$newIdx'
           : ' noteIdx=$_anticipatedFlashNoteIdx';
-      debugPrint(
-        'ANTICIPATED_FLASH_CANCEL reason=$reason$idxInfo',
-      );
+      debugPrint('ANTICIPATED_FLASH_CANCEL reason=$reason$idxInfo');
     }
 
     _clearAnticipatedFlashState();
@@ -775,7 +779,8 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
     void logSuppressed(String reason) {
       if (!kDebugMode) return;
       // Throttle: only log once per 200ms
-      final throttleOk = _lastSuppressedLogMs == null ||
+      final throttleOk =
+          _lastSuppressedLogMs == null ||
           (nowMs - _lastSuppressedLogMs!) >= _suppressedLogThrottleMs;
       if (!throttleOk) return;
       _lastSuppressedLogMs = nowMs;
@@ -816,7 +821,8 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
     }
 
     // Check debounce (120ms)
-    final debounceOk = _lastAnticipatedEmitMs == null ||
+    final debounceOk =
+        _lastAnticipatedEmitMs == null ||
         (nowMs - _lastAnticipatedEmitMs!) >= _anticipatedFlashDebounceMs;
 
     if (!debounceOk) {
@@ -825,7 +831,8 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
     }
 
     // Check if anticipated already active on different noteIdx
-    if (_anticipatedFlashNoteIdx != null && _anticipatedFlashNoteIdx != noteIdx) {
+    if (_anticipatedFlashNoteIdx != null &&
+        _anticipatedFlashNoteIdx != noteIdx) {
       logSuppressed('already_active_other_noteidx');
       // Note: We still emit for the new noteIdx, this is just informational
     }
@@ -861,12 +868,15 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
   static const double _rawDetectionWindowSec = 0.250; // 250ms
 
   /// SESSION-046: Release gating constants - MORE REACTIVE
-  static const double _releaseMinRms = 0.025; // RMS below this = sound ended (raised for sensitivity)
-  static const double _releaseGracePeriodMs = 40.0; // Shorter grace = faster off
+  static const double _releaseMinRms =
+      0.025; // RMS below this = sound ended (raised for sensitivity)
+  static const double _releaseGracePeriodMs =
+      40.0; // Shorter grace = faster off
   static const double _hardCapMs = 2000.0; // Fallback only, not the main driver
 
   /// SESSION-047: No-pitch timeout - if no detection for this long, clear immediately
-  static const double _noPitchTimeoutMs = 80.0; // 80ms without ANY detection = clear
+  static const double _noPitchTimeoutMs =
+      80.0; // 80ms without ANY detection = clear
 
   /// Update detected flash from MicEngine's last detected pitch
   /// SESSION-037: Now with release gating + hard cap to prevent stuck blue
@@ -892,10 +902,13 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
       // 2. Sound ended (RMS below threshold) → clear after grace period
       // 3. TTL/hardcap as safety fallbacks
       // ══════════════════════════════════════════════════════════════════════
-      final noPitchTimeout = pitchAgeMs > _noPitchTimeoutMs; // S47: No detection = clear fast
+      final noPitchTimeout =
+          pitchAgeMs > _noPitchTimeoutMs; // S47: No detection = clear fast
       final releaseGated = soundEnded && pitchAgeMs > _releaseGracePeriodMs;
-      final ttlExpired = _detectedFlashUntilMs != null && nowMs > _detectedFlashUntilMs!;
-      final hardCapHit = flashAgeMs > _hardCapMs && pitchAgeMs > 200.0; // Relaxed: 200ms
+      final ttlExpired =
+          _detectedFlashUntilMs != null && nowMs > _detectedFlashUntilMs!;
+      final hardCapHit =
+          flashAgeMs > _hardCapMs && pitchAgeMs > 200.0; // Relaxed: 200ms
 
       // SESSION-047: Priority order for clear
       // 1. noPitchTimeout (fastest - no detection at all)
@@ -905,10 +918,10 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
         final reason = noPitchTimeout
             ? 'no_pitch_timeout'
             : releaseGated
-                ? 'release_gated'
-                : ttlExpired
-                    ? 'ttl_expired'
-                    : 'hard_cap';
+            ? 'release_gated'
+            : ttlExpired
+            ? 'ttl_expired'
+            : 'hard_cap';
         if (kDebugMode) {
           debugPrint(
             'UI_DETECTED_CLEAR reason=$reason midi=$_detectedFlashMidi '
@@ -945,8 +958,10 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
     String useSource = 'none';
     bool isNewPitch = false;
 
-    final highConfRecent = detectedMidi != null && (nowMs - detectedElapsedMs) <= 200;
-    final rawRecent = rawMidi != null && (nowSec - rawTSec) <= _rawDetectionWindowSec;
+    final highConfRecent =
+        detectedMidi != null && (nowMs - detectedElapsedMs) <= 200;
+    final rawRecent =
+        rawMidi != null && (nowSec - rawTSec) <= _rawDetectionWindowSec;
 
     if (highConfRecent) {
       // Use high-confidence detection
@@ -1036,5 +1051,4 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
       );
     }
   }
-
 }

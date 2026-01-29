@@ -266,7 +266,8 @@ import 'package:shazapiano/core/practice/pitch/note_tracker.dart';
 import 'package:shazapiano/core/practice/pitch/mic_tuning.dart';
 
 // SESSION-036: Re-export OnsetState for use with 'mic' prefix in practice_page.dart
-export 'package:shazapiano/core/practice/pitch/onset_detector.dart' show OnsetState;
+export 'package:shazapiano/core/practice/pitch/onset_detector.dart'
+    show OnsetState;
 
 /// Feature flag: Enable hybrid YIN/Goertzel detection.
 /// - OFF: Use existing MPM path.
@@ -301,7 +302,7 @@ const int kSustainFilterMsExtended = 800;
 /// - TRIGGER events (new attacks) use shorter window to not mask real errors
 /// - PROBE events (sustain/tail) use longer window for piano resonance
 const int kSustainWrongSuppressTriggerMs = 350; // New attack - short window
-const int kSustainWrongSuppressProbeMs = 600;   // Sustain/tail - long window
+const int kSustainWrongSuppressProbeMs = 600; // Sustain/tail - long window
 
 /// SESSION-030 FIX: HIT_ROBUST - Dual-path suppression for HIT matching.
 /// Fixes "false white" (MISS despite real hit) when NoteTracker suppresses
@@ -654,7 +655,9 @@ class MicEngine {
 
     // Purge old entries (> 2*TTL) to prevent unbounded growth
     if (_wfDedupHistory.length > 50) {
-      _wfDedupHistory.removeWhere((k, lastMs) => (nowMs - lastMs) > _wfDedupTtlMs * 2);
+      _wfDedupHistory.removeWhere(
+        (k, lastMs) => (nowMs - lastMs) > _wfDedupTtlMs * 2,
+      );
     }
 
     // SESSION-043: Check if this attackId produced a recent HIT
@@ -721,7 +724,11 @@ class MicEngine {
     // Check next few notes (limit to 3 to avoid over-reaching)
     final maxLookahead = (currentNoteIdx + 3).clamp(0, noteEvents.length);
 
-    for (var futureIdx = currentNoteIdx + 1; futureIdx < maxLookahead; futureIdx++) {
+    for (
+      var futureIdx = currentNoteIdx + 1;
+      futureIdx < maxLookahead;
+      futureIdx++
+    ) {
       if (hitNotes[futureIdx]) continue; // Already hit, skip
 
       final futureNote = noteEvents[futureIdx];
@@ -753,9 +760,12 @@ class MicEngine {
   // ══════════════════════════════════════════════════════════════════════════
   int _engineEmitCount = 0; // Total WRONG_FLASH_EMIT from MicEngine
   int _engineSkipGatedCount = 0; // Skipped due to cooldown gating
-  int _engineSkipAlreadyEmittedTickCount = 0; // Skipped due to already_emitted_this_tick
-  int _engineSkipPerMidiDedupCount = 0; // Skipped due to per-midi dedup (if applicable)
-  int _engineSkipOtherCount = 0; // Other skip reasons (low_conf, no_candidate, etc.)
+  int _engineSkipAlreadyEmittedTickCount =
+      0; // Skipped due to already_emitted_this_tick
+  int _engineSkipPerMidiDedupCount =
+      0; // Skipped due to per-midi dedup (if applicable)
+  int _engineSkipOtherCount =
+      0; // Other skip reasons (low_conf, no_candidate, etc.)
 
   // SESSION-031: Ring buffer for recent pitch samples (fallback for no_events_in_buffer).
   // Stores all detections (including PROBE) for wrong flash when main buffer empty.
@@ -802,7 +812,8 @@ class MicEngine {
   // ══════════════════════════════════════════════════════════════════════════
   int get engineEmitCount => _engineEmitCount;
   int get engineSkipGatedCount => _engineSkipGatedCount;
-  int get engineSkipAlreadyEmittedTickCount => _engineSkipAlreadyEmittedTickCount;
+  int get engineSkipAlreadyEmittedTickCount =>
+      _engineSkipAlreadyEmittedTickCount;
   int get engineSkipPerMidiDedupCount => _engineSkipPerMidiDedupCount;
   int get engineSkipOtherCount => _engineSkipOtherCount;
 
@@ -1036,8 +1047,10 @@ class MicEngine {
     _mismatchDedupHistory.clear(); // SESSION-017: Reset mismatch dedup
     _mismatchConfirmHistory.clear(); // SESSION-017: Reset mismatch confirmation
     _wrongFlashTripleDedupHistory.clear(); // SESSION-040: Reset triple dedup
-    _wfDedupHistory.clear(); // SESSION-042: Reset centralized TTL dedup on new session
-    _hitAttackIdHistory.clear(); // SESSION-043: Reset HIT attackId history on new session
+    _wfDedupHistory
+        .clear(); // SESSION-042: Reset centralized TTL dedup on new session
+    _hitAttackIdHistory
+        .clear(); // SESSION-043: Reset HIT attackId history on new session
     _recentWrongSamples.clear(); // SESSION-031: Reset wrong samples
     _wrongFlashEmittedThisTick = false; // SESSION-031: Reset per-tick flag
     // SESSION-038: Reset engine counters for new session
@@ -1453,7 +1466,9 @@ class MicEngine {
           }
 
           // SESSION-027: Log when stability bypass is applied for TRIGGER events
-          if (kDebugMode && isTriggerEvent && stabilityFrames < kPitchStabilityMinFrames) {
+          if (kDebugMode &&
+              isTriggerEvent &&
+              stabilityFrames < kPitchStabilityMinFrames) {
             debugPrint(
               'STABILITY_BYPASS_TRIGGER midi=${re.midi} pc=$pitchClass '
               'frames=$stabilityFrames required=$kPitchStabilityMinFrames '
@@ -1469,8 +1484,8 @@ class MicEngine {
           if (kWrongFlashRestoreEnabled && re.conf >= kWrongSampleMinConf) {
             // Compute dRms from previous RMS
             final dRmsWrong = (_lastRms != null) ? (re.rms - _lastRms!) : 0.0;
-            final isTriggerOrFailsafe = isTriggerEvent ||
-                eventSource == PitchEventSource.probe;
+            final isTriggerOrFailsafe =
+                isTriggerEvent || eventSource == PitchEventSource.probe;
 
             // Prune old samples
             _recentWrongSamples.removeWhere(
@@ -1572,8 +1587,8 @@ class MicEngine {
               // Calculate dRms from previous RMS for this pitchClass
               final prevRms = _lastRms ?? 0.0;
               final dRms = re.rms - prevRms;
-              final hasEnergy = re.rms >= kHitCandidateRmsMin ||
-                  dRms >= kHitCandidateDRmsMin;
+              final hasEnergy =
+                  re.rms >= kHitCandidateRmsMin || dRms >= kHitCandidateDRmsMin;
               if (!hasEnergy) {
                 if (kDebugMode) {
                   debugPrint(
@@ -2149,7 +2164,8 @@ class MicEngine {
         final candidateDtMs = candidateDtSec.abs() * 1000.0;
         if (candidateDtMs > kHitDtMaxMs) {
           if (kDebugMode && rejectReason == null) {
-            rejectReason = 'dt_exceeds_max_${candidateDtMs.toStringAsFixed(0)}ms>${kHitDtMaxMs.toStringAsFixed(0)}ms';
+            rejectReason =
+                'dt_exceeds_max_${candidateDtMs.toStringAsFixed(0)}ms>${kHitDtMaxMs.toStringAsFixed(0)}ms';
           }
           continue;
         }
@@ -2252,12 +2268,13 @@ class MicEngine {
           matchedCandidate = bestCandidate;
 
           // Log candidate match
-          final isEdge = bestCandidate.tMs < windowStartMs ||
+          final isEdge =
+              bestCandidate.tMs < windowStartMs ||
               bestCandidate.tMs > windowEndMs;
           final dtToWindowMs = isEdge
               ? (bestCandidate.tMs < windowStartMs
-                  ? windowStartMs - bestCandidate.tMs
-                  : bestCandidate.tMs - windowEndMs)
+                    ? windowStartMs - bestCandidate.tMs
+                    : bestCandidate.tMs - windowEndMs)
               : 0.0;
           if (kDebugMode) {
             debugPrint(
@@ -2399,7 +2416,9 @@ class MicEngine {
         _hitAttackIdHistory[hitAttackId] = hitNowMs;
         // Purge old entries to prevent unbounded growth
         if (_hitAttackIdHistory.length > 20) {
-          _hitAttackIdHistory.removeWhere((k, v) => (hitNowMs - v) > _hitAttackIdTtlMs * 2);
+          _hitAttackIdHistory.removeWhere(
+            (k, v) => (hitNowMs - v) > _hitAttackIdTtlMs * 2,
+          );
         }
 
         // SESSION-015 P4: Release NoteTracker hold for this pitchClass
@@ -2468,11 +2487,14 @@ class MicEngine {
               // PREUVE: elapsed=7.317 HIT noteIdx=5 midi=61, then WRONG noteIdx=6
               //         with same midi=61 because isTriggerOrFailsafe bypassed check
               // Bug: trigger/failsafe samples bypassed msSinceHit<350 gate
-              if (msSinceHit < 10 || (!sample.isTriggerOrFailsafe && msSinceHit < 350)) continue;
+              if (msSinceHit < 10 ||
+                  (!sample.isTriggerOrFailsafe && msSinceHit < 350))
+                continue;
             }
 
             // Energy check: require trigger/failsafe OR significant dRms
-            final hasEnergy = sample.isTriggerOrFailsafe ||
+            final hasEnergy =
+                sample.isTriggerOrFailsafe ||
                 sample.rms >= kHitCandidateRmsMin ||
                 sample.dRms >= kHitCandidateDRmsMin;
             if (!hasEnergy) continue;
@@ -2491,14 +2513,16 @@ class MicEngine {
                     (wrongFlashCooldownSec * 1000);
             final lastFlashForMidi =
                 _lastWrongFlashByMidi[bestWrongSample.midi];
-            final perMidiDedupOk = lastFlashForMidi == null ||
+            final perMidiDedupOk =
+                lastFlashForMidi == null ||
                 now.difference(lastFlashForMidi).inMilliseconds >
                     wrongFlashDedupMs;
 
             // SESSION-038 FIX: Grace period - don't emit fallback wrong in first 400ms
             // PREUVE: session-038 noteIdx=1 got 6 WRONG_FLASH_EMIT before player played
             final timeSinceWindowStartMs = (elapsed - windowStart) * 1000.0;
-            final gracePeriodOk = timeSinceWindowStartMs >= kFallbackGracePeriodMs;
+            final gracePeriodOk =
+                timeSinceWindowStartMs >= kFallbackGracePeriodMs;
             if (!gracePeriodOk && kDebugMode) {
               debugPrint(
                 'WRONG_FLASH_SKIP reason=fallback_grace_period noteIdx=$idx '
@@ -2511,8 +2535,10 @@ class MicEngine {
             // SESSION-040: Triple dedup (noteIdx, expected, detected) - prevents multi-emit
             final tripleKey = '${idx}_${note.pitch}_${bestWrongSample.midi}';
             final lastTripleFlash = _wrongFlashTripleDedupHistory[tripleKey];
-            final tripleDedupOk = lastTripleFlash == null ||
-                now.difference(lastTripleFlash).inMilliseconds > _wrongFlashTripleDedupMs;
+            final tripleDedupOk =
+                lastTripleFlash == null ||
+                now.difference(lastTripleFlash).inMilliseconds >
+                    _wrongFlashTripleDedupMs;
 
             // SESSION-042: Centralized TTL dedup - MUST pass before any emission
             final attackIdInt = _lastOnsetTriggerElapsedMs.round();
@@ -2540,7 +2566,10 @@ class MicEngine {
               continue; // STRICT: Bail out, midi will HIT future note
             }
 
-            if (globalCooldownOk && perMidiDedupOk && gracePeriodOk && tripleDedupOk) {
+            if (globalCooldownOk &&
+                perMidiDedupOk &&
+                gracePeriodOk &&
+                tripleDedupOk) {
               decisions.add(
                 NoteDecision(
                   type: DecisionType.wrongFlash,
@@ -2565,7 +2594,9 @@ class MicEngine {
                   'noteIdx=$idx midi=${bestWrongSample.midi} path=NO_EVENTS_FALLBACK',
                 );
               }
-            } else if (lastTripleFlash != null && !tripleDedupOk && kDebugMode) {
+            } else if (lastTripleFlash != null &&
+                !tripleDedupOk &&
+                kDebugMode) {
               final dtSkipMs = now.difference(lastTripleFlash).inMilliseconds;
               debugPrint(
                 'WHY_SKIPPED_DUP_KEY key=$tripleKey dt=${dtSkipMs}ms trigger=NO_EVENTS_FALLBACK',
@@ -2622,19 +2653,23 @@ class MicEngine {
                 : null;
             final sustainThresholdMs =
                 bestEvent.source == PitchEventSource.probe
-                    ? kSustainWrongSuppressProbeMs
-                    : kSustainWrongSuppressTriggerMs;
-            final sustainSuppressOk = msSinceHitForDetected == null ||
+                ? kSustainWrongSuppressProbeMs
+                : kSustainWrongSuppressTriggerMs;
+            final sustainSuppressOk =
+                msSinceHitForDetected == null ||
                 msSinceHitForDetected > sustainThresholdMs;
 
             // SESSION-031: Check per-tick flag
-            final tickOk = !kWrongFlashRestoreEnabled || !_wrongFlashEmittedThisTick;
+            final tickOk =
+                !kWrongFlashRestoreEnabled || !_wrongFlashEmittedThisTick;
 
             // SESSION-040: Triple dedup (noteIdx, expected, detected) - prevents multi-emit
             final tripleKey = '${idx}_${note.pitch}_${bestEvent.midi}';
             final lastTripleFlash = _wrongFlashTripleDedupHistory[tripleKey];
-            final tripleDedupOk = lastTripleFlash == null ||
-                now.difference(lastTripleFlash).inMilliseconds > _wrongFlashTripleDedupMs;
+            final tripleDedupOk =
+                lastTripleFlash == null ||
+                now.difference(lastTripleFlash).inMilliseconds >
+                    _wrongFlashTripleDedupMs;
 
             // SESSION-042: Centralized TTL dedup - MUST pass before any emission
             final attackIdInt = _lastOnsetTriggerElapsedMs.round();
@@ -2697,7 +2732,9 @@ class MicEngine {
                 );
               }
             } else if (!tripleDedupOk && kDebugMode) {
-              debugPrint('WHY_SKIPPED_DUP_KEY key=$tripleKey trigger=OCTAVE_ERROR');
+              debugPrint(
+                'WHY_SKIPPED_DUP_KEY key=$tripleKey trigger=OCTAVE_ERROR',
+              );
             } else if (!sustainSuppressOk) {
               // SESSION-028/029: Suppressed due to recent HIT sustain (tail-aware)
               if (kDebugMode) {
@@ -2829,19 +2866,23 @@ class MicEngine {
                   : null;
               final sustainThresholdMs =
                   mismatchEvent.source == PitchEventSource.probe
-                      ? kSustainWrongSuppressProbeMs
-                      : kSustainWrongSuppressTriggerMs;
-              final sustainSuppressOk = msSinceHitForDetected == null ||
+                  ? kSustainWrongSuppressProbeMs
+                  : kSustainWrongSuppressTriggerMs;
+              final sustainSuppressOk =
+                  msSinceHitForDetected == null ||
                   msSinceHitForDetected > sustainThresholdMs;
 
               // SESSION-031: Check per-tick flag
-              final tickOk = !kWrongFlashRestoreEnabled || !_wrongFlashEmittedThisTick;
+              final tickOk =
+                  !kWrongFlashRestoreEnabled || !_wrongFlashEmittedThisTick;
 
               // SESSION-040: Triple dedup (noteIdx, expected, detected) - prevents multi-emit
               final tripleKey = '${idx}_${note.pitch}_${mismatchEvent.midi}';
               final lastTripleFlash = _wrongFlashTripleDedupHistory[tripleKey];
-              final tripleDedupOk = lastTripleFlash == null ||
-                  now.difference(lastTripleFlash).inMilliseconds > _wrongFlashTripleDedupMs;
+              final tripleDedupOk =
+                  lastTripleFlash == null ||
+                  now.difference(lastTripleFlash).inMilliseconds >
+                      _wrongFlashTripleDedupMs;
 
               // SESSION-042: Centralized TTL dedup - MUST pass before any emission
               final attackIdInt = _lastOnsetTriggerElapsedMs.round();
@@ -2906,7 +2947,9 @@ class MicEngine {
                   );
                 }
               } else if (!tripleDedupOk && kDebugMode) {
-                debugPrint('WHY_SKIPPED_DUP_KEY key=$tripleKey trigger=HIT_DECISION_REJECT_MISMATCH');
+                debugPrint(
+                  'WHY_SKIPPED_DUP_KEY key=$tripleKey trigger=HIT_DECISION_REJECT_MISMATCH',
+                );
               } else if (!sustainSuppressOk) {
                 // SESSION-028/029: Suppressed due to recent HIT sustain (tail-aware)
                 if (kDebugMode) {
@@ -3184,7 +3227,8 @@ class MicEngine {
         // This event doesn't match any expected note = WRONG (confirmed!)
         // SESSION-031: Only log ALLOW if we haven't already emitted this tick
         // This prevents confusing ALLOW→SKIP sequences in logs
-        if (kDebugMode && !(kWrongFlashRestoreEnabled && _wrongFlashEmittedThisTick)) {
+        if (kDebugMode &&
+            !(kWrongFlashRestoreEnabled && _wrongFlashEmittedThisTick)) {
           final reason = highConfAttack
               ? 'highConfAttack'
               : probeOverride
@@ -3376,7 +3420,11 @@ class MicEngine {
         note: note,
         elapsedMs: elapsedMs,
         nowMs: nowMs,
-        alreadyHitOverride: (legacy.type == DecisionType.miss || legacy.type == DecisionType.hit) ? false : null,
+        alreadyHitOverride:
+            (legacy.type == DecisionType.miss ||
+                legacy.type == DecisionType.hit)
+            ? false
+            : null,
         wrongFlashEmittedThisTickOverride: false,
         wfDedupLastEmitMsOverride: -1,
       );
@@ -3392,9 +3440,12 @@ class MicEngine {
         DecisionResult.ambiguous => null,
       };
 
-      final isMatch = (arbiterType == legacy.type) ||
-          (arbiterType == null && legacy.type != DecisionType.hit &&
-              legacy.type != DecisionType.miss && legacy.type != DecisionType.wrongFlash);
+      final isMatch =
+          (arbiterType == legacy.type) ||
+          (arbiterType == null &&
+              legacy.type != DecisionType.hit &&
+              legacy.type != DecisionType.miss &&
+              legacy.type != DecisionType.wrongFlash);
 
       if (isMatch) {
         debugPrint(
@@ -3453,21 +3504,25 @@ class MicEngine {
     }
 
     // Check lookahead
-    final isLookahead = bestEvent != null && _isLookaheadMatch(
-      detectedMidi: bestEvent.midi,
-      currentNoteIdx: noteIdx,
-      noteEvents: noteEvents,
-      hitNotes: hitNotes,
-      elapsed: elapsedMs / 1000.0,
-      headWindowSec: headWindowSec,
-      tailWindowSec: tailWindowSec,
-      path: 'arbiter_shadow',
-    );
+    final isLookahead =
+        bestEvent != null &&
+        _isLookaheadMatch(
+          detectedMidi: bestEvent.midi,
+          currentNoteIdx: noteIdx,
+          noteEvents: noteEvents,
+          hitNotes: hitNotes,
+          elapsed: elapsedMs / 1000.0,
+          headWindowSec: headWindowSec,
+          tailWindowSec: tailWindowSec,
+          path: 'arbiter_shadow',
+        );
 
     // wfDedup with override support for PRE-MUTATION state
     final int? wfDedupLastEmitMs;
     if (wfDedupLastEmitMsOverride != null) {
-      wfDedupLastEmitMs = wfDedupLastEmitMsOverride < 0 ? null : wfDedupLastEmitMsOverride;
+      wfDedupLastEmitMs = wfDedupLastEmitMsOverride < 0
+          ? null
+          : wfDedupLastEmitMsOverride;
     } else {
       wfDedupLastEmitMs = _wfDedupHistory[wfDedupKey];
     }
@@ -3475,10 +3530,12 @@ class MicEngine {
     // Convert DateTime fields to ms
     final lastWfAtMs = _lastWrongFlashAt?.millisecondsSinceEpoch.toDouble();
     final lastWfForMidiMs = bestEvent != null
-        ? _lastWrongFlashByMidi[bestEvent.midi]?.millisecondsSinceEpoch.toDouble()
+        ? _lastWrongFlashByMidi[bestEvent.midi]?.millisecondsSinceEpoch
+              .toDouble()
         : null;
     final recentHitPcMs = bestEvent != null
-        ? _recentlyHitPitchClasses[bestEvent.midi % 12]?.millisecondsSinceEpoch.toDouble()
+        ? _recentlyHitPitchClasses[bestEvent.midi % 12]?.millisecondsSinceEpoch
+              .toDouble()
         : null;
 
     return DecisionInputs(
@@ -3497,14 +3554,17 @@ class MicEngine {
       attackId: attackId,
       isWithinGracePeriod: (elapsedMs - windowStartMs) < kFallbackGracePeriodMs,
       isLookaheadMatch: isLookahead,
-      wrongFlashEmittedThisTick: wrongFlashEmittedThisTickOverride ?? _wrongFlashEmittedThisTick,
+      wrongFlashEmittedThisTick:
+          wrongFlashEmittedThisTickOverride ?? _wrongFlashEmittedThisTick,
       lastWrongFlashAtMs: lastWfAtMs,
       lastWrongFlashForMidiMs: lastWfForMidiMs,
       lastTripleFlashMs: null, // Simplified
       wfDedupLastEmitMs: wfDedupLastEmitMs,
       hitAttackIdMs: _hitAttackIdHistory[attackId],
       recentHitForDetectedPCMs: recentHitPcMs,
-      clearPitchAgeMs: _lastDetectedElapsedMs > 0 ? (elapsedMs - _lastDetectedElapsedMs * 1000.0) : 9999.0,
+      clearPitchAgeMs: _lastDetectedElapsedMs > 0
+          ? (elapsedMs - _lastDetectedElapsedMs * 1000.0)
+          : 9999.0,
       hitDistanceThreshold: 3.0,
       dtMaxMs: kHitDtMaxMs.toDouble(),
       wrongFlashMinConf: wrongFlashMinConf,
@@ -3512,12 +3572,14 @@ class MicEngine {
       sustainThresholdMs: kSustainWrongSuppressTriggerMs.toDouble(),
       confirmationCount: 1, // Simplified
       candidateDtMs: candidateDtMs,
-      snapAllowed: bestEvent != null && _shouldSnapToExpected(
-        detectedMidi: bestEvent.midi,
-        expectedMidi: note.pitch,
-        conf: bestEvent.conf,
-        stabilityFrames: bestStabilityFrames,
-      ),
+      snapAllowed:
+          bestEvent != null &&
+          _shouldSnapToExpected(
+            detectedMidi: bestEvent.midi,
+            expectedMidi: note.pitch,
+            conf: bestEvent.conf,
+            stabilityFrames: bestStabilityFrames,
+          ),
       nowMs: nowMs,
     );
   }
@@ -3578,7 +3640,8 @@ class HitCandidate {
   final double conf;
   final PitchEventSource source;
   final String suppressReason; // 'cooldown', 'tail_falling', etc.
-  final double dtFromOnsetMs; // time since last ONSET_TRIGGER for this pitchClass
+  final double
+  dtFromOnsetMs; // time since last ONSET_TRIGGER for this pitchClass
   final double dRms; // delta RMS (for energy signal check)
 }
 

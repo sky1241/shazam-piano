@@ -8,21 +8,10 @@ import 'onset_detector.dart';
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Decision result types
-enum DecisionResult {
-  hit,
-  wrong,
-  miss,
-  skip,
-  ambiguous,
-}
+enum DecisionResult { hit, wrong, miss, skip, ambiguous }
 
 /// Source of pitch event for tail-aware suppression
-enum PitchSourceType {
-  trigger,
-  burst,
-  probe,
-  legacy,
-}
+enum PitchSourceType { trigger, burst, probe, legacy }
 
 /// Minimal pitch event info needed by arbiter
 class ArbiterPitchEvent {
@@ -330,13 +319,11 @@ class ArbiterStats {
         break;
       case DecisionResult.wrong:
         wrongCount++;
-        wrongByReason[output.reason] =
-            (wrongByReason[output.reason] ?? 0) + 1;
+        wrongByReason[output.reason] = (wrongByReason[output.reason] ?? 0) + 1;
         break;
       case DecisionResult.skip:
         skipCount++;
-        skipByReason[output.reason] =
-            (skipByReason[output.reason] ?? 0) + 1;
+        skipByReason[output.reason] = (skipByReason[output.reason] ?? 0) + 1;
         if (output.gatedBy != null) {
           _recordGate(output.gatedBy!);
         }
