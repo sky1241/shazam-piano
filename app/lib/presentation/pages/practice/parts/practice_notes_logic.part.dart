@@ -865,6 +865,9 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
   static const double _releaseGracePeriodMs = 40.0; // Shorter grace = faster off
   static const double _hardCapMs = 2000.0; // Fallback only, not the main driver
 
+  /// SESSION-047: No-pitch timeout - if no detection for this long, clear immediately
+  static const double _noPitchTimeoutMs = 80.0; // 80ms without ANY detection = clear
+
   /// Update detected flash from MicEngine's last detected pitch
   /// SESSION-037: Now with release gating + hard cap to prevent stuck blue
   void _updateDetectedFlash(double nowMs) {
@@ -884,22 +887,28 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
           : 0.0;
 
       // ══════════════════════════════════════════════════════════════════════
-      // SESSION-046: REACTIVE clear - prioritize sound-based release
-      // PRIMARY: Sound ended (RMS below threshold) → turn off immediately
-      // FALLBACK: TTL/hardcap only as safety net for edge cases
+      // SESSION-047: REACTIVE clear - multiple strategies
+      // 1. No pitch detected for too long → clear immediately (frame-perfect)
+      // 2. Sound ended (RMS below threshold) → clear after grace period
+      // 3. TTL/hardcap as safety fallbacks
       // ══════════════════════════════════════════════════════════════════════
+      final noPitchTimeout = pitchAgeMs > _noPitchTimeoutMs; // S47: No detection = clear fast
       final releaseGated = soundEnded && pitchAgeMs > _releaseGracePeriodMs;
       final ttlExpired = _detectedFlashUntilMs != null && nowMs > _detectedFlashUntilMs!;
       final hardCapHit = flashAgeMs > _hardCapMs && pitchAgeMs > 200.0; // Relaxed: 200ms
 
-      // SESSION-046: Primary clear = release gating (sound stopped)
-      // TTL/hardcap are fallbacks only
-      if (releaseGated || ttlExpired || hardCapHit) {
-        final reason = releaseGated
-            ? 'release_gated'
-            : ttlExpired
-                ? 'ttl_expired'
-                : 'hard_cap';
+      // SESSION-047: Priority order for clear
+      // 1. noPitchTimeout (fastest - no detection at all)
+      // 2. releaseGated (sound stopped)
+      // 3. ttlExpired/hardCapHit (fallbacks)
+      if (noPitchTimeout || releaseGated || ttlExpired || hardCapHit) {
+        final reason = noPitchTimeout
+            ? 'no_pitch_timeout'
+            : releaseGated
+                ? 'release_gated'
+                : ttlExpired
+                    ? 'ttl_expired'
+                    : 'hard_cap';
         if (kDebugMode) {
           debugPrint(
             'UI_DETECTED_CLEAR reason=$reason midi=$_detectedFlashMidi '

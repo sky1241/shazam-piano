@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 
 import 'package:shazapiano/core/practice/pitch/practice_pitch_router.dart';
+import 'package:shazapiano/core/practice/pitch/decision_arbiter.dart';
 
 // ============================================================================
 // PATCH LEDGER - SESSION-035 (2026-01-26) - FALSE RED AFTER HIT FIX
@@ -354,6 +355,10 @@ const int kHitCandidateMaxCount = 64;
 ///        when main buffer is empty (fallback for probe/failsafe detections).
 const bool kWrongFlashRestoreEnabled = true;
 
+/// SESSION-047: Arbiter shadow mode - runs DecisionArbiter in parallel for validation
+/// When true, logs ARBITER_SHADOW_MATCH/MISMATCH without affecting legacy behavior
+const bool kArbiterShadowEnabled = true;
+
 /// Maximum age (ms) for a wrong sample to be considered for fallback.
 const int kWrongSampleMaxAgeMs = 200;
 
@@ -541,6 +546,9 @@ class MicEngine {
   /// Envelope gate with hysteresis: allows ATTACK only on rising edge, blocks HELD/TAIL.
   /// SESSION-016: Now configured via MicTuning.
   final NoteTracker _noteTracker;
+
+  /// SESSION-047: Decision arbiter for unified HIT/WRONG/MISS logic (shadow mode)
+  final DecisionArbiter _arbiter = DecisionArbiter();
 
   String? _sessionId;
   final List<PitchEvent> _events = [];
@@ -3335,7 +3343,192 @@ class MicEngine {
       }
     }
 
+    // SESSION-047: Arbiter shadow comparison (debug-only validation)
+    if (kArbiterShadowEnabled && kDebugMode) {
+      _runArbiterShadow(decisions, elapsed, now);
+    }
+
     return decisions;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SESSION-047: ARBITER SHADOW - Validate DecisionArbiter against legacy
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  void _runArbiterShadow(
+    List<NoteDecision> legacyDecisions,
+    double elapsed,
+    DateTime now,
+  ) {
+    final elapsedMs = elapsed * 1000.0;
+    final nowMs = now.millisecondsSinceEpoch.toDouble();
+
+    for (final legacy in legacyDecisions) {
+      final idx = legacy.noteIndex;
+      if (idx == null || idx < 0 || idx >= noteEvents.length) continue;
+
+      final note = noteEvents[idx];
+      // SESSION-048: Pass wfDedupLastEmitMsOverride=-1 to simulate PRE-MUTATION state
+      // Legacy mutates _wfDedupHistory[key]=nowMs BEFORE shadow runs, causing false MISMATCH
+      // Override=-1 forces arbiter to see null (no prior emit) = fair comparison
+      final inputs = _collectArbiterInputs(
+        noteIdx: idx,
+        note: note,
+        elapsedMs: elapsedMs,
+        nowMs: nowMs,
+        alreadyHitOverride: legacy.type == DecisionType.miss ? false : null,
+        wrongFlashEmittedThisTickOverride: false,
+        wfDedupLastEmitMsOverride: -1,
+      );
+
+      final arbiterOut = _arbiter.process(inputs);
+
+      // Map arbiter result to legacy DecisionType
+      final arbiterType = switch (arbiterOut.result) {
+        DecisionResult.hit => DecisionType.hit,
+        DecisionResult.miss => DecisionType.miss,
+        DecisionResult.wrong => DecisionType.wrongFlash,
+        DecisionResult.skip => null,
+        DecisionResult.ambiguous => null,
+      };
+
+      final isMatch = (arbiterType == legacy.type) ||
+          (arbiterType == null && legacy.type != DecisionType.hit &&
+              legacy.type != DecisionType.miss && legacy.type != DecisionType.wrongFlash);
+
+      if (isMatch) {
+        debugPrint(
+          'ARBITER_SHADOW_MATCH noteIdx=$idx legacy=${legacy.type.name} '
+          'arbiter=${arbiterOut.result.name} path=${arbiterOut.path}',
+        );
+      } else {
+        debugPrint(
+          'ARBITER_SHADOW_MISMATCH noteIdx=$idx legacy=${legacy.type.name} '
+          'arbiter=${arbiterOut.result.name} reason=${arbiterOut.reason} '
+          'path=${arbiterOut.path} gatedBy=${arbiterOut.gatedBy ?? "none"}',
+        );
+      }
+    }
+  }
+
+  DecisionInputs _collectArbiterInputs({
+    required int noteIdx,
+    required NoteEvent note,
+    required double elapsedMs,
+    required double nowMs,
+    bool? alreadyHitOverride,
+    bool? wrongFlashEmittedThisTickOverride,
+    int? wfDedupLastEmitMsOverride,
+  }) {
+    final windowStartMs = (note.start - headWindowSec) * 1000.0;
+    final windowEndMs = (note.end + tailWindowSec) * 1000.0;
+    final attackId = _lastOnsetTriggerElapsedMs.round();
+    final wfDedupKey = '${noteIdx}_$attackId';
+
+    // Collect best event from buffer
+    ArbiterPitchEvent? bestEvent;
+    double? bestDistance;
+    int bestStabilityFrames = 0;
+    for (final e in _events) {
+      final eTms = e.tSec * 1000.0;
+      if (eTms < windowStartMs || eTms > windowEndMs) continue;
+      final dist = (e.midi - note.pitch).abs().toDouble();
+      if (bestDistance == null || dist < bestDistance) {
+        bestDistance = dist;
+        bestStabilityFrames = e.stabilityFrames;
+        bestEvent = ArbiterPitchEvent(
+          midi: e.midi,
+          conf: e.conf,
+          tSec: e.tSec,
+          source: _mapSourceType(e.source),
+          rms: e.rms,
+        );
+      }
+    }
+
+    // Compute dt if we have a match
+    double? candidateDtMs;
+    if (bestEvent != null && bestDistance != null && bestDistance <= 3.0) {
+      candidateDtMs = (bestEvent.tSec - note.start) * 1000.0;
+    }
+
+    // Check lookahead
+    final isLookahead = bestEvent != null && _isLookaheadMatch(
+      detectedMidi: bestEvent.midi,
+      currentNoteIdx: noteIdx,
+      noteEvents: noteEvents,
+      hitNotes: hitNotes,
+      elapsed: elapsedMs / 1000.0,
+      headWindowSec: headWindowSec,
+      tailWindowSec: tailWindowSec,
+      path: 'arbiter_shadow',
+    );
+
+    // wfDedup with override support for PRE-MUTATION state
+    final int? wfDedupLastEmitMs;
+    if (wfDedupLastEmitMsOverride != null) {
+      wfDedupLastEmitMs = wfDedupLastEmitMsOverride < 0 ? null : wfDedupLastEmitMsOverride;
+    } else {
+      wfDedupLastEmitMs = _wfDedupHistory[wfDedupKey];
+    }
+
+    // Convert DateTime fields to ms
+    final lastWfAtMs = _lastWrongFlashAt?.millisecondsSinceEpoch.toDouble();
+    final lastWfForMidiMs = bestEvent != null
+        ? _lastWrongFlashByMidi[bestEvent.midi]?.millisecondsSinceEpoch.toDouble()
+        : null;
+    final recentHitPcMs = bestEvent != null
+        ? _recentlyHitPitchClasses[bestEvent.midi % 12]?.millisecondsSinceEpoch.toDouble()
+        : null;
+
+    return DecisionInputs(
+      elapsedMs: elapsedMs,
+      noteWindowStartMs: windowStartMs,
+      noteWindowEndMs: windowEndMs,
+      noteIdx: noteIdx,
+      expectedMidi: note.pitch,
+      alreadyHit: alreadyHitOverride ?? hitNotes[noteIdx],
+      bestEvent: bestEvent,
+      bestDistance: bestDistance,
+      matchedCandidate: null, // Simplified - no candidate fallback in shadow
+      fallbackSample: null, // Simplified - no fallback sample in shadow
+      onsetState: _lastOnsetState,
+      lastOnsetTriggerMs: _lastOnsetTriggerElapsedMs,
+      attackId: attackId,
+      isWithinGracePeriod: (elapsedMs - windowStartMs) < kFallbackGracePeriodMs,
+      isLookaheadMatch: isLookahead,
+      wrongFlashEmittedThisTick: wrongFlashEmittedThisTickOverride ?? _wrongFlashEmittedThisTick,
+      lastWrongFlashAtMs: lastWfAtMs,
+      lastWrongFlashForMidiMs: lastWfForMidiMs,
+      lastTripleFlashMs: null, // Simplified
+      wfDedupLastEmitMs: wfDedupLastEmitMs,
+      hitAttackIdMs: _hitAttackIdHistory[attackId],
+      recentHitForDetectedPCMs: recentHitPcMs,
+      clearPitchAgeMs: _lastDetectedElapsedMs > 0 ? (elapsedMs - _lastDetectedElapsedMs * 1000.0) : 9999.0,
+      hitDistanceThreshold: 3.0,
+      dtMaxMs: kHitDtMaxMs.toDouble(),
+      wrongFlashMinConf: wrongFlashMinConf,
+      gracePeriodMs: kFallbackGracePeriodMs.toDouble(),
+      sustainThresholdMs: kSustainWrongSuppressTriggerMs.toDouble(),
+      confirmationCount: 1, // Simplified
+      candidateDtMs: candidateDtMs,
+      snapAllowed: bestEvent != null && _shouldSnapToExpected(
+        detectedMidi: bestEvent.midi,
+        expectedMidi: note.pitch,
+        conf: bestEvent.conf,
+        stabilityFrames: bestStabilityFrames,
+      ),
+      nowMs: nowMs,
+    );
+  }
+
+  PitchSourceType _mapSourceType(PitchEventSource source) {
+    return switch (source) {
+      PitchEventSource.trigger => PitchSourceType.trigger,
+      PitchEventSource.burst => PitchSourceType.burst,
+      PitchEventSource.probe => PitchSourceType.probe,
+      PitchEventSource.legacy => PitchSourceType.legacy,
+    };
   }
 }
 
