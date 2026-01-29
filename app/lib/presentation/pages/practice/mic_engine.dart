@@ -3368,15 +3368,15 @@ class MicEngine {
       if (idx == null || idx < 0 || idx >= noteEvents.length) continue;
 
       final note = noteEvents[idx];
-      // SESSION-048: Pass wfDedupLastEmitMsOverride=-1 to simulate PRE-MUTATION state
-      // Legacy mutates _wfDedupHistory[key]=nowMs BEFORE shadow runs, causing false MISMATCH
-      // Override=-1 forces arbiter to see null (no prior emit) = fair comparison
+      // SESSION-048: Pass overrides to simulate PRE-MUTATION state
+      // Legacy mutates hitNotes[idx] and _wfDedupHistory BEFORE shadow runs
+      // SESSION-049: alreadyHitOverride=false for HIT+MISS (not just MISS)
       final inputs = _collectArbiterInputs(
         noteIdx: idx,
         note: note,
         elapsedMs: elapsedMs,
         nowMs: nowMs,
-        alreadyHitOverride: legacy.type == DecisionType.miss ? false : null,
+        alreadyHitOverride: (legacy.type == DecisionType.miss || legacy.type == DecisionType.hit) ? false : null,
         wrongFlashEmittedThisTickOverride: false,
         wfDedupLastEmitMsOverride: -1,
       );
