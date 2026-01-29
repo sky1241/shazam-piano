@@ -861,22 +861,22 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
   // User wants: key lights up when playing, turns off when sound stops
   // ══════════════════════════════════════════════════════════════════════════
 
-  /// SESSION-046: Fallback TTL only for edge cases (very long, not the main driver)
-  static const double _detectedFlashTtlMs = 2000.0; // 2s fallback only
+  /// SESSION-046: Fallback TTL only for edge cases
+  static const double _detectedFlashTtlMs = 400.0; // S51: 2s→400ms snappier
 
   /// SESSION-037: TTL window for considering raw detection "recent"
-  static const double _rawDetectionWindowSec = 0.250; // 250ms
+  static const double _rawDetectionWindowSec = 0.150; // S51: 250→150ms tighter
 
-  /// SESSION-046: Release gating constants - MORE REACTIVE
+  /// SESSION-046: Release gating constants - GUITAR HERO STYLE
   static const double _releaseMinRms =
-      0.025; // RMS below this = sound ended (raised for sensitivity)
+      0.020; // S51: Lower = detect silence faster
   static const double _releaseGracePeriodMs =
-      40.0; // Shorter grace = faster off
-  static const double _hardCapMs = 2000.0; // Fallback only, not the main driver
+      25.0; // S51: 40→25ms faster release
+  static const double _hardCapMs = 500.0; // S51: 2s→500ms safety net
 
   /// SESSION-047: No-pitch timeout - if no detection for this long, clear immediately
   static const double _noPitchTimeoutMs =
-      80.0; // 80ms without ANY detection = clear
+      50.0; // S51: 80→50ms = instant clear
 
   /// Update detected flash from MicEngine's last detected pitch
   /// SESSION-037: Now with release gating + hard cap to prevent stuck blue
