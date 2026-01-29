@@ -196,7 +196,8 @@ class PracticeKeyboard extends StatelessWidget {
       // PREUVE: FLASH_KEY_RENDER midi=61 finalColor=GREEN but video shows no flash
       // Black keys (C#, D#, F#, G#, A#) need full color to be visible
       keyColor = isBlack
-          ? AppColors.success // Full opacity on black keys
+          ? AppColors
+                .success // Full opacity on black keys
           : AppColors.success.withValues(alpha: 0.9);
     } else if (wrongFlashActive &&
         wrongFlashNote != null &&
@@ -205,7 +206,8 @@ class PracticeKeyboard extends StatelessWidget {
       // Removed standalone isWrong condition - it caused phantom reds from mic noise
       // SESSION-034 FIX: Use full opacity on black keys for visibility
       keyColor = isBlack
-          ? AppColors.error // Full opacity on black keys
+          ? AppColors
+                .error // Full opacity on black keys
           : AppColors.error.withValues(alpha: 0.9);
     } else if (anticipatedFlashActive &&
         anticipatedFlashNote != null &&
@@ -258,23 +260,28 @@ class PracticeKeyboard extends StatelessWidget {
     // Logs ONLY for flash-targeted notes to avoid spam
     // CRITICAL: Proves whether flash props reach keyboard and final color applied
     if (kDebugMode &&
-        (note == successFlashNote || note == wrongFlashNote ||
-         note == anticipatedFlashNote || note == detectedFlashNote)) {
+        (note == successFlashNote ||
+            note == wrongFlashNote ||
+            note == anticipatedFlashNote ||
+            note == detectedFlashNote)) {
       const cyanColor = Color(0xFF00BCD4);
       const blueColor = Color(0xFF2196F3);
-      final colorName = keyColor == AppColors.success ||
+      final colorName =
+          keyColor == AppColors.success ||
               keyColor == AppColors.success.withValues(alpha: 0.9)
           ? 'GREEN'
           : keyColor == AppColors.error ||
-                  keyColor == AppColors.error.withValues(alpha: 0.9)
-              ? 'RED'
-              : keyColor == cyanColor || keyColor == cyanColor.withValues(alpha: 0.9)
-                  ? 'CYAN'
-                  : keyColor == blueColor || keyColor == blueColor.withValues(alpha: 0.9)
-                      ? 'BLUE'
-                      : keyColor == AppColors.blackKey
-                          ? 'BLACK'
-                          : 'WHITE';
+                keyColor == AppColors.error.withValues(alpha: 0.9)
+          ? 'RED'
+          : keyColor == cyanColor ||
+                keyColor == cyanColor.withValues(alpha: 0.9)
+          ? 'CYAN'
+          : keyColor == blueColor ||
+                keyColor == blueColor.withValues(alpha: 0.9)
+          ? 'BLUE'
+          : keyColor == AppColors.blackKey
+          ? 'BLACK'
+          : 'WHITE';
       // SESSION-035: Add ARGB hex for precise color verification
       final argbHex =
           '0x${keyColor.toARGB32().toRadixString(16).padLeft(8, '0').toUpperCase()}';

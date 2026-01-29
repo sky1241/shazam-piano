@@ -306,7 +306,8 @@ mixin _PracticeUiStageMixin on _PracticePageStateBase {
     final successFlashActive = _isSuccessFlashActive(now);
     final wrongFlashActive = _isWrongFlashActive(now);
     final missFlashActive = _isMissFlashActive(now); // FIX BUG SESSION-005 #4
-    final anticipatedFlashActive = _isAnticipatedFlashActiveForUi(); // SESSION-036
+    final anticipatedFlashActive =
+        _isAnticipatedFlashActiveForUi(); // SESSION-036
     final detectedFlashActive = _isDetectedFlashActiveForUi(); // SESSION-036c
     final recentlyHitNotes = _getRecentlyHitNotes(
       now,
@@ -317,14 +318,17 @@ mixin _PracticeUiStageMixin on _PracticePageStateBase {
     // If wrong flash is active on key A, and detected flash is on key B (A != B),
     // this is a UI mismatch that should not happen. Log and suppress blue.
     // ═══════════════════════════════════════════════════════════════════════════
-    final bool hasMismatch = wrongFlashActive &&
+    final bool hasMismatch =
+        wrongFlashActive &&
         detectedFlashActive &&
         _lastWrongNote != null &&
         _detectedFlashMidi != null &&
         _lastWrongNote != _detectedFlashMidi;
 
     // If mismatch detected, suppress blue flash to only show red
-    final effectiveDetectedFlashActive = hasMismatch ? false : detectedFlashActive;
+    final effectiveDetectedFlashActive = hasMismatch
+        ? false
+        : detectedFlashActive;
     final effectiveDetectedFlashMidi = hasMismatch ? null : _detectedFlashMidi;
 
     // SESSION-038: Log mismatch and increment counter (should be rare/zero after fix)
@@ -337,7 +341,11 @@ mixin _PracticeUiStageMixin on _PracticePageStateBase {
     }
 
     // SESSION-033/036/036c/038: Log keyboard flash props for debugging
-    if (kDebugMode && (successFlashActive || wrongFlashActive || anticipatedFlashActive || effectiveDetectedFlashActive)) {
+    if (kDebugMode &&
+        (successFlashActive ||
+            wrongFlashActive ||
+            anticipatedFlashActive ||
+            effectiveDetectedFlashActive)) {
       debugPrint(
         'KEYBOARD_UI_APPLY activeMidi=${wrongFlashActive ? _lastWrongNote : (effectiveDetectedFlashActive ? effectiveDetectedFlashMidi : _lastCorrectNote)} '
         'color=${wrongFlashActive ? "red" : (successFlashActive ? "green" : (effectiveDetectedFlashActive ? "blue" : "cyan"))} '
@@ -369,7 +377,8 @@ mixin _PracticeUiStageMixin on _PracticePageStateBase {
       anticipatedFlashNote: _anticipatedFlashMidi, // SESSION-036: Zero-lag CYAN
       anticipatedFlashActive: anticipatedFlashActive, // SESSION-036
       // SESSION-038: Use effective values to prevent blue+red mismatch
-      detectedFlashNote: effectiveDetectedFlashMidi, // SESSION-036c/038: Real-time BLUE (unified)
+      detectedFlashNote:
+          effectiveDetectedFlashMidi, // SESSION-036c/038: Real-time BLUE (unified)
       detectedFlashActive: effectiveDetectedFlashActive, // SESSION-036c/038
       noteToXFn: noteToXFn,
       showDebugLabels: showDebugLabels,

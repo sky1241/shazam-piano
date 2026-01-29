@@ -14,7 +14,8 @@ mixin _PracticeUiVideoMixin on _PracticePageStateBase {
     // SESSION-034 FIX: Use explicit expiry timestamp for guaranteed flash visibility
     // More robust: flash active = now is before expiry time (not diff <= duration)
     // This guarantees the flash stays visible for the full duration even with delayed builds
-    final active = _successFlashUntil != null &&
+    final active =
+        _successFlashUntil != null &&
         _lastCorrectNote != null &&
         now.isBefore(_successFlashUntil!);
 
@@ -36,7 +37,8 @@ mixin _PracticeUiVideoMixin on _PracticePageStateBase {
     // SESSION-034 FIX: Use explicit expiry timestamp for guaranteed flash visibility
     // More robust: flash active = now is before expiry time (not diff <= duration)
     // This guarantees the flash stays visible for the full duration even with delayed builds
-    final active = _wrongFlashUntil != null &&
+    final active =
+        _wrongFlashUntil != null &&
         _lastWrongNote != null &&
         now.isBefore(_wrongFlashUntil!);
 

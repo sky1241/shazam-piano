@@ -875,8 +875,7 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
   static const double _hardCapMs = 500.0; // S51: 2s→500ms safety net
 
   /// SESSION-047: No-pitch timeout - if no detection for this long, clear immediately
-  static const double _noPitchTimeoutMs =
-      50.0; // S51: 80→50ms = instant clear
+  static const double _noPitchTimeoutMs = 50.0; // S51: 80→50ms = instant clear
 
   /// Update detected flash from MicEngine's last detected pitch
   /// SESSION-037: Now with release gating + hard cap to prevent stuck blue

@@ -211,31 +211,38 @@ abstract class _PracticePageStateBase extends ConsumerState<PracticePage>
   double? _detectedFlashUntilMs; // Monotonic elapsedMs expiry (nowMs + 150)
   double? _detectedFlashConf; // Last detected confidence (for debug overlay)
   // SESSION-037: Release gating + hard cap state
-  double? _detectedFlashFirstEmitMs; // When this flash first started (for hard cap)
-  double _lastPitchUpdateMs = -10000.0; // Last time a NEW pitch was received (not stale)
+  double?
+  _detectedFlashFirstEmitMs; // When this flash first started (for hard cap)
+  double _lastPitchUpdateMs =
+      -10000.0; // Last time a NEW pitch was received (not stale)
 
   // ══════════════════════════════════════════════════════════════════════════
   // SESSION-038: Per-attack collapse for wrong flash
   // Tracks the onset timestamp of the last wrong flash to collapse duplicates
   // ══════════════════════════════════════════════════════════════════════════
-  double _lastWrongFlashOnsetMs = -10000.0; // Onset timestamp of last wrong flash
+  double _lastWrongFlashOnsetMs =
+      -10000.0; // Onset timestamp of last wrong flash
 
   // ══════════════════════════════════════════════════════════════════════════
   // SESSION-041: Stable dedup for wrong-flash by (noteIdx, attackId) with TTL
   // Prevents multi-rouge on same attack cross-ticks. Key = "noteIdx_attackId"
   // Value = elapsedMs of last emit. TTL defined in _PracticeNotesLogicMixin.
   // ══════════════════════════════════════════════════════════════════════════
-  final Map<String, double> _wrongFlashDedupMap = {}; // key -> lastEmitElapsedMs
+  final Map<String, double> _wrongFlashDedupMap =
+      {}; // key -> lastEmitElapsedMs
 
   // ══════════════════════════════════════════════════════════════════════════
   // SESSION-038: WrongFlash Health Telemetry (kDebugMode only)
   // Counters to objectivize "ça ping pas / ça lag / ça flash pas" feedback
   // ══════════════════════════════════════════════════════════════════════════
-  int _wrongFlashEmitCount = 0; // Red flashes actually emitted (WRONGFLASH_PULSE_EMIT)
+  int _wrongFlashEmitCount =
+      0; // Red flashes actually emitted (WRONGFLASH_PULSE_EMIT)
   int _wrongFlashSkipGatedCount = 0; // Red flashes refused for gating/cooldown
-  int _wrongFlashDuplicateAttackCount = 0; // Flashes skipped (same attack collapse)
+  int _wrongFlashDuplicateAttackCount =
+      0; // Flashes skipped (same attack collapse)
   int _wrongFlashUiMismatchCount = 0; // Times blue≠red mismatch detected
-  double _wrongFlashHealthLastLogMs = -10000.0; // Last WRONGFLASH_HEALTH log time
+  double _wrongFlashHealthLastLogMs =
+      -10000.0; // Last WRONGFLASH_HEALTH log time
   double _wrongFlashSessionStartMs = 0.0; // Session start monotonic time
 
   // FIX BUG SESSION-005 #4: Track MISS notes for red keyboard feedback
