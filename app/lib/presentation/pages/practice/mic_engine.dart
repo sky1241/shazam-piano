@@ -2488,8 +2488,9 @@ class MicEngine {
               //         with same midi=61 because isTriggerOrFailsafe bypassed check
               // Bug: trigger/failsafe samples bypassed msSinceHit<350 gate
               if (msSinceHit < 10 ||
-                  (!sample.isTriggerOrFailsafe && msSinceHit < 350))
+                  (!sample.isTriggerOrFailsafe && msSinceHit < 350)) {
                 continue;
+              }
             }
 
             // Energy check: require trigger/failsafe OR significant dRms
