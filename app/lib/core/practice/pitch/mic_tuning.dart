@@ -212,7 +212,8 @@ class MicTuning {
           probeEnabled: true,
           probeIntervalMs: 250.0, // Faster probes (was 300)
           // Cooldown / anti-tail - FASTER RELEASE
-          pitchClassCooldownMs: 120.0, // Shorter (was 160)
+          // SESSION-054: 120→60ms for low-end hardware baseline
+          pitchClassCooldownMs: 60.0, // Shorter (was 160→120→60)
           postHitCooldownMs: 150.0, // Shorter (was 200)
           releaseRatio: 0.35, // Faster release (was 0.40)
           presenceEndThreshold: 0.25, // Lower threshold (was 0.30)
@@ -229,7 +230,8 @@ class MicTuning {
           noiseFloorMultiplier: 3.0,
           noiseFloorMargin: 0.003,
           // Sustain filter - SHORTER
-          sustainFilterMs: 400.0, // Shorter (was 600)
+          // SESSION-054: 400→250ms for low-end hardware baseline
+          sustainFilterMs: 250.0, // Shorter (was 600→400→250)
         );
 
       case ReverbProfile.medium:
@@ -261,8 +263,9 @@ class MicTuning {
           probeIntervalMs: 300.0,
 
           // === NOTE TRACKER (note_tracker.dart) ===
-          // baseline(old): 160.0 (source: note_tracker.dart:59 cooldownMs default)
-          pitchClassCooldownMs: 160.0,
+          // SESSION-054: 160→60ms for low-end hardware baseline (more attacks recognized)
+          // PREUVE: session-054 only 5 attacks detected, need faster cooldown
+          pitchClassCooldownMs: 60.0,
           // baseline(old): 200.0 (source: note_tracker.dart:60 postHitCooldownMs default)
           postHitCooldownMs: 200.0,
           // baseline(old): 0.40 (source: note_tracker.dart:62 releaseRatio default)
@@ -292,8 +295,9 @@ class MicTuning {
           noiseFloorMargin: 0.004,
 
           // === MIC ENGINE (mic_engine.dart) ===
-          // baseline(old): 600.0 (source: mic_engine.dart:61 sustainFilterMs default)
-          sustainFilterMs: 600.0,
+          // SESSION-054: 600→300ms for low-end hardware (faster release = more attacks)
+          // PREUVE: session-054 NOTE_SUPPRESS reason=held blocking attacks
+          sustainFilterMs: 300.0,
         );
 
       case ReverbProfile.high:
@@ -311,7 +315,8 @@ class MicTuning {
           probeEnabled: true,
           probeIntervalMs: 400.0, // Slower probes (was 300)
           // Cooldown / anti-tail - MORE CONSERVATIVE
-          pitchClassCooldownMs: 220.0, // Longer (was 160)
+          // SESSION-054: 220→100ms even for high reverb (need feedback)
+          pitchClassCooldownMs: 100.0, // (was 160→220→100)
           postHitCooldownMs: 300.0, // Longer (was 200)
           releaseRatio: 0.50, // Slower release (was 0.40)
           presenceEndThreshold: 0.40, // Higher threshold (was 0.30)
@@ -328,7 +333,8 @@ class MicTuning {
           noiseFloorMultiplier: 5.0,
           noiseFloorMargin: 0.006,
           // Sustain filter - LONGER
-          sustainFilterMs: 800.0, // Longer (was 600)
+          // SESSION-054: 800→400ms even for high reverb (need attacks)
+          sustainFilterMs: 400.0, // (was 600→800→400)
         );
     }
   }
@@ -345,7 +351,7 @@ class MicTuning {
     maxEvalsPerBurst: 3,
     probeEnabled: true,
     probeIntervalMs: 300.0,
-    pitchClassCooldownMs: 160.0,
+    pitchClassCooldownMs: 60.0, // SESSION-054: 160→60ms
     postHitCooldownMs: 200.0,
     releaseRatio: 0.40,
     presenceEndThreshold: 0.30,
@@ -359,7 +365,7 @@ class MicTuning {
     baselineMs: 1500,
     noiseFloorMultiplier: 4.0,
     noiseFloorMargin: 0.004,
-    sustainFilterMs: 600.0,
+    sustainFilterMs: 300.0, // SESSION-054: 600→300ms
   );
 
   @override

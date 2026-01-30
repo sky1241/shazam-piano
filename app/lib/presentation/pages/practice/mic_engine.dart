@@ -370,9 +370,10 @@ const int kWrongSampleMaxCount = 16;
 const double kWrongSampleMinConf = 0.95;
 
 /// SESSION-038 FIX: Grace period before emitting fallback wrong flash.
-/// Don't emit fallback wrong in first 400ms of note window (player reaction time).
-/// PREUVE: session-038 shows 6 WRONG_FLASH_EMIT before player had time to play.
-const double kFallbackGracePeriodMs = 400.0;
+/// SESSION-054 FIX: 400→150ms - too long was blocking early attacks
+/// PREUVE: session-054 had 9 WRONG_FLASH_SKIP due to grace_period (only 3 emits!)
+/// Human reaction ~150-250ms, so 150ms grace is sufficient.
+const double kFallbackGracePeriodMs = 150.0;
 
 /// SESSION-021 FIX #3: Enable spike clamp for latency estimation.
 /// When true, rejects latency samples > 2x current median to filter spikes.
