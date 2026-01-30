@@ -63,8 +63,9 @@ class NoteTracker {
     this.rmsEmaAlpha = 0.25,
     this.confEmaAlpha = 0.30,
     // Cooldown/hold - HOTFIX: post-HIT keeps cooldown
+    // SESSION-053: 160→60ms - baseline for low-end hardware (~16 notes/s max)
     this.minHoldMs = 100.0,
-    this.cooldownMs = 160.0,
+    this.cooldownMs = 60.0,
     this.postHitCooldownMs = 200.0, // Extra cooldown after HIT
     // End detection (optional, for NOTE_END logging)
     this.releaseRatio = 0.40,
@@ -76,8 +77,9 @@ class NoteTracker {
     // SESSION-022 V1: Re-attack parameters (LOWERED thresholds for repeated strikes)
     this.reattackDeltaThreshold =
         0.025, // Was 0.05, now lower to catch more reattacks
+    // SESSION-053: 80→60ms - baseline for low-end hardware
     this.minInterOnsetMs =
-        80.0, // Minimum time between re-attacks (anti-reverb)
+        60.0, // Minimum time between re-attacks (anti-reverb)
     // SESSION-022 V1: Silence-based hard release (fixes stuck notes)
     this.silenceRmsThreshold = 0.015, // RMS below this = silence
     this.silenceFramesForRelease =
@@ -519,8 +521,10 @@ class NoteTracker {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // ATTACK GATE CONDITIONS (NO BYPASS - all sources must pass)
-    // HOTFIX P4: Removed isOnsetTrigger bypass
+    // ATTACK GATE CONDITIONS
+    // SESSION-053 FIX: Bypass aboveBackground for TRIGGER events
+    // CAUSE: Per-pitchClass EMA causes cross-octave pollution (C5 spam blocks C4)
+    // FIX: TRIGGER events already passed onset energy check (ratio>1.4), trust them
     // ─────────────────────────────────────────────────────────────────────────
 
     // 1. RMS above background (hybrid: max of absolute and relative margin)
@@ -536,8 +540,14 @@ class NoteTracker {
     // 3. Confidence above minimum (HARDENED: 0.70)
     final confOk = conf >= confAttackMin;
 
-    // ALL conditions must be met - NO BYPASS
-    final allowAttack = risingEdge && aboveBackground && confOk;
+    // SESSION-053: TRIGGER events bypass aboveBackground check
+    // REASON: ONSET_TRIGGER already validated energy via ratio check (>1.4)
+    // This prevents cross-octave EMA pollution from blocking legitimate attacks
+    final isOnsetTrigger = source == 'trigger';
+    final backgroundOk = isOnsetTrigger || aboveBackground;
+
+    // ALL conditions must be met (with TRIGGER bypass for background check)
+    final allowAttack = risingEdge && backgroundOk && confOk;
 
     if (!allowAttack) {
       // TAIL: block because conditions not met
@@ -547,9 +557,9 @@ class NoteTracker {
         // Build reason without string concat in hot path (use ternary)
         final reason = !risingEdge
             ? 'tail_falling'
-            : !aboveBackground
-            ? 'tail_below_bg'
-            : 'tail_low_conf';
+            : !backgroundOk
+                ? 'tail_below_bg'
+                : 'tail_low_conf';
         debugPrint(
           'NOTE_SUPPRESS reason=$reason midi=$midi pc=$pc t=${nowMs.toStringAsFixed(0)}ms '
           'rms=${rmsNow.toStringAsFixed(4)} dRms=${dRms.toStringAsFixed(4)} '
@@ -562,6 +572,15 @@ class NoteTracker {
         shouldEmit: false,
         reason: 'tail',
         isNewAttack: false,
+      );
+    }
+
+    // SESSION-053: Log when trigger bypass was applied
+    if (kDebugMode && isOnsetTrigger && !aboveBackground) {
+      debugPrint(
+        'TRIGGER_BYPASS_BG midi=$midi pc=$pc t=${nowMs.toStringAsFixed(0)}ms '
+        'rms=${rmsNow.toStringAsFixed(4)} rmsEma=${_rmsEma[pc].toStringAsFixed(4)} '
+        'margin=${effectiveMargin.toStringAsFixed(4)} reason=onset_validated_energy',
       );
     }
 

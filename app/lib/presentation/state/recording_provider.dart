@@ -73,11 +73,12 @@ class RecordingNotifier extends StateNotifier<RecordingState> {
           '${tempDir.path}/recording_${DateTime.now().millisecondsSinceEpoch}.m4a';
 
       // Start recording
+      // SESSION-053: bitRate 128k→256k for better piano harmonics/transients
       await _recorder.start(
         const RecordConfig(
           encoder: AudioEncoder.aacLc,
           sampleRate: 44100,
-          bitRate: 128000,
+          bitRate: 256000,
         ),
         path: filePath,
       );

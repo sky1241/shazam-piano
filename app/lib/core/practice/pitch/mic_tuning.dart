@@ -57,7 +57,8 @@ class MicTuning {
     required this.sustainFilterMs,
     // SESSION-022 V1: Re-attack, silence release, and TTL (NoteTracker)
     this.reattackDeltaThreshold = 0.025,
-    this.minInterOnsetMs = 80.0,
+    // SESSION-053: 80→60ms - baseline for low-end hardware
+    this.minInterOnsetMs = 60.0,
     this.silenceRmsThreshold = 0.015,
     this.silenceFramesForRelease = 6,
     this.maxHoldMs = 1200.0,

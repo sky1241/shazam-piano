@@ -436,10 +436,12 @@ class MicEngine {
     // Ignores weak/noisy detections that are likely subharmonics or noise
     this.minConfForPitch = 0.40,
     this.eventDebounceSec = 0.05,
-    this.wrongFlashCooldownSec = 0.15,
+    // SESSION-053: 150→65ms to allow flash on every real attack (covers fast trills)
+    this.wrongFlashCooldownSec = 0.065,
     // SESSION-014: Per-midi dedup for WRONG_FLASH (prevents spam of same wrong note)
     // SESSION-024 FIX: 400→150ms to allow rapid re-attack feedback
-    this.wrongFlashDedupMs = 150.0,
+    // SESSION-053: 150→65ms for real-time human feedback (trills up to 15/sec)
+    this.wrongFlashDedupMs = 65.0,
     // SESSION-014: Max semitone distance for WRONG_FLASH (filters outliers like subharmonics)
     // If detected midi is > 24 semitones from ALL expected midis, ignore it
     // SESSION-023 FIX: Increased from 12 to 24 (2 octaves) to allow octave errors
@@ -465,7 +467,8 @@ class MicEngine {
     this.wrongFlashConfirmWindowMs = 150.0,
     // SESSION-009: Sustain filter - ignore previous note's pitch for wrong detection
     double? sustainFilterMs,
-    this.uiHoldMs = 200,
+    // SESSION-053: 200→150ms for more reactive UI (still > 50ms retinal persistence)
+    this.uiHoldMs = 150,
     this.pitchWindowSize = 2048,
     this.minPitchIntervalMs = 40,
     this.verboseDebug = false,

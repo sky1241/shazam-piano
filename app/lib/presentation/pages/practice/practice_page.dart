@@ -274,19 +274,17 @@ const double _targetChordToleranceSec = 0.03;
 const double _videoSyncOffsetSec = -0.06;
 const double _mergeEventOverlapToleranceSec = 0.05;
 const double _mergeEventGapToleranceSec = 0.08;
-// SESSION-035 FIX: Increased flash duration from 200ms to 350ms
-// PREUVE: session-035 latencyCompMs=250-400ms means HIT detected AFTER note
-//         passes hit line visually. 200ms flash was too short to perceive.
-// BEFORE: Flash appeared "late" and disappeared before player noticed it
-// AFTER: 350ms gives more time for player to see green feedback
-const Duration _successFlashDuration = Duration(milliseconds: 350);
+// SESSION-035 FIX: Flash duration for visual feedback
+// SESSION-053: 350→200ms based on UX studies (150-200ms optimal for micro-interactions)
+// Still > 50ms retinal persistence, responsive but perceptible
+const Duration _successFlashDuration = Duration(milliseconds: 200);
 // SESSION-025 FIX: Separate gate duration for _registerWrongHit anti-spam
 // PREUVE: logcat session-025 shows WRONG_FLASH EMIT every ~150-200ms from MicEngine,
 //         but _registerWrongHit silently blocks flashes < 200ms apart (same note)
 // CAUSE: _successFlashDuration=200ms used for BOTH display duration AND gate
-// CORRECTION: Use dedicated _wrongFlashGateDuration=150ms for gate, aligned with
-//             MicEngine's wrongFlashCooldownSec=0.15 and wrongFlashDedupMs=150
-const Duration _wrongFlashGateDuration = Duration(milliseconds: 150);
+// CORRECTION: Use dedicated _wrongFlashGateDuration for gate, aligned with MicEngine
+// SESSION-053: 150→65ms for real-time human feedback (trills up to 15/sec)
+const Duration _wrongFlashGateDuration = Duration(milliseconds: 65);
 const Duration _devTapWindow = Duration(seconds: 2);
 const int _devTapTarget = 5;
 const double _videoCropFactor = 0.65;
