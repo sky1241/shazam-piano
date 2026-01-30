@@ -6,6 +6,33 @@ mixin _PracticeVideoLogicMixin on _PracticePageStateBase {
   // Abstract methods that must be implemented by the class using this mixin
   void _resanitizeNoteEventsForVideoDuration();
   Future<void> _stopPractice({bool showSummary, String reason});
+  double? _guidanceElapsedSec(); // SESSION-052: For delayed mic stop calculation
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SESSION-052: Delayed mic stop - keep processing until last note window expires
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Safety padding added to processingEndSec (in seconds).
+  /// Ensures mic stays active a bit longer to catch late detections.
+  static const double _micStopSafetyPadSec = 0.35;
+
+  /// Calculate the time until all note windows have expired.
+  /// Returns the required processing end time in elapsed seconds.
+  double _computeProcessingEndSec() {
+    if (_noteEvents.isEmpty) return 0.0;
+
+    // Find the latest note window end
+    double maxWindowEnd = 0.0;
+    for (final note in _noteEvents) {
+      final windowEnd = note.end + _targetWindowTailSec;
+      if (windowEnd > maxWindowEnd) {
+        maxWindowEnd = windowEnd;
+      }
+    }
+
+    // Add safety padding
+    return maxWindowEnd + _micStopSafetyPadSec;
+  }
 
   // ignore: unused_element (called from _PracticeLifecycleMixin)
   void _showVideoNotReadyHint() {
@@ -130,7 +157,36 @@ mixin _PracticeVideoLogicMixin on _PracticePageStateBase {
           _videoEndFired = true;
           // FIX BUG SESSION-005 #5: Force pause immediately to prevent visual respawn
           _videoController?.pause();
-          unawaited(_stopPractice(showSummary: true, reason: 'video_end'));
+
+          // ════════════════════════════════════════════════════════════════════
+          // SESSION-052: Delay mic stop until all note windows have expired
+          // This ensures the last note can still be detected even if video ends early
+          // ════════════════════════════════════════════════════════════════════
+          final elapsedNow = _guidanceElapsedSec() ?? 0.0;
+          final processingEndSec = _computeProcessingEndSec();
+          final delayMs = ((processingEndSec - elapsedNow) * 1000).clamp(0, 2000).toInt();
+
+          if (kDebugMode) {
+            debugPrint(
+              'STOP_SCHEDULE videoEnd elapsed=${elapsedNow.toStringAsFixed(2)} '
+              'processingEnd=${processingEndSec.toStringAsFixed(2)} delayMs=$delayMs',
+            );
+          }
+
+          if (delayMs > 50) {
+            // Delay stop to allow last note detection
+            Future.delayed(Duration(milliseconds: delayMs), () {
+              if (mounted && _videoEndFired) {
+                if (kDebugMode) {
+                  debugPrint('AUDIO_STOP delayed=$delayMs ms');
+                }
+                unawaited(_stopPractice(showSummary: true, reason: 'video_end'));
+              }
+            });
+          } else {
+            // No delay needed, stop immediately
+            unawaited(_stopPractice(showSummary: true, reason: 'video_end'));
+          }
         }
       };
       // C4: Track listener attachment for debugging

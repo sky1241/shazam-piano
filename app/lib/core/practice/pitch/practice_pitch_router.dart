@@ -61,6 +61,9 @@ class PracticePitchRouter {
     this.snapSemitoneTolerance = 0,
     this.goertzelConfidenceThreshold = 0.5,
     this.yinValidationIntervalSec = 1.0,
+    this.yinWarmupPeriodSec = 1.5,
+    this.yinMinRmsForOverride = 0.05,
+    this.yinRmsNoiseMultiplier = 3.0,
   }) : _yin = yinService ?? YinPitchService(),
        _goertzel = goertzelDetector ?? GoertzelDetector();
 
@@ -71,6 +74,35 @@ class PracticePitchRouter {
   /// Maximum interval between YIN validation calls (seconds).
   /// Even if Goertzel is confident, YIN runs at least this often for drift detection.
   final double yinValidationIntervalSec;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SESSION-052: YIN WARMUP GUARD - Prevent YIN hallucinations on weak signals
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Warmup period in seconds during which YIN override is blocked.
+  /// During this period, if Goertzel returns low conf but YIN detects a different
+  /// note, we trust Goertzel (or return empty) instead of YIN's potentially
+  /// hallucinated detection from noise/reverb.
+  /// Default 1.5s = typical mic/baseline warmup time.
+  final double yinWarmupPeriodSec;
+
+  /// Minimum RMS required for YIN to override Goertzel with a different note.
+  /// If RMS < this threshold, YIN's "different note" detection is ignored
+  /// to prevent false WRONG flashes from weak signals.
+  /// Default 0.05 = clearly audible note (not noise/reverb artifact).
+  final double yinMinRmsForOverride;
+
+  /// Multiplier for noise floor to compute dynamic RMS threshold.
+  /// YIN override is only trusted when RMS > noiseFloor * multiplier.
+  /// Default 3.0 = signal must be 3x above noise floor.
+  final double yinRmsNoiseMultiplier;
+
+  /// Noise floor RMS (set during countdown calibration).
+  /// Used to compute dynamic threshold for YIN override trust.
+  double _noiseFloorRms = 0.0;
+
+  /// Set the noise floor RMS for dynamic YIN trust threshold.
+  set noiseFloorRms(double value) => _noiseFloorRms = value;
 
   /// Timestamp of last YIN validation call.
   double _lastYinTimeSec = -1000.0;
@@ -112,6 +144,7 @@ class PracticePitchRouter {
     _lastRawTSec = -1000.0;
     _lastRawSource = 'none';
     _lastYinTimeSec = -1000.0;
+    _noiseFloorRms = 0.0; // SESSION-052: Reset noise floor on session reset
   }
 
   /// Decide which algorithm to use and produce pitch events.
@@ -192,12 +225,14 @@ class PracticePitchRouter {
       );
 
       // ════════════════════════════════════════════════════════════════════════
-      // STEP 3: MERGE RESULTS
+      // STEP 3: MERGE RESULTS (with SESSION-052 warmup/RMS guards)
       // ════════════════════════════════════════════════════════════════════════
       final merged = _mergeResults(
         goertzelResults: goertzelResults,
         yinResults: yinResults,
         expectedMidi: activeExpectedMidis.first,
+        tSec: tSec,
+        rms: rms,
       );
 
       // Debug log
@@ -226,11 +261,14 @@ class PracticePitchRouter {
   /// - If Goertzel found the expected note and YIN confirms → Goertzel wins (faster)
   /// - If Goertzel found nothing but YIN did → YIN wins
   /// - If YIN detects a DIFFERENT note than expected → YIN wins (to detect WRONG)
+  ///   UNLESS we're in warmup period OR RMS is too low (SESSION-052 guard)
   /// - If both empty → empty
   List<RouterPitchEvent> _mergeResults({
     required List<RouterPitchEvent> goertzelResults,
     required List<RouterPitchEvent> yinResults,
     required int expectedMidi,
+    required double tSec,
+    required double rms,
   }) {
     // Case 1: Both empty
     if (goertzelResults.isEmpty && yinResults.isEmpty) {
@@ -256,12 +294,47 @@ class PracticePitchRouter {
       return goertzelResults;
     }
 
-    // YIN contradicts (different note played) → YIN wins to detect WRONG
-    // This is the key case: user played wrong note, Goertzel didn't see it
+    // ══════════════════════════════════════════════════════════════════════════
+    // SESSION-052: YIN OVERRIDE GUARD
+    // YIN detected a different note than Goertzel. This could be:
+    // (a) User played wrong note → we want to return YIN for WRONG flash
+    // (b) YIN hallucinated from noise/reverb → we should trust Goertzel
+    //
+    // Apply guards to distinguish (a) from (b):
+    // 1. Warmup guard: During first yinWarmupPeriodSec, YIN may hallucinate
+    // 2. RMS guard: Low RMS = weak signal, YIN unreliable
+    // ══════════════════════════════════════════════════════════════════════════
+
+    // Guard 1: Warmup period - don't trust YIN override during initial warmup
+    final inWarmup = tSec < yinWarmupPeriodSec;
+
+    // Guard 2: RMS threshold - require strong signal for YIN override
+    final dynamicRmsThreshold = max(
+      yinMinRmsForOverride,
+      _noiseFloorRms * yinRmsNoiseMultiplier,
+    );
+    final rmsOk = rms >= dynamicRmsThreshold;
+
+    // If guards fail, don't trust YIN override - return Goertzel instead
+    if (inWarmup || !rmsOk) {
+      if (kDebugMode) {
+        final reason = inWarmup ? 'warmup' : 'lowRms';
+        debugPrint(
+          'ROUTER_YIN_BLOCKED reason=$reason tSec=${tSec.toStringAsFixed(2)} '
+          'rms=${rms.toStringAsFixed(4)} threshold=${dynamicRmsThreshold.toStringAsFixed(4)} '
+          'noiseFloor=${_noiseFloorRms.toStringAsFixed(4)} '
+          'goertzelMidi=$goertzelMidi yinMidi=$yinMidi expected=$expectedMidi',
+        );
+      }
+      // Return Goertzel results (may be empty if Goertzel conf was below threshold)
+      return goertzelResults;
+    }
+
+    // Guards passed: YIN contradicts with strong signal → YIN wins to detect WRONG
     if (kDebugMode) {
       debugPrint(
         'ROUTER_YIN_OVERRIDE goertzelMidi=$goertzelMidi yinMidi=$yinMidi '
-        'expected=$expectedMidi → returning YIN for WRONG detection',
+        'expected=$expectedMidi rms=${rms.toStringAsFixed(4)} → returning YIN for WRONG detection',
       );
     }
     return yinResults;

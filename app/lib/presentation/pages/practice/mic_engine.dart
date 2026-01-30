@@ -910,11 +910,14 @@ class MicEngine {
           (_noiseFloorRms * tuning.noiseFloorMultiplier + tuning.noiseFloorMargin)
               .clamp(tuning.onsetMinRms, tuning.onsetMinRms * 5);
 
+      // SESSION-052: Pass noise floor to router for YIN override guard
+      _router.noiseFloorRms = _noiseFloorRms;
+
       if (kDebugMode) {
         debugPrint(
           'COUNTDOWN_BASELINE_FINALIZED floor=${_noiseFloorRms.toStringAsFixed(5)} '
           'dynamicOnsetMinRms=${_dynamicOnsetMinRms.toStringAsFixed(5)} '
-          'samples=$_baselineSampleCount',
+          'samples=$_baselineSampleCount routerNoiseFloor=${_noiseFloorRms.toStringAsFixed(5)}',
         );
       }
     } else {
