@@ -17,8 +17,8 @@ class GoertzelDetector {
     this.defaultDominanceRatio = 1.25,
     this.defaultHarmonics = 3,
     this.normalizationGain = 12.0,
-    double pitchOffsetCents = 0.0,
-  }) : _pitchOffsetCents = pitchOffsetCents;
+    this.pitchOffsetCents = 0.0,
+  });
 
   /// Default dominance ratio for neighbor rejection.
   final double defaultDominanceRatio;
@@ -44,18 +44,10 @@ class GoertzelDetector {
   ///
   /// Example: If calibration measures A4 at 442 Hz instead of 440 Hz,
   /// the offset is +7.85 cents: `1200 * log2(442/440) ≈ 7.85`
-  double _pitchOffsetCents;
-
-  /// Get the current pitch offset in cents.
-  double get pitchOffsetCents => _pitchOffsetCents;
-
-  /// Set the pitch offset in cents.
   ///
   /// This should be set based on calibration measurement of the piano's
   /// actual tuning vs standard A4=440 Hz.
-  set pitchOffsetCents(double cents) {
-    _pitchOffsetCents = cents;
-  }
+  double pitchOffsetCents;
 
   /// Convert cents offset to frequency multiplier.
   ///
@@ -243,8 +235,8 @@ class GoertzelDetector {
   /// Use this for detection (targets actual piano frequencies).
   double midiToFrequencyWithOffset(int midi) {
     final baseFreq = midiToFrequency(midi);
-    if (_pitchOffsetCents == 0.0) return baseFreq;
-    return baseFreq * centsToFrequencyRatio(_pitchOffsetCents);
+    if (pitchOffsetCents == 0.0) return baseFreq;
+    return baseFreq * centsToFrequencyRatio(pitchOffsetCents);
   }
 
   /// Goertzel algorithm: compute power at a specific frequency.
