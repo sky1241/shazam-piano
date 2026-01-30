@@ -502,10 +502,7 @@ void main() {
         );
 
         // 2.0 = +1200 cents (octave up)
-        expect(
-          GoertzelDetector.frequencyRatioToCents(2.0),
-          closeTo(1200, 0.1),
-        );
+        expect(GoertzelDetector.frequencyRatioToCents(2.0), closeTo(1200, 0.1));
       });
 
       test('midiToFrequencyWithOffset applies offset', () {
@@ -536,21 +533,15 @@ void main() {
 
         // Without offset - should still detect but maybe lower confidence
         detector.pitchOffsetCents = 0.0;
-        final withoutOffset = detector.detectPresence(
-          samples,
-          44100,
-          [69],
-          dominanceRatio: 1.0,
-        );
+        final withoutOffset = detector.detectPresence(samples, 44100, [
+          69,
+        ], dominanceRatio: 1.0);
 
         // With correct offset (+20 cents) - should detect well
         detector.pitchOffsetCents = 20.0;
-        final withOffset = detector.detectPresence(
-          samples,
-          44100,
-          [69],
-          dominanceRatio: 1.0,
-        );
+        final withOffset = detector.detectPresence(samples, 44100, [
+          69,
+        ], dominanceRatio: 1.0);
 
         // Both should detect, but offset should help
         expect(withoutOffset[69], greaterThan(0.0));

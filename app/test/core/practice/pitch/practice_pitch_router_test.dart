@@ -349,65 +349,71 @@ void main() {
         );
       });
 
-      test('snaps detected MIDI to expected when within tolerance (YIN path)', () {
-        // Generate a note slightly sharp (442 Hz instead of 440 Hz for A4)
-        // 442 Hz is still within ~1 semitone of A4 (440 Hz)
-        final samples = _generateSineWaveWithHarmonics(442.0, 2048, 44100);
+      test(
+        'snaps detected MIDI to expected when within tolerance (YIN path)',
+        () {
+          // Generate a note slightly sharp (442 Hz instead of 440 Hz for A4)
+          // 442 Hz is still within ~1 semitone of A4 (440 Hz)
+          final samples = _generateSineWaveWithHarmonics(442.0, 2048, 44100);
 
-        // Force YIN path to test snap behavior
-        final routerWithSnap = PracticePitchRouter(
-          snapSemitoneTolerance: 1, // Allow 1 semitone snap
-          goertzelConfidenceThreshold: 0.99, // Force YIN
-        );
-
-        final events = routerWithSnap.decide(
-          samples: samples,
-          sampleRate: 44100,
-          activeExpectedMidis: [69], // A4 expected
-          rms: 0.1,
-          tSec: 1.0,
-        );
-
-        expect(routerWithSnap.lastMode, DetectionMode.yin);
-        // If detection works, the MIDI should be snapped to expected (69)
-        if (events.isNotEmpty) {
-          expect(
-            events.first.midi,
-            69,
-            reason: 'Should snap to expected MIDI when within tolerance',
+          // Force YIN path to test snap behavior
+          final routerWithSnap = PracticePitchRouter(
+            snapSemitoneTolerance: 1, // Allow 1 semitone snap
+            goertzelConfidenceThreshold: 0.99, // Force YIN
           );
-        }
-      });
 
-      test('does NOT snap when detected is too far from expected (YIN path)', () {
-        // Generate C4 (261.63 Hz) but expect A4 (69)
-        // C4 (midi 60) is 9 semitones away from A4 (midi 69)
-        final samples = _generateSineWaveWithHarmonics(261.63, 2048, 44100);
-
-        // Force YIN path
-        final routerWithSnap = PracticePitchRouter(
-          snapSemitoneTolerance: 1, // Only 1 semitone tolerance
-          goertzelConfidenceThreshold: 0.99, // Force YIN
-        );
-
-        final events = routerWithSnap.decide(
-          samples: samples,
-          sampleRate: 44100,
-          activeExpectedMidis: [69], // A4 expected, but playing C4
-          rms: 0.1,
-          tSec: 1.0,
-        );
-
-        expect(routerWithSnap.lastMode, DetectionMode.yin);
-        // If detection works, the MIDI should NOT be snapped (wrong note)
-        if (events.isNotEmpty) {
-          expect(
-            events.first.midi,
-            isNot(69),
-            reason: 'Should NOT snap when detected is far from expected',
+          final events = routerWithSnap.decide(
+            samples: samples,
+            sampleRate: 44100,
+            activeExpectedMidis: [69], // A4 expected
+            rms: 0.1,
+            tSec: 1.0,
           );
-        }
-      });
+
+          expect(routerWithSnap.lastMode, DetectionMode.yin);
+          // If detection works, the MIDI should be snapped to expected (69)
+          if (events.isNotEmpty) {
+            expect(
+              events.first.midi,
+              69,
+              reason: 'Should snap to expected MIDI when within tolerance',
+            );
+          }
+        },
+      );
+
+      test(
+        'does NOT snap when detected is too far from expected (YIN path)',
+        () {
+          // Generate C4 (261.63 Hz) but expect A4 (69)
+          // C4 (midi 60) is 9 semitones away from A4 (midi 69)
+          final samples = _generateSineWaveWithHarmonics(261.63, 2048, 44100);
+
+          // Force YIN path
+          final routerWithSnap = PracticePitchRouter(
+            snapSemitoneTolerance: 1, // Only 1 semitone tolerance
+            goertzelConfidenceThreshold: 0.99, // Force YIN
+          );
+
+          final events = routerWithSnap.decide(
+            samples: samples,
+            sampleRate: 44100,
+            activeExpectedMidis: [69], // A4 expected, but playing C4
+            rms: 0.1,
+            tSec: 1.0,
+          );
+
+          expect(routerWithSnap.lastMode, DetectionMode.yin);
+          // If detection works, the MIDI should NOT be snapped (wrong note)
+          if (events.isNotEmpty) {
+            expect(
+              events.first.midi,
+              isNot(69),
+              reason: 'Should NOT snap when detected is far from expected',
+            );
+          }
+        },
+      );
 
       test('snapSemitoneTolerance=0 disables snapping (YIN path)', () {
         final samples = _generateSineWaveWithHarmonics(442.0, 2048, 44100);

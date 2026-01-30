@@ -907,7 +907,8 @@ class MicEngine {
     if (_baselineSampleCount > 0) {
       // Compute dynamic threshold from measured noise floor
       _dynamicOnsetMinRms =
-          (_noiseFloorRms * tuning.noiseFloorMultiplier + tuning.noiseFloorMargin)
+          (_noiseFloorRms * tuning.noiseFloorMultiplier +
+                  tuning.noiseFloorMargin)
               .clamp(tuning.onsetMinRms, tuning.onsetMinRms * 5);
 
       // SESSION-052: Pass noise floor to router for YIN override guard

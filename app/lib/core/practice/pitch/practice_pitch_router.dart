@@ -208,7 +208,8 @@ class PracticePitchRouter {
     // ══════════════════════════════════════════════════════════════════════════
     final isMono = activeExpectedMidis.length == 1;
     final goertzelNeedsHelp = bestGoertzelConf < goertzelConfidenceThreshold;
-    final yinValidationDue = (tSec - _lastYinTimeSec) > yinValidationIntervalSec;
+    final yinValidationDue =
+        (tSec - _lastYinTimeSec) > yinValidationIntervalSec;
 
     final shouldRunYin = isMono && (goertzelNeedsHelp || yinValidationDue);
 

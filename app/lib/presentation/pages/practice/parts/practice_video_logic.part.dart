@@ -6,7 +6,8 @@ mixin _PracticeVideoLogicMixin on _PracticePageStateBase {
   // Abstract methods that must be implemented by the class using this mixin
   void _resanitizeNoteEventsForVideoDuration();
   Future<void> _stopPractice({bool showSummary, String reason});
-  double? _guidanceElapsedSec(); // SESSION-052: For delayed mic stop calculation
+  double?
+  _guidanceElapsedSec(); // SESSION-052: For delayed mic stop calculation
 
   // ══════════════════════════════════════════════════════════════════════════
   // SESSION-052: Delayed mic stop - keep processing until last note window expires
@@ -164,7 +165,9 @@ mixin _PracticeVideoLogicMixin on _PracticePageStateBase {
           // ════════════════════════════════════════════════════════════════════
           final elapsedNow = _guidanceElapsedSec() ?? 0.0;
           final processingEndSec = _computeProcessingEndSec();
-          final delayMs = ((processingEndSec - elapsedNow) * 1000).clamp(0, 2000).toInt();
+          final delayMs = ((processingEndSec - elapsedNow) * 1000)
+              .clamp(0, 2000)
+              .toInt();
 
           if (kDebugMode) {
             debugPrint(
@@ -180,7 +183,9 @@ mixin _PracticeVideoLogicMixin on _PracticePageStateBase {
                 if (kDebugMode) {
                   debugPrint('AUDIO_STOP delayed=$delayMs ms');
                 }
-                unawaited(_stopPractice(showSummary: true, reason: 'video_end'));
+                unawaited(
+                  _stopPractice(showSummary: true, reason: 'video_end'),
+                );
               }
             });
           } else {
