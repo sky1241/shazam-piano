@@ -1,3 +1,5 @@
+import 'dart:math' show max;
+
 import 'package:flutter/foundation.dart';
 
 import 'yin_pitch_service.dart';
@@ -37,13 +39,19 @@ enum DetectionMode {
   goertzel,
 }
 
-/// Routes pitch detection between YIN (mono-note) and Goertzel (chords).
+/// Routes pitch detection between Goertzel (fast) and YIN (validation).
 ///
-/// This router decides which algorithm to use based on the number of
-/// expected notes:
+/// ARCHITECTURE (Goertzel-first):
 /// - 0 expected notes → no detection
-/// - 1 expected note → YIN (precise pitch detection)
-/// - 2+ expected notes → Goertzel (multi-bin presence detection)
+/// - 1+ expected notes → Goertzel ALWAYS runs first (fast, ~5ms)
+/// - YIN runs as backup ONLY when:
+///   - Single note expected AND
+///   - (Goertzel confidence < threshold OR periodic validation)
+///
+/// This provides:
+/// - Fast response time (Goertzel is O(N) per frequency)
+/// - YIN validation catches wrong notes Goertzel can't see
+/// - Lower CPU usage (YIN runs occasionally, not every frame)
 ///
 /// The router does NOT modify scoring logic - it only produces PitchEvents.
 class PracticePitchRouter {
@@ -51,8 +59,21 @@ class PracticePitchRouter {
     YinPitchService? yinService,
     GoertzelDetector? goertzelDetector,
     this.snapSemitoneTolerance = 0,
+    this.goertzelConfidenceThreshold = 0.5,
+    this.yinValidationIntervalSec = 1.0,
   }) : _yin = yinService ?? YinPitchService(),
        _goertzel = goertzelDetector ?? GoertzelDetector();
+
+  /// Goertzel confidence threshold below which YIN is triggered for validation.
+  /// Default 0.5 (after normalization × 12, good signals reach 0.6-0.9).
+  final double goertzelConfidenceThreshold;
+
+  /// Maximum interval between YIN validation calls (seconds).
+  /// Even if Goertzel is confident, YIN runs at least this often for drift detection.
+  final double yinValidationIntervalSec;
+
+  /// Timestamp of last YIN validation call.
+  double _lastYinTimeSec = -1000.0;
 
   /// Semitone tolerance for snapping detected pitch to expected (mono mode).
   /// Default 0 = strict mode (no tolerance, C4 != C#4).
@@ -90,9 +111,15 @@ class PracticePitchRouter {
     _lastRawConf = null;
     _lastRawTSec = -1000.0;
     _lastRawSource = 'none';
+    _lastYinTimeSec = -1000.0;
   }
 
   /// Decide which algorithm to use and produce pitch events.
+  ///
+  /// GOERTZEL-FIRST ARCHITECTURE:
+  /// 1. Goertzel runs ALWAYS (fast, targeted detection)
+  /// 2. YIN runs ONLY when mono + (low confidence OR periodic validation)
+  /// 3. Results are merged: YIN wins if it detects a different note (WRONG)
   ///
   /// Parameters:
   /// - [samples]: Audio buffer (mono, Float32List)
@@ -123,22 +150,10 @@ class PracticePitchRouter {
       return [];
     }
 
-    // Single note → use YIN for precise pitch detection
-    if (activeExpectedMidis.length == 1) {
-      _lastMode = DetectionMode.yin;
-      return _detectWithYin(
-        samples: samples,
-        sampleRate: sampleRate,
-        expectedMidi: activeExpectedMidis.first,
-        rms: rms,
-        tSec: tSec,
-        minConfidence: yinMinConfidence,
-      );
-    }
-
-    // Multiple notes → use Goertzel for chord detection
-    _lastMode = DetectionMode.goertzel;
-    return _detectWithGoertzel(
+    // ══════════════════════════════════════════════════════════════════════════
+    // STEP 1: GOERTZEL ALWAYS RUNS FIRST (even for single note)
+    // ══════════════════════════════════════════════════════════════════════════
+    final goertzelResults = _detectWithGoertzel(
       samples: samples,
       sampleRate: sampleRate,
       activeExpectedMidis: activeExpectedMidis,
@@ -149,6 +164,107 @@ class PracticePitchRouter {
       harmonics: goertzelHarmonics,
       minConfidence: goertzelMinConfidence,
     );
+
+    // Find best Goertzel confidence
+    final bestGoertzelConf = goertzelResults.isEmpty
+        ? 0.0
+        : goertzelResults.map((e) => e.conf).reduce(max);
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // STEP 2: YIN CONDITIONAL (mono only, when needed)
+    // ══════════════════════════════════════════════════════════════════════════
+    final isMono = activeExpectedMidis.length == 1;
+    final goertzelNeedsHelp = bestGoertzelConf < goertzelConfidenceThreshold;
+    final yinValidationDue = (tSec - _lastYinTimeSec) > yinValidationIntervalSec;
+
+    final shouldRunYin = isMono && (goertzelNeedsHelp || yinValidationDue);
+
+    if (shouldRunYin) {
+      _lastYinTimeSec = tSec;
+
+      final yinResults = _detectWithYin(
+        samples: samples,
+        sampleRate: sampleRate,
+        expectedMidi: activeExpectedMidis.first,
+        rms: rms,
+        tSec: tSec,
+        minConfidence: yinMinConfidence,
+      );
+
+      // ════════════════════════════════════════════════════════════════════════
+      // STEP 3: MERGE RESULTS
+      // ════════════════════════════════════════════════════════════════════════
+      final merged = _mergeResults(
+        goertzelResults: goertzelResults,
+        yinResults: yinResults,
+        expectedMidi: activeExpectedMidis.first,
+      );
+
+      // Debug log
+      if (kDebugMode) {
+        debugPrint(
+          'ROUTER_YIN_TRIGGERED t=${tSec.toStringAsFixed(2)} '
+          'goertzelConf=${bestGoertzelConf.toStringAsFixed(2)} '
+          'reason=${goertzelNeedsHelp ? "lowConf" : "periodic"} '
+          'yinMidi=${yinResults.isNotEmpty ? yinResults.first.midi : "none"} '
+          'merged=${merged.isNotEmpty ? merged.first.midi : "none"}',
+        );
+      }
+
+      _lastMode = DetectionMode.yin;
+      return merged;
+    }
+
+    // No YIN needed, return Goertzel results directly
+    _lastMode = DetectionMode.goertzel;
+    return goertzelResults;
+  }
+
+  /// Merge Goertzel and YIN results with smart conflict resolution.
+  ///
+  /// Rules:
+  /// - If Goertzel found the expected note and YIN confirms → Goertzel wins (faster)
+  /// - If Goertzel found nothing but YIN did → YIN wins
+  /// - If YIN detects a DIFFERENT note than expected → YIN wins (to detect WRONG)
+  /// - If both empty → empty
+  List<RouterPitchEvent> _mergeResults({
+    required List<RouterPitchEvent> goertzelResults,
+    required List<RouterPitchEvent> yinResults,
+    required int expectedMidi,
+  }) {
+    // Case 1: Both empty
+    if (goertzelResults.isEmpty && yinResults.isEmpty) {
+      return [];
+    }
+
+    // Case 2: YIN empty → trust Goertzel
+    if (yinResults.isEmpty) {
+      return goertzelResults;
+    }
+
+    // Case 3: Goertzel empty → trust YIN
+    if (goertzelResults.isEmpty) {
+      return yinResults;
+    }
+
+    // Case 4: Both have results - check for contradiction
+    final yinMidi = yinResults.first.midi;
+    final goertzelMidi = goertzelResults.first.midi;
+
+    // YIN confirms Goertzel (same note or within 1 semitone) → Goertzel wins
+    if ((yinMidi - goertzelMidi).abs() <= 1) {
+      return goertzelResults;
+    }
+
+    // YIN contradicts (different note played) → YIN wins to detect WRONG
+    // This is the key case: user played wrong note, Goertzel didn't see it
+    if (kDebugMode) {
+      debugPrint(
+        'ROUTER_YIN_OVERRIDE goertzelMidi=$goertzelMidi yinMidi=$yinMidi '
+        'expected=$expectedMidi → returning YIN for WRONG detection',
+      );
+    }
+    return yinResults;
   }
 
   /// Detect pitch using YIN algorithm with tolerant snap.

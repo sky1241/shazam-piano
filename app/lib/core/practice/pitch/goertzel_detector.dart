@@ -17,7 +17,8 @@ class GoertzelDetector {
     this.defaultDominanceRatio = 1.25,
     this.defaultHarmonics = 3,
     this.normalizationGain = 12.0,
-  });
+    double pitchOffsetCents = 0.0,
+  }) : _pitchOffsetCents = pitchOffsetCents;
 
   /// Default dominance ratio for neighbor rejection.
   final double defaultDominanceRatio;
@@ -31,6 +32,49 @@ class GoertzelDetector {
   /// Cached Hann window coefficients (reused if same length).
   Float32List? _cachedHannWindow;
   int _cachedHannLength = 0;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // PITCH OFFSET: Support for detuned pianos
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Global pitch offset in cents (100 cents = 1 semitone).
+  ///
+  /// Positive values = piano is sharp (frequencies higher than standard).
+  /// Negative values = piano is flat (frequencies lower than standard).
+  ///
+  /// Example: If calibration measures A4 at 442 Hz instead of 440 Hz,
+  /// the offset is +7.85 cents: `1200 * log2(442/440) ≈ 7.85`
+  double _pitchOffsetCents;
+
+  /// Get the current pitch offset in cents.
+  double get pitchOffsetCents => _pitchOffsetCents;
+
+  /// Set the pitch offset in cents.
+  ///
+  /// This should be set based on calibration measurement of the piano's
+  /// actual tuning vs standard A4=440 Hz.
+  set pitchOffsetCents(double cents) {
+    _pitchOffsetCents = cents;
+  }
+
+  /// Convert cents offset to frequency multiplier.
+  ///
+  /// Formula: ratio = 2^(cents/1200)
+  /// - +100 cents → 2^(100/1200) ≈ 1.0595 (1 semitone up)
+  /// - -100 cents → 2^(-100/1200) ≈ 0.9439 (1 semitone down)
+  static double centsToFrequencyRatio(double cents) {
+    if (cents == 0.0) return 1.0;
+    return pow(2, cents / 1200.0).toDouble();
+  }
+
+  /// Convert frequency ratio to cents offset.
+  ///
+  /// Formula: cents = 1200 * log2(ratio)
+  /// Useful for computing offset from measured vs expected frequency.
+  static double frequencyRatioToCents(double ratio) {
+    if (ratio <= 0) return 0.0;
+    return 1200.0 * log(ratio) / ln2;
+  }
 
   /// Detect presence confidence for multiple MIDI notes.
   ///
@@ -164,13 +208,16 @@ class GoertzelDetector {
   /// Compute weighted harmonic score for a MIDI note.
   ///
   /// score = power(f0) + 0.5*power(2*f0) + 0.25*power(3*f0) + ...
+  ///
+  /// Uses [_pitchOffsetCents] to adjust target frequency for detuned pianos.
   double _computeHarmonicScore(
     Float32List samples,
     int sampleRate,
     int midi,
     int harmonicCount,
   ) {
-    final f0 = midiToFrequency(midi);
+    // Apply pitch offset to target the actual piano frequency
+    final f0 = midiToFrequencyWithOffset(midi);
     var score = 0.0;
 
     // Harmonic weights: 1.0, 0.5, 0.25, 0.125, 0.0625
@@ -188,6 +235,16 @@ class GoertzelDetector {
     }
 
     return score;
+  }
+
+  /// Convert MIDI note to frequency with pitch offset applied.
+  ///
+  /// This is the instance method that applies [_pitchOffsetCents].
+  /// Use this for detection (targets actual piano frequencies).
+  double midiToFrequencyWithOffset(int midi) {
+    final baseFreq = midiToFrequency(midi);
+    if (_pitchOffsetCents == 0.0) return baseFreq;
+    return baseFreq * centsToFrequencyRatio(_pitchOffsetCents);
   }
 
   /// Goertzel algorithm: compute power at a specific frequency.

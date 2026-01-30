@@ -843,6 +843,93 @@ class MicEngine {
   /// SESSION-016: Dynamic onset minimum RMS (after auto-baseline).
   double get dynamicOnsetMinRms => _dynamicOnsetMinRms;
 
+  /// Whether noise baseline calibration is complete.
+  bool get isBaselineComplete => _baselineComplete;
+
+  /// Current noise floor RMS estimate.
+  double get noiseFloorRms => _noiseFloorRms;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // COUNTDOWN CALIBRATION: Noise floor measurement during Play→Notes delay
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Ingest audio samples during countdown for noise floor calibration.
+  ///
+  /// This method is called during the countdown phase (before notes start falling)
+  /// to measure the room's ambient noise level. Unlike [onAudioChunk], this:
+  /// - Does NOT perform pitch detection
+  /// - Does NOT update scoring state
+  /// - ONLY measures RMS and updates noise baseline
+  ///
+  /// Call this during the 2-3 second countdown delay to calibrate microphone
+  /// sensitivity to the user's environment.
+  void ingestCountdownSamples(List<double> samples) {
+    if (samples.isEmpty) return;
+    if (_baselineComplete) return; // Already calibrated
+
+    // Compute RMS
+    final rms = _computeRms(samples);
+    _lastRms = rms;
+
+    // During countdown, we assume the environment is "silent" (user not playing)
+    // So we can directly update the noise floor without onset guards
+    // Use a higher silence threshold since this is explicitly a calibration phase
+    const double countdownSilenceMaxRms = 0.02; // Max RMS to consider "silent"
+
+    if (rms < countdownSilenceMaxRms && rms > 0.0001) {
+      // Update noise floor with EMA
+      _baselineSampleCount++;
+      if (_baselineSampleCount == 1) {
+        _noiseFloorRms = rms;
+      } else {
+        // Slow EMA (alpha=0.1) for stable noise floor estimation
+        _noiseFloorRms = _noiseFloorRms * 0.9 + rms * 0.1;
+      }
+
+      if (kDebugMode && _baselineSampleCount % 20 == 0) {
+        debugPrint(
+          'COUNTDOWN_NOISE_BASELINE floor=${_noiseFloorRms.toStringAsFixed(5)} '
+          'rms=${rms.toStringAsFixed(5)} samples=$_baselineSampleCount',
+        );
+      }
+    }
+  }
+
+  /// Finalize the noise baseline after countdown completes.
+  ///
+  /// Call this when countdown ends and notes are about to start falling.
+  /// This computes the dynamic onset threshold from the measured noise floor.
+  void finalizeCountdownBaseline() {
+    if (_baselineComplete) return; // Already finalized
+
+    _baselineComplete = true;
+
+    if (_baselineSampleCount > 0) {
+      // Compute dynamic threshold from measured noise floor
+      _dynamicOnsetMinRms =
+          (_noiseFloorRms * tuning.noiseFloorMultiplier + tuning.noiseFloorMargin)
+              .clamp(tuning.onsetMinRms, tuning.onsetMinRms * 5);
+
+      if (kDebugMode) {
+        debugPrint(
+          'COUNTDOWN_BASELINE_FINALIZED floor=${_noiseFloorRms.toStringAsFixed(5)} '
+          'dynamicOnsetMinRms=${_dynamicOnsetMinRms.toStringAsFixed(5)} '
+          'samples=$_baselineSampleCount',
+        );
+      }
+    } else {
+      // No samples collected, use preset threshold
+      _dynamicOnsetMinRms = tuning.onsetMinRms;
+
+      if (kDebugMode) {
+        debugPrint(
+          'COUNTDOWN_BASELINE_FINALIZED no_samples, using preset '
+          'dynamicOnsetMinRms=${_dynamicOnsetMinRms.toStringAsFixed(5)}',
+        );
+      }
+    }
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
   // SESSION-036: Onset state exposure for anticipated flash (zero-lag feel)
   // ══════════════════════════════════════════════════════════════════════════

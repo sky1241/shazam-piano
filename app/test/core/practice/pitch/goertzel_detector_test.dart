@@ -450,6 +450,136 @@ void main() {
         expect(result[69], greaterThan(result[70]!));
       });
     });
+
+    group('pitch offset (detuned piano support)', () {
+      test('default pitch offset is 0', () {
+        expect(detector.pitchOffsetCents, 0.0);
+      });
+
+      test('centsToFrequencyRatio converts correctly', () {
+        // 0 cents = no change
+        expect(GoertzelDetector.centsToFrequencyRatio(0), 1.0);
+
+        // +100 cents = 1 semitone up ≈ 1.0595
+        expect(
+          GoertzelDetector.centsToFrequencyRatio(100),
+          closeTo(1.0595, 0.001),
+        );
+
+        // -100 cents = 1 semitone down ≈ 0.9439
+        expect(
+          GoertzelDetector.centsToFrequencyRatio(-100),
+          closeTo(0.9439, 0.001),
+        );
+
+        // +1200 cents = 1 octave up = 2.0
+        expect(
+          GoertzelDetector.centsToFrequencyRatio(1200),
+          closeTo(2.0, 0.001),
+        );
+
+        // -1200 cents = 1 octave down = 0.5
+        expect(
+          GoertzelDetector.centsToFrequencyRatio(-1200),
+          closeTo(0.5, 0.001),
+        );
+      });
+
+      test('frequencyRatioToCents converts correctly', () {
+        // 1.0 = 0 cents
+        expect(GoertzelDetector.frequencyRatioToCents(1.0), closeTo(0, 0.1));
+
+        // 442/440 ≈ +7.85 cents (typical piano sharp)
+        expect(
+          GoertzelDetector.frequencyRatioToCents(442 / 440),
+          closeTo(7.85, 0.1),
+        );
+
+        // 438/440 ≈ -7.88 cents (typical piano flat)
+        expect(
+          GoertzelDetector.frequencyRatioToCents(438 / 440),
+          closeTo(-7.88, 0.1),
+        );
+
+        // 2.0 = +1200 cents (octave up)
+        expect(
+          GoertzelDetector.frequencyRatioToCents(2.0),
+          closeTo(1200, 0.1),
+        );
+      });
+
+      test('midiToFrequencyWithOffset applies offset', () {
+        // A4 with no offset = 440 Hz
+        detector.pitchOffsetCents = 0.0;
+        expect(detector.midiToFrequencyWithOffset(69), closeTo(440.0, 0.01));
+
+        // A4 with +50 cents (half semitone sharp)
+        detector.pitchOffsetCents = 50.0;
+        final sharpFreq = detector.midiToFrequencyWithOffset(69);
+        expect(sharpFreq, closeTo(452.89, 0.1)); // 440 * 2^(50/1200)
+
+        // A4 with -50 cents (half semitone flat)
+        detector.pitchOffsetCents = -50.0;
+        final flatFreq = detector.midiToFrequencyWithOffset(69);
+        expect(flatFreq, closeTo(427.47, 0.1)); // 440 * 2^(-50/1200)
+      });
+
+      test('pitch offset improves detection of detuned piano', () {
+        // Simulate a piano tuned +20 cents sharp (442.5 Hz for A4)
+        // Generate a signal at 442.5 Hz (sharp A4)
+        final sharpA4Freq = 440.0 * pow(2, 20 / 1200.0); // ~442.5 Hz
+        final samples = _generateSineWaveWithHarmonics(
+          sharpA4Freq.toDouble(),
+          2048,
+          44100,
+        );
+
+        // Without offset - should still detect but maybe lower confidence
+        detector.pitchOffsetCents = 0.0;
+        final withoutOffset = detector.detectPresence(
+          samples,
+          44100,
+          [69],
+          dominanceRatio: 1.0,
+        );
+
+        // With correct offset (+20 cents) - should detect well
+        detector.pitchOffsetCents = 20.0;
+        final withOffset = detector.detectPresence(
+          samples,
+          44100,
+          [69],
+          dominanceRatio: 1.0,
+        );
+
+        // Both should detect, but offset should help
+        expect(withoutOffset[69], greaterThan(0.0));
+        expect(withOffset[69], greaterThan(0.0));
+
+        // With correct offset, confidence should be at least as good
+        expect(
+          withOffset[69]! >= withoutOffset[69]! * 0.9,
+          isTrue,
+          reason: 'Correct offset should maintain or improve detection',
+        );
+      });
+
+      test('constructor accepts initial pitch offset', () {
+        final detectorWithOffset = GoertzelDetector(pitchOffsetCents: 15.0);
+        expect(detectorWithOffset.pitchOffsetCents, 15.0);
+      });
+
+      test('pitch offset can be updated at runtime', () {
+        detector.pitchOffsetCents = 0.0;
+        expect(detector.pitchOffsetCents, 0.0);
+
+        detector.pitchOffsetCents = 10.0;
+        expect(detector.pitchOffsetCents, 10.0);
+
+        detector.pitchOffsetCents = -5.0;
+        expect(detector.pitchOffsetCents, -5.0);
+      });
+    });
   });
 }
 

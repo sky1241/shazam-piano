@@ -22,8 +22,14 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
       return;
     }
     if (_startTime == null && !injected) return;
-    // D1: Disable mic during countdown (anti-pollution: avoid capturing app's reference note)
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // D1: During countdown - calibrate noise floor but skip pitch detection
+    // This uses the 2-3 second Play→Notes delay to measure ambient noise
+    // ═══════════════════════════════════════════════════════════════════════════
     if (_practiceState == _PracticeState.countdown) {
+      // Feed samples to MicEngine for noise floor calibration only
+      _micEngine?.ingestCountdownSamples(samples);
       return;
     }
 

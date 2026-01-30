@@ -502,10 +502,18 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
       // This ensures smooth transition: synthetic countdown ends at 0.0s, running starts at 0.0s
       // The latency compensation in _practiceClockSec() will naturally delay elapsed by ~100ms
       _startTime = DateTime.now();
+      // Finalize noise baseline before transitioning to running
+      // This uses the RMS samples collected during countdown to set dynamic thresholds
+      _micEngine?.finalizeCountdownBaseline();
+
       if (kDebugMode) {
         final finalElapsed = _guidanceElapsedSec();
+        final noiseFloor = _micEngine?.noiseFloorRms ?? 0.0;
+        final dynamicThreshold = _micEngine?.dynamicOnsetMinRms ?? 0.0;
         debugPrint(
-          'COUNTDOWN_FINISH elapsedMs=$elapsedMs countdownCompleteSec=$countdownCompleteSec finalElapsed=${finalElapsed?.toStringAsFixed(3)} latency=${_latencyMs.toStringAsFixed(1)}ms -> RUNNING',
+          'COUNTDOWN_FINISH elapsedMs=$elapsedMs countdownCompleteSec=$countdownCompleteSec '
+          'finalElapsed=${finalElapsed?.toStringAsFixed(3)} latency=${_latencyMs.toStringAsFixed(1)}ms '
+          'noiseFloor=${noiseFloor.toStringAsFixed(5)} dynamicThreshold=${dynamicThreshold.toStringAsFixed(5)} -> RUNNING',
         );
       }
       if (mounted) {
