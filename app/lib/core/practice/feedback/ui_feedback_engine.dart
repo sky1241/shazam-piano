@@ -208,9 +208,9 @@ class UIFeedbackEngine {
       if (elapsed > greenFlashDurationMs) {
         _lastGreenMidi = null;
         greenMidi = null;
-      } else if (greenMidi == null) {
+      } else {
         // Flash encore actif
-        greenMidi = _lastGreenMidi;
+        greenMidi ??= _lastGreenMidi;
       }
     }
 
@@ -243,9 +243,9 @@ class UIFeedbackEngine {
       if (elapsed > redFlashDurationMs) {
         _lastRedMidi = null;
         redMidi = null;
-      } else if (redMidi == null && _lastRedMidi != null) {
+      } else {
         // Flash encore actif
-        redMidi = _lastRedMidi;
+        redMidi ??= _lastRedMidi;
       }
     }
 
