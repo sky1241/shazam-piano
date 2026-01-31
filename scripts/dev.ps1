@@ -236,179 +236,85 @@ try {
       }
 
       # ============================================================
-      # INVARIANT 2: PID-BASED LOGCAT + FALLBACK + AUTO RE-SYNC
+      # INVARIANT 2: SIMPLE LOGCAT WITH FILE OUTPUT
       # ============================================================
-      $logcatScript = @"
-`$host.UI.RawUI.WindowTitle = 'Logcat'
-`$ErrorActionPreference = 'Continue'
-`$pidTimeout = $pidTimeout
-`$packageName = '$packageName'
-`$deviceSerial = '$deviceSerial'
-`$logFile = '$logFile'
-`$adbSerial = '$adbSerial'
-`$startTime = Get-Date
-
-# ============================================================
-# HEADER INFO
-# ============================================================
-Write-Host '============================================================' -ForegroundColor Cyan
-Write-Host '  LOGCAT - PID-FILTERED + AUTO RE-SYNC ON RESTART' -ForegroundColor Cyan
-Write-Host '============================================================' -ForegroundColor Cyan
-Write-Host ''
-Write-Host "PACKAGE_EFFECTIVE = `$packageName"
-Write-Host "DEVICE_SERIAL     = `$deviceSerial"
-Write-Host "LOG_FILE          = `$logFile"
-Write-Host "PID_TIMEOUT       = `$pidTimeout seconds"
-Write-Host ''
-
-# Write PROOF_LOGCAT header to file
-@"
+      # Write header to log file
+      $headerContent = @"
 ============================================================
 PROOF_LOGCAT HEADER
 ============================================================
-PROOF_DEVICE_SERIAL   = `$deviceSerial
-PROOF_PACKAGE         = `$packageName
-PROOF_START_TIME      = `$(`$startTime.ToString('yyyy-MM-dd HH:mm:ss'))
-PROOF_LOG_FILE        = `$logFile
+PROOF_DEVICE_SERIAL   = $deviceSerial
+PROOF_PACKAGE         = $packageName
+PROOF_START_TIME      = $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+PROOF_LOG_FILE        = $logFile
 ============================================================
 
-"@ | Out-File -Encoding utf8 -FilePath `$logFile
-
-# Clear logcat buffer
-Write-Host 'Clearing logcat buffer...' -ForegroundColor Yellow
-adb `$adbSerial logcat -c 2>`$null
-
-# Function to get PID with timeout
-function Get-AppPid {
-  param([int]`$Timeout)
-  `$pid = `$null
-  `$elapsed = 0
-  while (-not `$pid -and `$elapsed -lt `$Timeout) {
-    Start-Sleep -Seconds 1
-    `$elapsed++
-    `$pidResult = adb `$adbSerial shell pidof -s `$packageName 2>`$null
-    if (`$pidResult -and `$pidResult -match '^\d+`$') {
-      `$pid = `$pidResult.Trim()
-    }
-    Write-Host "`rWaiting for PID... (`$elapsed/`$Timeout)   " -NoNewline
-  }
-  Write-Host ''
-  return `$pid
-}
-
-# Function to check if --pid is supported
-function Test-PidSupport {
-  `$testOutput = adb `$adbSerial logcat --pid=1 -d -t 1 2>&1
-  return -not (`$testOutput -match 'unknown option|Invalid|error')
-}
-
-# Get initial PID
-`$currentPid = Get-AppPid -Timeout `$pidTimeout
-
-if (-not `$currentPid) {
-  Write-Host ''
-  Write-Host '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!' -ForegroundColor Red
-  Write-Host "  FAIL: PID NOT FOUND AFTER `$pidTimeout SECONDS" -ForegroundColor Red
-  Write-Host '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!' -ForegroundColor Red
-  Write-Host ''
-  Write-Host "Package: `$packageName" -ForegroundColor Yellow
-  Write-Host 'Verify: package name / app installed / device serial' -ForegroundColor Yellow
-  "PROOF_PID = FAIL_NOT_FOUND" | Out-File -Append -Encoding utf8 -FilePath `$logFile
-  exit 1
-}
-
-# Test if --pid is supported
-`$pidSupported = Test-PidSupport
-`$captureMode = if (`$pidSupported) { 'PID_NATIVE' } else { 'FULL_CAPTURE_FALLBACK' }
-
-"PROOF_PID             = `$currentPid
-PROOF_CAPTURE_MODE    = `$captureMode
-============================================================
-" | Out-File -Append -Encoding utf8 -FilePath `$logFile
-
-Write-Host ''
-Write-Host '============================================================' -ForegroundColor Green
-Write-Host "  LOGCAT_PID=`$currentPid MODE=`$captureMode" -ForegroundColor Green
-Write-Host '============================================================' -ForegroundColor Green
-Write-Host ''
-
-if (-not `$pidSupported) {
-  Write-Host 'WARNING: --pid not supported, using full capture + PS filter' -ForegroundColor Yellow
-}
-
-Write-Host 'Streaming logs (auto re-sync on app restart)...' -ForegroundColor Cyan
-Write-Host 'Press Ctrl+C to stop.' -ForegroundColor Gray
-Write-Host ''
-
-# Main loop with PID monitoring
-while (`$true) {
-  if (`$pidSupported) {
-    # Native PID filtering
-    `$proc = Start-Process -FilePath 'adb' -ArgumentList "`$adbSerial logcat --pid=`$currentPid -v time" -NoNewWindow -PassThru -RedirectStandardOutput "`$env:TEMP\logcat_pid_`$currentPid.tmp"
-
-    # Monitor PID while streaming
-    while (-not `$proc.HasExited) {
-      # Check if PID still exists
-      `$checkPid = adb `$adbSerial shell pidof -s `$packageName 2>`$null
-      if (`$checkPid) { `$checkPid = `$checkPid.Trim() }
-
-      if (-not `$checkPid) {
-        Write-Host ''
-        Write-Host '>>> APP STOPPED - waiting for restart...' -ForegroundColor Yellow
-        Stop-Process -Id `$proc.Id -Force -ErrorAction SilentlyContinue
-
-        `$newPid = Get-AppPid -Timeout `$pidTimeout
-        if (`$newPid) {
-          `$currentPid = `$newPid
-          Write-Host ">>> APP RESTARTED - NEW PID=`$currentPid" -ForegroundColor Green
-          ">>> PID_CHANGE: `$currentPid at `$(Get-Date -Format 'HH:mm:ss')" | Out-File -Append -Encoding utf8 -FilePath `$logFile
-          break
-        } else {
-          Write-Host '>>> FAIL: App did not restart within timeout' -ForegroundColor Red
-          ">>> FAIL: App did not restart" | Out-File -Append -Encoding utf8 -FilePath `$logFile
-          exit 1
-        }
-      } elseif (`$checkPid -ne `$currentPid) {
-        Write-Host ''
-        Write-Host ">>> PID CHANGED: `$currentPid -> `$checkPid" -ForegroundColor Yellow
-        Stop-Process -Id `$proc.Id -Force -ErrorAction SilentlyContinue
-        `$currentPid = `$checkPid
-        ">>> PID_CHANGE: `$currentPid at `$(Get-Date -Format 'HH:mm:ss')" | Out-File -Append -Encoding utf8 -FilePath `$logFile
-        break
-      }
-
-      # Read and display temp file content, append to main log
-      if (Test-Path "`$env:TEMP\logcat_pid_`$currentPid.tmp") {
-        Get-Content "`$env:TEMP\logcat_pid_`$currentPid.tmp" -Wait -Tail 0 2>`$null | ForEach-Object {
-          `$_ | Out-File -Append -Encoding utf8 -FilePath `$logFile
-          Write-Host `$_
-        }
-      }
-      Start-Sleep -Milliseconds 500
-    }
-  } else {
-    # Fallback: full capture with PS filtering
-    adb `$adbSerial logcat -v time 2>&1 | ForEach-Object {
-      # Check PID periodically (every 100 lines approx)
-      `$checkPid = adb `$adbSerial shell pidof -s `$packageName 2>`$null
-      if (`$checkPid) { `$checkPid = `$checkPid.Trim() }
-
-      if (`$checkPid -and `$checkPid -ne `$currentPid) {
-        Write-Host ">>> PID CHANGED: `$currentPid -> `$checkPid" -ForegroundColor Yellow
-        `$currentPid = `$checkPid
-        ">>> PID_CHANGE: `$currentPid at `$(Get-Date -Format 'HH:mm:ss')" | Out-File -Append -Encoding utf8 -FilePath `$logFile
-      }
-
-      # Filter by PID in the log line (format: "MM-DD HH:MM:SS.mmm  PID  TID ...")
-      if (`$_ -match "^\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+\s+`$currentPid\s+") {
-        `$_ | Out-File -Append -Encoding utf8 -FilePath `$logFile
-        Write-Host `$_
-      }
-    }
-  }
-}
 "@
-      Start-Process -FilePath $shell -ArgumentList "-NoExit", "-Command", $logcatScript | Out-Null
+      $headerContent | Out-File -Encoding utf8 -FilePath $logFile
+
+      # Simple logcat script - stream all logs from app
+      $logcatScript = @'
+param($pkg, $serial, $logPath, $timeout)
+$host.UI.RawUI.WindowTitle = 'Logcat'
+Write-Host '============================================================' -ForegroundColor Cyan
+Write-Host '  LOGCAT - STREAMING APP LOGS' -ForegroundColor Cyan
+Write-Host '============================================================' -ForegroundColor Cyan
+Write-Host "PACKAGE = $pkg"
+Write-Host "DEVICE  = $serial"
+Write-Host "LOG     = $logPath"
+Write-Host ''
+
+$adbArgs = if ($serial) { "-s $serial" } else { "" }
+
+# Clear buffer
+Invoke-Expression "adb $adbArgs logcat -c" 2>$null
+
+# Wait for PID
+Write-Host 'Waiting for app PID...' -ForegroundColor Yellow
+$pid = $null
+for ($i = 0; $i -lt $timeout -and -not $pid; $i++) {
+    Start-Sleep -Seconds 1
+    $pid = Invoke-Expression "adb $adbArgs shell pidof -s $pkg" 2>$null
+    if ($pid) { $pid = $pid.Trim() }
+    Write-Host "." -NoNewline
+}
+Write-Host ''
+
+if (-not $pid) {
+    Write-Host "FAIL: PID not found after $timeout seconds" -ForegroundColor Red
+    "PROOF_PID = FAIL_NOT_FOUND" | Out-File -Append -Encoding utf8 -FilePath $logPath
+    exit 1
+}
+
+Write-Host "PID = $pid" -ForegroundColor Green
+"PROOF_PID = $pid" | Out-File -Append -Encoding utf8 -FilePath $logPath
+Write-Host ''
+Write-Host 'Streaming logs (Ctrl+C to stop)...' -ForegroundColor Cyan
+
+# Stream with --pid if supported, else full stream
+$testPid = Invoke-Expression "adb $adbArgs logcat --pid=1 -d -t 1 2>&1"
+if ($testPid -notmatch 'unknown|error|Invalid') {
+    Write-Host "MODE = PID_NATIVE" -ForegroundColor Green
+    "PROOF_MODE = PID_NATIVE" | Out-File -Append -Encoding utf8 -FilePath $logPath
+    Invoke-Expression "adb $adbArgs logcat --pid=$pid -v time" 2>&1 | ForEach-Object {
+        $_ | Out-File -Append -Encoding utf8 -FilePath $logPath
+        Write-Host $_
+    }
+} else {
+    Write-Host "MODE = FULL_CAPTURE (filtering by PID $pid)" -ForegroundColor Yellow
+    "PROOF_MODE = FULL_CAPTURE" | Out-File -Append -Encoding utf8 -FilePath $logPath
+    Invoke-Expression "adb $adbArgs logcat -v time" 2>&1 | ForEach-Object {
+        if ($_ -match "\s+$pid\s+") {
+            $_ | Out-File -Append -Encoding utf8 -FilePath $logPath
+            Write-Host $_
+        }
+    }
+}
+'@
+      # Write script to temp file and execute
+      $tempScript = Join-Path $env:TEMP "logcat_script_$logTimestamp.ps1"
+      $logcatScript | Out-File -Encoding utf8 -FilePath $tempScript
+      Start-Process -FilePath $shell -ArgumentList "-NoExit", "-File", $tempScript, "-pkg", $packageName, "-serial", $deviceSerial, "-logPath", $logFile, "-timeout", $pidTimeout | Out-Null
       Write-Host "LOGCAT_FILE=$logFile (PID-filtered, all tags)" -ForegroundColor Green
     } else {
       Write-Host ""
