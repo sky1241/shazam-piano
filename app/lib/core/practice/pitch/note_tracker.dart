@@ -558,8 +558,8 @@ class NoteTracker {
         final reason = !risingEdge
             ? 'tail_falling'
             : !backgroundOk
-                ? 'tail_below_bg'
-                : 'tail_low_conf';
+            ? 'tail_below_bg'
+            : 'tail_low_conf';
         debugPrint(
           'NOTE_SUPPRESS reason=$reason midi=$midi pc=$pc t=${nowMs.toStringAsFixed(0)}ms '
           'rms=${rmsNow.toStringAsFixed(4)} dRms=${dRms.toStringAsFixed(4)} '

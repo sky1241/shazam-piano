@@ -308,7 +308,9 @@ mixin _PracticeUiStageMixin on _PracticePageStateBase {
     // SESSION-056: USE NEW PERCEPTIVE FEEDBACK ENGINE (if enabled)
     // Simple rules: BLEU=detection, CYAN=partition, VERT=success, ROUGE=error
     // ═══════════════════════════════════════════════════════════════════════════
-    if (_useNewFeedbackEngine && _uiFeedbackEngine != null && _practiceRunning) {
+    if (_useNewFeedbackEngine &&
+        _uiFeedbackEngine != null &&
+        _practiceRunning) {
       final fbState = _uiFeedbackEngine!.state;
 
       // BLEU = what mic detects (immediate)

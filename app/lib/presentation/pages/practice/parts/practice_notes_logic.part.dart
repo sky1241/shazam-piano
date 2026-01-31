@@ -7,7 +7,9 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
   double? _guidanceElapsedSec();
   bool _isSessionActive(int sessionId);
   void _logMicDebug(DateTime now);
-  Set<int> _computeImpactNotes({double? elapsedSec}); // SESSION-056: For UI feedback
+  Set<int> _computeImpactNotes({
+    double? elapsedSec,
+  }); // SESSION-056: For UI feedback
 
   // SESSION-041: TTL constant for wrong-flash dedup (1500ms)
   static const double _wrongFlashDedupTtlMs = 1500.0;

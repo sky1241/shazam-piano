@@ -83,9 +83,7 @@ class UIFeedbackState {
 ///
 /// Règle d'or: Quand l'utilisateur agit, l'UI réagit IMMÉDIATEMENT.
 class UIFeedbackEngine {
-  UIFeedbackEngine({
-    this.onStateChanged,
-  });
+  UIFeedbackEngine({this.onStateChanged});
 
   /// Callback appelé à chaque changement d'état
   final void Function(UIFeedbackState)? onStateChanged;
