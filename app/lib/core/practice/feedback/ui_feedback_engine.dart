@@ -17,7 +17,7 @@
 ///   - Un seul VERT unifié (pas d'alternance entre verts)
 ///   - Fail-safe: INCONNUE → maintenir état précédent
 /// SESSION-059 ROUGE: LOI DU SYSTÈME - MULTI-ROUGE:
-///   - redMidis = Set<int> (multi-rouge pour accords faux)
+///   - redMidis = Set of int (multi-rouge pour accords faux)
 ///   - MATCH STRICT: midi ∈ expectedMidis uniquement (pas de pitch class)
 ///   - Arbitrage Source_A (timeline) > Source_B (cyanMidis)
 ///   - Rouge lié à tenue: apparaît si TENUE_CONFIRMÉE, disparaît à RELÂCHÉE
@@ -167,7 +167,7 @@ class UIFeedbackEngine {
 
   /// SESSION-059 ROUGE: Timestamp de dernière activité par midi rouge
   /// Permet de détecter les notes relâchées individuellement en INCONNUE
-  Map<int, int> _redMidiLastActiveMs = {};
+  final Map<int, int> _redMidiLastActiveMs = {};
 
   /// Compteur VERT pour debug (succès HIT_VALIDÉ)
   int _greenCount = 0;
