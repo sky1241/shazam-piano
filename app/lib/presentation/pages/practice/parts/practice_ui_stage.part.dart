@@ -2,18 +2,14 @@ part of '../practice_page.dart';
 
 /// Mixin for practice stage and keyboard UI widgets.
 /// Extracted from _PracticePageState to reduce file size.
+///
+/// SESSION-056: Refactored to render-only pattern.
+/// UIFeedbackEngine computes keyColors, keyboard just paints.
 mixin _PracticeUiStageMixin on _PracticePageStateBase {
   // Abstract methods that must be implemented by the class using this mixin
   Future<void> _loadNoteEvents({required int sessionId});
   double? _guidanceElapsedSec();
   Set<int> _uiTargetNotes({double? elapsedSec});
-  bool _isSuccessFlashActive(DateTime now);
-  bool _isWrongFlashActive(DateTime now);
-  bool _isMissFlashActive(DateTime now);
-  bool _isAnticipatedFlashActiveForUi(); // SESSION-036
-  bool _isDetectedFlashActiveForUi(); // SESSION-036c
-  Set<int> _getRecentlyHitNotes(DateTime now);
-  int? _uiDetectedNote();
   void _handleRetryMicPermission();
   // From _PracticeUiVideoMixin
   Widget _buildVideoPlayer({
@@ -63,35 +59,30 @@ mixin _PracticeUiStageMixin on _PracticePageStateBase {
     );
   }
 
-  // SESSION-036c/037: Mini debug overlay showing real-time detection info
+  // SESSION-056: Mini debug overlay showing S56 engine state
+  // SESSION-059 ROUGE: redMidis est maintenant un Set<int> (multi-rouge)
   Widget _buildMiniDebugOverlay() {
-    // Get values from MicEngine (if available)
-    final expectedMidi = _micEngine?.onsetExpectedMidi;
-    final detectedMidi = _detectedFlashMidi;
-    final noteIdx = _micEngine?.onsetActiveNoteIdx;
-    final inWindow = _micEngine?.onsetInActiveWindow ?? false;
-    final conf = _detectedFlashConf;
+    // Get values from UIFeedbackEngine (S56)
+    final fbState = _uiFeedbackEngine?.state;
+    final blueMidi = fbState?.blueMidi;
+    final greenMidi = fbState?.greenMidi;
+    final redMidis = fbState?.redMidis ?? {};
+    final cyanMidis = fbState?.cyanMidis ?? {};
+    final conf = fbState?.confidence ?? 0.0;
+    final greenCount = _uiFeedbackEngine?.greenCount ?? 0;
 
-    // SESSION-037: Get raw detection info
+    // Get raw detection info from MicEngine
     final rawMidi = _micEngine?.lastRawMidi;
     final rawConf = _micEngine?.lastRawConf;
-    final anticipated = _anticipatedFlashMidi;
 
     // Format display strings
-    final expectedStr = expectedMidi != null ? '$expectedMidi' : '--';
-    final detectedStr = detectedMidi != null ? '$detectedMidi' : '--';
+    final blueStr = blueMidi != null ? '$blueMidi' : '--';
+    final greenStr = greenMidi != null ? '$greenMidi' : '--';
+    final redStr = redMidis.isNotEmpty ? '$redMidis' : '--';
+    final cyanStr = cyanMidis.isNotEmpty ? '${cyanMidis.first}' : '--';
     final rawStr = rawMidi != null ? '$rawMidi' : '--';
-    final noteIdxStr = noteIdx != null ? '$noteIdx' : '--';
-    final inWindowStr = inWindow ? 'Y' : 'N';
-    final confStr = conf != null ? conf.toStringAsFixed(2) : '--';
+    final confStr = conf.toStringAsFixed(2);
     final rawConfStr = rawConf != null ? rawConf.toStringAsFixed(2) : '--';
-    final antStr = anticipated != null ? '$anticipated' : '--';
-
-    // SESSION-038: Add wrongFlash counters to debug overlay
-    final emitStr = '$_wrongFlashEmitCount';
-    final skipStr = '$_wrongFlashSkipGatedCount';
-    final dupStr = '$_wrongFlashDuplicateAttackCount';
-    final mismatchStr = '$_wrongFlashUiMismatchCount';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -100,27 +91,13 @@ mixin _PracticeUiStageMixin on _PracticePageStateBase {
         color: Colors.black.withValues(alpha: 0.7),
         borderRadius: BorderRadius.circular(4),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'exp:$expectedStr det:$detectedStr raw:$rawStr ant:$antStr | idx:$noteIdxStr win:$inWindowStr | conf:$confStr raw:$rawConfStr',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 9,
-              fontFamily: 'monospace',
-            ),
-          ),
-          Text(
-            'wf: emit:$emitStr skip:$skipStr dup:$dupStr mis:$mismatchStr',
-            style: const TextStyle(
-              color: Colors.amber,
-              fontSize: 8,
-              fontFamily: 'monospace',
-            ),
-          ),
-        ],
+      child: Text(
+        'S56: blue:$blueStr green:$greenStr red:$redStr cyan:$cyanStr | raw:$rawStr conf:$confStr raw:$rawConfStr | greenCount:$greenCount',
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 9,
+          fontFamily: 'monospace',
+        ),
       ),
     );
   }
@@ -302,130 +279,56 @@ mixin _PracticeUiStageMixin on _PracticePageStateBase {
     required bool showDebugLabels,
     required bool showMidiNumbers,
   }) {
-    final now = DateTime.now();
-
     // ═══════════════════════════════════════════════════════════════════════════
-    // SESSION-056: USE NEW PERCEPTIVE FEEDBACK ENGINE (if enabled)
-    // Simple rules: BLEU=detection, CYAN=partition, VERT=success, ROUGE=error
+    // SESSION-056: RENDER-ONLY KEYBOARD
+    // La décision (VERT > ROUGE > BLEU > CYAN > neutre) est faite par
+    // UIFeedbackEngine.computeKeyColors() - le widget ne fait que peindre.
     // ═══════════════════════════════════════════════════════════════════════════
-    if (_useNewFeedbackEngine &&
-        _uiFeedbackEngine != null &&
-        _practiceRunning) {
-      final fbState = _uiFeedbackEngine!.state;
 
-      // BLEU = what mic detects (immediate)
-      final blueMidi = fbState.blueMidi;
-      final blueActive = blueMidi != null;
+    Map<int, KeyVisualState> keyColors;
 
-      // CYAN = what partition expects (always visible for active notes)
-      // Already passed via targetNotes parameter
-
-      // VERT = BLEU ∩ CYAN (pitch class match = success)
-      final greenMidi = fbState.greenMidi;
-      final greenActive = greenMidi != null;
-
-      // ROUGE = BLEU without CYAN nearby (clear error)
-      final redMidi = fbState.redMidi;
-      final redActive = redMidi != null;
-
-      // Log for debug (SESSION-056)
-      if (kDebugMode && (blueActive || greenActive || redActive)) {
-        debugPrint(
-          'S56_KEYBOARD blue=$blueMidi green=$greenMidi red=$redMidi '
-          'cyan=${fbState.cyanMidis} conf=${fbState.confidence.toStringAsFixed(2)} '
-          'greenCount=${_uiFeedbackEngine!.greenCount}',
-        );
-      }
-
-      return PracticeKeyboard(
-        key: const Key('practice_keyboard'),
-        totalWidth: totalWidth,
-        whiteWidth: whiteWidth,
-        blackWidth: blackWidth,
-        whiteHeight: whiteHeight,
-        blackHeight: blackHeight,
+    if (_isS56ModeReady()) {
+      // S56 READY: Utiliser le moteur de feedback perceptif
+      keyColors = _uiFeedbackEngine!.computeKeyColors(
         firstKey: _displayFirstKey,
         lastKey: _displayLastKey,
         blackKeys: _blackKeys,
-        targetNotes: targetNotes,
-        detectedNote: blueMidi, // BLEU = detected note
-        // VERT = success (pitch class match)
-        successFlashNote: greenMidi,
-        successFlashActive: greenActive,
-        // ROUGE = error (BLEU without CYAN)
-        wrongFlashNote: redMidi,
-        wrongFlashActive: redActive,
-        // Disable old miss flash (not needed in S56)
-        missFlashNote: null,
-        missFlashActive: false,
-        // CYAN = anticipated (partition) - use first cyan if multiple
-        anticipatedFlashNote: fbState.cyanMidis.isNotEmpty
-            ? fbState.cyanMidis.first
-            : null,
-        anticipatedFlashActive: fbState.cyanMidis.isNotEmpty,
-        // BLEU = detected (already shown via detectedNote, but also flash)
-        detectedFlashNote: blueMidi,
-        detectedFlashActive: blueActive && !greenActive, // Hide blue if green
-        noteToXFn: noteToXFn,
-        showDebugLabels: showDebugLabels,
-        showMidiNumbers: showMidiNumbers,
-        recentlyHitNotes: const {}, // Not needed in S56
       );
-    }
-    // ═══════════════════════════════════════════════════════════════════════════
-    // FALLBACK: Old complex logic (when S56 engine not active)
-    // ═══════════════════════════════════════════════════════════════════════════
 
-    final successFlashActive = _isSuccessFlashActive(now);
-    final wrongFlashActive = _isWrongFlashActive(now);
-    final missFlashActive = _isMissFlashActive(now); // FIX BUG SESSION-005 #4
-    final anticipatedFlashActive =
-        _isAnticipatedFlashActiveForUi(); // SESSION-036
-    final detectedFlashActive = _isDetectedFlashActiveForUi(); // SESSION-036c
-    final recentlyHitNotes = _getRecentlyHitNotes(
-      now,
-    ); // FIX: Get recently validated notes
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // SESSION-038: Unified keyboard state - prevent blue+red on different keys
-    // If wrong flash is active on key A, and detected flash is on key B (A != B),
-    // this is a UI mismatch that should not happen. Log and suppress blue.
-    // ═══════════════════════════════════════════════════════════════════════════
-    final bool hasMismatch =
-        wrongFlashActive &&
-        detectedFlashActive &&
-        _lastWrongNote != null &&
-        _detectedFlashMidi != null &&
-        _lastWrongNote != _detectedFlashMidi;
-
-    // If mismatch detected, suppress blue flash to only show red
-    final effectiveDetectedFlashActive = hasMismatch
-        ? false
-        : detectedFlashActive;
-    final effectiveDetectedFlashMidi = hasMismatch ? null : _detectedFlashMidi;
-
-    // SESSION-038: Log mismatch and increment counter (should be rare/zero after fix)
-    if (kDebugMode && hasMismatch) {
-      _wrongFlashUiMismatchCount++;
-      debugPrint(
-        'WRONGFLASH_UI_MISMATCH blue=$_detectedFlashMidi red=$_lastWrongNote '
-        'suppressing_blue=true reason=unified_state count=$_wrongFlashUiMismatchCount',
-      );
-    }
-
-    // SESSION-033/036/036c/038: Log keyboard flash props for debugging
-    if (kDebugMode &&
-        (successFlashActive ||
-            wrongFlashActive ||
-            anticipatedFlashActive ||
-            effectiveDetectedFlashActive)) {
-      debugPrint(
-        'KEYBOARD_UI_APPLY activeMidi=${wrongFlashActive ? _lastWrongNote : (effectiveDetectedFlashActive ? effectiveDetectedFlashMidi : _lastCorrectNote)} '
-        'color=${wrongFlashActive ? "red" : (successFlashActive ? "green" : (effectiveDetectedFlashActive ? "blue" : "cyan"))} '
-        'source=${wrongFlashActive ? "wrong" : (successFlashActive ? "hit" : (effectiveDetectedFlashActive ? "detected" : "anticipated"))} '
-        'greenMidi=$_lastCorrectNote redMidi=$_lastWrongNote blueMidi=$effectiveDetectedFlashMidi '
-        'keyRange=$_displayFirstKey-$_displayLastKey',
-      );
+      // Debug log (S56) - SESSION-058: Ajout resolved= pour montrer la couleur gagnante
+      // SESSION-059 ROUGE: redMidis est maintenant un Set<int> (multi-rouge)
+      if (kDebugMode) {
+        final fbState = _uiFeedbackEngine!.state;
+        if (fbState.blueMidi != null ||
+            fbState.greenMidi != null ||
+            fbState.redMidis.isNotEmpty) {
+          // SESSION-058: Calculer la couleur résolue (gagnante) selon priorité
+          final int? activeMidi =
+              fbState.greenMidi ??
+              (fbState.redMidis.isNotEmpty ? fbState.redMidis.first : null) ??
+              fbState.blueMidi;
+          final String resolved;
+          if (fbState.greenMidi != null) {
+            resolved = 'GREEN';
+          } else if (fbState.redMidis.isNotEmpty) {
+            resolved = 'RED';
+          } else if (fbState.blueMidi != null) {
+            resolved = 'BLUE';
+          } else {
+            resolved = 'NONE';
+          }
+          debugPrint(
+            'S56_KEYBOARD blue=${fbState.blueMidi} green=${fbState.greenMidi} '
+            'red=${fbState.redMidis} cyan=${fbState.cyanMidis} '
+            'conf=${fbState.confidence.toStringAsFixed(2)} '
+            'greenCount=${_uiFeedbackEngine!.greenCount} '
+            'resolved=$resolved midi=$activeMidi',
+          );
+        }
+      }
+    } else {
+      // S56 NOT READY: Clavier neutre (countdown, idle)
+      keyColors = _computeNeutralKeyColors(targetNotes);
     }
 
     return PracticeKeyboard(
@@ -438,27 +341,28 @@ mixin _PracticeUiStageMixin on _PracticePageStateBase {
       firstKey: _displayFirstKey,
       lastKey: _displayLastKey,
       blackKeys: _blackKeys,
-      targetNotes: targetNotes,
-      detectedNote: _uiDetectedNote(),
-      // Flash the expected/target note (more consistent with falling overlay feedback).
-      successFlashNote: _lastCorrectNote,
-      successFlashActive: successFlashActive,
-      wrongFlashNote: _lastWrongNote,
-      wrongFlashActive: wrongFlashActive,
-      missFlashNote: _lastMissNote, // FIX BUG SESSION-005 #4
-      missFlashActive: missFlashActive, // FIX BUG SESSION-005 #4
-      anticipatedFlashNote: _anticipatedFlashMidi, // SESSION-036: Zero-lag CYAN
-      anticipatedFlashActive: anticipatedFlashActive, // SESSION-036
-      // SESSION-038: Use effective values to prevent blue+red mismatch
-      detectedFlashNote:
-          effectiveDetectedFlashMidi, // SESSION-036c/038: Real-time BLUE (unified)
-      detectedFlashActive: effectiveDetectedFlashActive, // SESSION-036c/038
       noteToXFn: noteToXFn,
+      keyColors: keyColors,
       showDebugLabels: showDebugLabels,
       showMidiNumbers: showMidiNumbers,
-      recentlyHitNotes:
-          recentlyHitNotes, // FIX: Pass recently hit notes to prevent false reds
     );
+  }
+
+  /// Génère une map de couleurs neutres pour le clavier (fallback)
+  /// Utilisé pendant countdown, idle, ou quand S56 est désactivé
+  Map<int, KeyVisualState> _computeNeutralKeyColors(Set<int> targetNotes) {
+    final result = <int, KeyVisualState>{};
+    for (int midi = _displayFirstKey; midi <= _displayLastKey; midi++) {
+      final isBlack = _blackKeys.contains(midi % 12);
+      if (targetNotes.contains(midi)) {
+        result[midi] = KeyVisualState.cyan;
+      } else {
+        result[midi] = isBlack
+            ? KeyVisualState.neutralBlack
+            : KeyVisualState.neutralWhite;
+      }
+    }
+    return result;
   }
 
   Widget _buildNotesStatus(double width) {

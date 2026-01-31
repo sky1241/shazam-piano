@@ -136,6 +136,42 @@ class PracticePitchRouter {
   double get lastRawTSec => _lastRawTSec;
   String get lastRawSource => _lastRawSource;
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SESSION-057: RAW MIDI FOR UI - NEVER snapped/merged
+  // This field is written ONLY by YIN's raw detection (before any snapping).
+  // Goertzel MUST NOT write to this field (it only detects expected notes).
+  // Used by UIFeedbackEngine to show ROUGE/BLEU on the ACTUAL played key.
+  // ═══════════════════════════════════════════════════════════════════════════
+  int? _lastRawMidiForUi;
+  double? _lastRawConfForUi;
+  double _lastRawMidiForUiTSec = -1000.0;
+
+  /// Freshness timeout for UI raw midi (seconds).
+  /// If no YIN detection within this period, rawMidiForUi returns null.
+  static const double rawMidiForUiFreshnessTimeoutSec = 0.150; // 150ms
+
+  /// Get raw MIDI for UI (NEVER snapped/merged).
+  /// Returns null if no fresh YIN detection (stale = auto-clear).
+  int? getRawMidiForUi(double nowTSec) {
+    if (_lastRawMidiForUi == null) return null;
+    final age = nowTSec - _lastRawMidiForUiTSec;
+    if (age > rawMidiForUiFreshnessTimeoutSec) {
+      // Stale - return null (auto-clear for UI)
+      return null;
+    }
+    return _lastRawMidiForUi;
+  }
+
+  /// Get raw confidence for UI.
+  double? getRawConfForUi(double nowTSec) {
+    if (_lastRawConfForUi == null) return null;
+    final age = nowTSec - _lastRawMidiForUiTSec;
+    if (age > rawMidiForUiFreshnessTimeoutSec) {
+      return null;
+    }
+    return _lastRawConfForUi;
+  }
+
   /// Clear raw detection state (on reset)
   void clearRawDetection() {
     _lastRawMidi = null;
@@ -145,6 +181,10 @@ class PracticePitchRouter {
     _lastRawSource = 'none';
     _lastYinTimeSec = -1000.0;
     _noiseFloorRms = 0.0; // SESSION-052: Reset noise floor on session reset
+    // SESSION-057: Clear UI raw state
+    _lastRawMidiForUi = null;
+    _lastRawConfForUi = null;
+    _lastRawMidiForUiTSec = -1000.0;
   }
 
   /// Decide which algorithm to use and produce pitch events.
@@ -381,6 +421,16 @@ class PracticePitchRouter {
     _lastRawTSec = tSec;
     _lastRawSource = 'yin';
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SESSION-057: Capture RAW MIDI FOR UI - NEVER snapped/merged
+    // This is the TRUE pitch detected by YIN, used for ROUGE/BLEU positioning.
+    // Written here BEFORE any snapping or confidence filtering.
+    // Goertzel does NOT write to these fields (it only detects expected notes).
+    // ═══════════════════════════════════════════════════════════════════════════
+    _lastRawMidiForUi = detectedMidi;
+    _lastRawConfForUi = conf;
+    _lastRawMidiForUiTSec = tSec;
+
     // Filter weak detections (for scoring, not for raw UI feedback)
     if (conf < minConfidence) {
       return [];
@@ -398,6 +448,11 @@ class PracticePitchRouter {
       debugPrint(
         'YIN_CALLED expected=[$expectedMidi] detectedMidi=$detectedMidi '
         'snappedMidi=$snappedMidi freq=${freq.toStringAsFixed(1)} conf=${conf.toStringAsFixed(2)}',
+      );
+      // SESSION-057: ROUTER_OUTPUT shows rawMidiForUi vs scoringMidi
+      debugPrint(
+        'ROUTER_OUTPUT rawMidiForUi=$detectedMidi scoringMidi=$snappedMidi '
+        'source=yin snapped=${snappedMidi != detectedMidi}',
       );
     }
 

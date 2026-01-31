@@ -2,6 +2,8 @@ part of '../practice_page.dart';
 
 /// Mixin for video player and notes overlay UI widgets.
 /// Extracted from _PracticePageState to reduce file size.
+///
+/// SESSION-056: Legacy flash methods removed - S56 UIFeedbackEngine handles all feedback.
 mixin _PracticeUiVideoMixin on _PracticePageStateBase {
   // Abstract method that must be implemented by the class using this mixin
   Future<void> _initVideo();
@@ -9,90 +11,6 @@ mixin _PracticeUiVideoMixin on _PracticePageStateBase {
   Widget _wrapPracticeVideo(Widget child) {
     return KeyedSubtree(key: const Key('practice_video'), child: child);
   }
-
-  bool _isSuccessFlashActive(DateTime now) {
-    // SESSION-034 FIX: Use explicit expiry timestamp for guaranteed flash visibility
-    // More robust: flash active = now is before expiry time (not diff <= duration)
-    // This guarantees the flash stays visible for the full duration even with delayed builds
-    final active =
-        _successFlashUntil != null &&
-        _lastCorrectNote != null &&
-        now.isBefore(_successFlashUntil!);
-
-    // SESSION-035: Log flash timing for debugging (only when flash state exists)
-    // Logs ONLY when flash state is set to avoid spam during normal play
-    if (kDebugMode && _successFlashUntil != null && _lastCorrectNote != null) {
-      final remainingMs = _successFlashUntil!.difference(now).inMilliseconds;
-      final noteIdx = _lastCorrectNoteIndex;
-      debugPrint(
-        'FLASH_TIMING_GREEN midi=$_lastCorrectNote noteIdx=$noteIdx '
-        'remainingMs=${remainingMs}ms untilMs=${_successFlashUntil!.millisecondsSinceEpoch} '
-        'nowMs=${now.millisecondsSinceEpoch} active=$active',
-      );
-    }
-    return active;
-  }
-
-  bool _isWrongFlashActive(DateTime now) {
-    // SESSION-034 FIX: Use explicit expiry timestamp for guaranteed flash visibility
-    // More robust: flash active = now is before expiry time (not diff <= duration)
-    // This guarantees the flash stays visible for the full duration even with delayed builds
-    final active =
-        _wrongFlashUntil != null &&
-        _lastWrongNote != null &&
-        now.isBefore(_wrongFlashUntil!);
-
-    // SESSION-035: Log flash timing for debugging (only when flash state exists)
-    // Logs ONLY when flash state is set to avoid spam during normal play
-    if (kDebugMode && _wrongFlashUntil != null && _lastWrongNote != null) {
-      final remainingMs = _wrongFlashUntil!.difference(now).inMilliseconds;
-      debugPrint(
-        'FLASH_TIMING_RED midi=$_lastWrongNote '
-        'remainingMs=${remainingMs}ms untilMs=${_wrongFlashUntil!.millisecondsSinceEpoch} '
-        'nowMs=${now.millisecondsSinceEpoch} active=$active',
-      );
-    }
-    return active;
-  }
-
-  // FIX BUG SESSION-005 #4: Check if miss flash is active
-  // ignore: unused_element (called from _PracticeUiStageMixin)
-  bool _isMissFlashActive(DateTime now) {
-    return _lastMissHitAt != null &&
-        _lastMissNote != null &&
-        now.difference(_lastMissHitAt!) <= _successFlashDuration;
-  }
-
-  // SESSION-036: Check if anticipated flash is active (for zero-lag feel)
-  // Uses monotonic elapsedMs instead of DateTime to avoid drift
-  // ignore: unused_element (called from _PracticeUiStageMixin)
-  bool _isAnticipatedFlashActiveForUi() {
-    if (_anticipatedFlashMidi == null || _anticipatedFlashUntilMs == null) {
-      return false;
-    }
-    // Get current elapsed time from guidance
-    final elapsed = _guidanceElapsedSec();
-    if (elapsed == null) return false;
-    final nowMs = elapsed * 1000.0;
-    return nowMs <= _anticipatedFlashUntilMs!;
-  }
-
-  // SESSION-036c: Check if detected flash is active (for "REAL-TIME FEEL")
-  // Uses monotonic elapsedMs instead of DateTime to avoid drift
-  // ignore: unused_element (called from _PracticeUiStageMixin)
-  bool _isDetectedFlashActiveForUi() {
-    if (_detectedFlashMidi == null || _detectedFlashUntilMs == null) {
-      return false;
-    }
-    // Get current elapsed time from guidance
-    final elapsed = _guidanceElapsedSec();
-    if (elapsed == null) return false;
-    final nowMs = elapsed * 1000.0;
-    return nowMs <= _detectedFlashUntilMs!;
-  }
-
-  // Abstract method declaration - implemented in the main class
-  double? _guidanceElapsedSec();
 
   Widget _buildCroppedVideoLayer({
     required Widget child,
@@ -238,9 +156,8 @@ mixin _PracticeUiVideoMixin on _PracticePageStateBase {
     // C4: Track overlay build count for debugging
     _overlayBuildCount += 1;
 
-    final now = DateTime.now();
-    final successFlashActive = _isSuccessFlashActive(now);
-    final wrongFlashActive = _isWrongFlashActive(now);
+    // SESSION-056: Legacy flash removed - S56 UIFeedbackEngine handles keyboard feedback
+    // Falling notes painter no longer needs flash states
     final elapsed = elapsedSec;
     // BUG FIX #9: Must paint notes during COUNTDOWN to allow falling animation
     // Notes need to spawn offscreen (spawnY < 0) and fall during countdown
@@ -307,6 +224,8 @@ mixin _PracticeUiVideoMixin on _PracticePageStateBase {
     // Solution: Use constant _fallLeadSec (2.0s) for both states - notes fall at consistent speed
     final effectiveFallLead = _fallLeadSec;
 
+    // SESSION-056: Pass neutral values - S56 handles all visual feedback on keyboard
+    // Falling notes only show bars, no flash feedback needed
     return IgnorePointer(
       child: CustomPaint(
         key: const Key('practice_notes_overlay'),
@@ -323,11 +242,11 @@ mixin _PracticeUiVideoMixin on _PracticePageStateBase {
           firstKey: layout.firstKey,
           lastKey: layout.lastKey,
           targetNotes: resolvedTargets,
-          successNote: _lastCorrectNote,
-          successNoteIndex: _lastCorrectNoteIndex, // FIX BUG SESSION-005 #1+2
-          successFlashActive: successFlashActive,
-          wrongNote: _lastWrongNote,
-          wrongFlashActive: wrongFlashActive,
+          successNote: null, // S56: flash handled by UIFeedbackEngine
+          successNoteIndex: null,
+          successFlashActive: false,
+          wrongNote: null,
+          wrongFlashActive: false,
           forceLabels: true,
           showGuides: showGuides,
           showMidiNumbers: _showMidiNumbers,

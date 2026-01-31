@@ -1005,6 +1005,14 @@ class MicEngine {
   double get lastRawTSec => _router.lastRawTSec;
   String get lastRawSource => _router.lastRawSource;
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SESSION-057: Raw MIDI FOR UI - NEVER snapped/merged
+  // These expose the router's YIN-only raw detection for UI feedback.
+  // Returns null if stale (> 150ms) to auto-clear BLEU when no fresh pitch.
+  // ═══════════════════════════════════════════════════════════════════════════
+  int? getRawMidiForUi(double nowTSec) => _router.getRawMidiForUi(nowTSec);
+  double? getRawConfForUi(double nowTSec) => _router.getRawConfForUi(nowTSec);
+
   /// Epsilon for grouping chord notes with nearly-simultaneous starts.
   /// Notes within this time window are considered part of the same chord.
   /// 30ms is safe for piano MIDI where chord notes may have slightly different starts.

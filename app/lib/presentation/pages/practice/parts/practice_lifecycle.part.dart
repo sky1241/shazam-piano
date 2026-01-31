@@ -159,16 +159,6 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
     _stableVideoDurationSec =
         null; // C6: Reset stable duration for next session
     _lastSanitizedDurationSec = null; // C7: Reset sanitize epsilon guard
-    _lastCorrectNote = null;
-    _lastCorrectNoteIndex = null; // FIX BUG SESSION-005 #1+2
-    _lastWrongNote = null;
-    _lastMissNote = null; // FIX BUG SESSION-005 #4
-    _lastMissHitAt = null; // FIX BUG SESSION-005 #4
-    // SESSION-037: Reset detected flash state
-    _detectedFlashMidi = null;
-    _detectedFlashUntilMs = null;
-    _detectedFlashFirstEmitMs = null;
-    _lastPitchUpdateMs = -10000.0;
     _recentlyHitNotes
         .clear(); // FIX BUG P0: Clear recently hit notes for new session
     // Phase B instrumentation: Reset RMS stats for new session
@@ -176,13 +166,6 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
     _micRmsMax = null;
     _micRmsSum = 0.0;
     _micSampleCount = 0;
-    // SESSION-038: Reset wrongFlash health counters for new session
-    _wrongFlashEmitCount = 0;
-    _wrongFlashSkipGatedCount = 0;
-    _wrongFlashDuplicateAttackCount = 0;
-    _wrongFlashUiMismatchCount = 0;
-    _wrongFlashHealthLastLogMs = -10000.0;
-    _wrongFlashSessionStartMs = 0.0;
     if (_videoController != null && _videoController!.value.isInitialized) {
       await _videoController!.pause();
       await _videoController!.seekTo(Duration.zero);
@@ -434,40 +417,18 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
     // ══════════════════════════════════════════════════════════════════════
 
     // ══════════════════════════════════════════════════════════════════════
-    // SESSION-056: Initialize UI Feedback Engine (perceptive motor)
-    // Source de vérité = PERCEPTION utilisateur (pas scoring)
+    // SESSION-056: Initialize UI Feedback Engine
     // ══════════════════════════════════════════════════════════════════════
-    if (_useNewFeedbackEngine) {
-      _uiFeedbackEngine = UIFeedbackEngine(
-        onStateChanged: (state) {
-          // Callback when feedback state changes - trigger UI rebuild
-          if (mounted && _practiceRunning) {
-            setState(() {});
-          }
-        },
-      );
-      if (kDebugMode) {
-        debugPrint(
-          'SESSION56_UI_ENGINE: Initialized perceptive feedback motor',
-        );
-      }
+    _uiFeedbackEngine = UIFeedbackEngine(
+      onStateChanged: (state) {
+        if (mounted && _practiceRunning) {
+          setState(() {});
+        }
+      },
+    );
+    if (kDebugMode) {
+      debugPrint('S56_ENGINE_INIT: Perceptive motor initialized');
     }
-    // ══════════════════════════════════════════════════════════════════════
-
-    _lastCorrectHitAt = null;
-    _lastCorrectNote = null;
-    _lastCorrectNoteIndex = null; // FIX BUG SESSION-005 #1+2
-    _successFlashUntil = null; // SESSION-034: Reset explicit expiry
-    _lastWrongHitAt = null;
-    _lastWrongNote = null;
-    _wrongFlashUntil = null; // SESSION-034: Reset explicit expiry
-    _lastMissHitAt = null; // FIX BUG SESSION-005 #4
-    _lastMissNote = null; // FIX BUG SESSION-005 #4
-    // SESSION-037: Reset detected flash state
-    _detectedFlashMidi = null;
-    _detectedFlashUntilMs = null;
-    _detectedFlashFirstEmitMs = null;
-    _lastPitchUpdateMs = -10000.0;
     // BUG FIX #15: Do NOT set _startTime here - it will be set when countdown finishes
     // If set here, clock advances during countdown and guidanceElapsed starts at 2s instead of 0
     // _startTime = DateTime.now(); // REMOVED
@@ -611,21 +572,6 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
       debugPrint(
         'SESSION4_FINAL: perfect=${newState.perfectCount} good=${newState.goodCount} ok=${newState.okCount} miss=${newState.missCount} wrong=${newState.wrongCount}',
       );
-      // SESSION-038: Log wrongFlash UI summary at end of session
-      // Use monotonic _wrongFlashHealthLastLogMs as duration proxy (safer than DateTime.parse)
-      final sessionDurationMs = _wrongFlashHealthLastLogMs > 0
-          ? _wrongFlashHealthLastLogMs.toInt()
-          : 0;
-      debugPrint(
-        'WRONGFLASH_SUMMARY session=$_practiceSessionId '
-        'emits=$_wrongFlashEmitCount '
-        'skipGated=$_wrongFlashSkipGatedCount '
-        'dup=$_wrongFlashDuplicateAttackCount '
-        'mismatch=$_wrongFlashUiMismatchCount '
-        'durationMs=$sessionDurationMs',
-      );
-      // SESSION-038: Also log MicEngine counters for comparison
-      _micEngine?.logEngineSummary();
     }
 
     await _sendPracticeSession(
@@ -652,21 +598,6 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
       _micScoringOffsetSec = 0.0; // D1: Reset offset for new session
       _lastMidiFrameAt = null;
       _lastMidiNote = null;
-      _lastCorrectHitAt = null;
-      _lastCorrectNote = null;
-      _lastCorrectNoteIndex = null; // FIX BUG SESSION-005 #1+2
-      _successFlashUntil = null; // SESSION-034: Reset explicit expiry
-      _lastWrongHitAt = null;
-      _lastWrongNote = null;
-      _wrongFlashUntil = null; // SESSION-034: Reset explicit expiry
-      _lastMissHitAt = null; // FIX BUG SESSION-005 #4
-      _lastMissNote = null; // FIX BUG SESSION-005 #4
-      // SESSION-037: Reset detected flash state
-      _detectedFlashMidi = null;
-      _detectedFlashUntilMs = null;
-      _detectedFlashConf = null;
-      _detectedFlashFirstEmitMs = null;
-      _lastPitchUpdateMs = -10000.0;
       // D1, D3: Reset mic config logging and latency comp for new session
       _micConfigLogged = false;
       _micLatencyCompSec = 0.0;

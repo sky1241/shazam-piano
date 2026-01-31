@@ -88,7 +88,11 @@ abstract class _PracticePageStateBase extends ConsumerState<PracticePage>
   // BLEU=détection, CYAN=partition, VERT=succès, ROUGE=erreur
   // ══════════════════════════════════════════════════════════════════════
   UIFeedbackEngine? _uiFeedbackEngine;
-  final bool _useNewFeedbackEngine = true; // Flag to enable S56 motor
+
+  /// Vérifie si le mode S56 est PRÊT à produire du feedback
+  bool _isS56ModeReady() {
+    return _uiFeedbackEngine != null && _practiceRunning;
+  }
 
   // Anti-spam note tenue: cache séparé pour hit vs wrong (FIX BUG #1)
   int? _lastHitMidi;
@@ -187,75 +191,6 @@ abstract class _PracticePageStateBase extends ConsumerState<PracticePage>
   _selectedVideoVariant; // 'preview' or 'full' - tracks what user chose in preview
   int _devTapCount = 0;
   DateTime? _devTapStartAt;
-  // ignore: unused_field - kept for debugging/logging registration time
-  DateTime? _lastCorrectHitAt;
-  int? _lastCorrectNote;
-  int?
-  _lastCorrectNoteIndex; // FIX BUG SESSION-005 #1+2: Track which NOTE INDEX was hit
-  DateTime? _lastWrongHitAt;
-  int? _lastWrongNote;
-  // SESSION-034 FIX: Explicit expiry timestamps for flash visibility
-  // More robust than diff<=duration: guarantees flash visible for full duration
-  // even if build cycle is delayed. Flash active = DateTime.now().isBefore(until)
-  DateTime? _successFlashUntil;
-  DateTime? _wrongFlashUntil;
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // SESSION-036: Anticipated flash state for zero-lag feel (onset-first feedback)
-  // Uses monotonic elapsedMs instead of DateTime.now() to avoid drift/jitter
-  // ══════════════════════════════════════════════════════════════════════════
-  int? _anticipatedFlashMidi; // Expected MIDI being flashed CYAN
-  int? _anticipatedFlashNoteIdx; // Note index being anticipated
-  double? _anticipatedFlashUntilMs; // Monotonic elapsedMs expiry (nowMs + 450)
-  double? _lastAnticipatedEmitMs; // Last emit time for debounce (120ms)
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // SESSION-036c/037: Detected note flash (BLUE) for "REAL-TIME FEEL"
-  // Shows what the mic actually hears, independent of scoring/matching
-  // Priority: success(green) > wrong(red) > anticipated(cyan) > detected(blue)
-  // SESSION-037: Added release gating + hard cap to prevent stuck blue
-  // ══════════════════════════════════════════════════════════════════════════
-  int? _detectedFlashMidi; // Last detected MIDI from pitch detection
-  double? _detectedFlashUntilMs; // Monotonic elapsedMs expiry (nowMs + 150)
-  double? _detectedFlashConf; // Last detected confidence (for debug overlay)
-  // SESSION-037: Release gating + hard cap state
-  double?
-  _detectedFlashFirstEmitMs; // When this flash first started (for hard cap)
-  double _lastPitchUpdateMs =
-      -10000.0; // Last time a NEW pitch was received (not stale)
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // SESSION-038: Per-attack collapse for wrong flash
-  // Tracks the onset timestamp of the last wrong flash to collapse duplicates
-  // ══════════════════════════════════════════════════════════════════════════
-  double _lastWrongFlashOnsetMs =
-      -10000.0; // Onset timestamp of last wrong flash
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // SESSION-041: Stable dedup for wrong-flash by (noteIdx, attackId) with TTL
-  // Prevents multi-rouge on same attack cross-ticks. Key = "noteIdx_attackId"
-  // Value = elapsedMs of last emit. TTL defined in _PracticeNotesLogicMixin.
-  // ══════════════════════════════════════════════════════════════════════════
-  final Map<String, double> _wrongFlashDedupMap =
-      {}; // key -> lastEmitElapsedMs
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // SESSION-038: WrongFlash Health Telemetry (kDebugMode only)
-  // Counters to objectivize "ça ping pas / ça lag / ça flash pas" feedback
-  // ══════════════════════════════════════════════════════════════════════════
-  int _wrongFlashEmitCount =
-      0; // Red flashes actually emitted (WRONGFLASH_PULSE_EMIT)
-  int _wrongFlashSkipGatedCount = 0; // Red flashes refused for gating/cooldown
-  int _wrongFlashDuplicateAttackCount =
-      0; // Flashes skipped (same attack collapse)
-  int _wrongFlashUiMismatchCount = 0; // Times blue≠red mismatch detected
-  double _wrongFlashHealthLastLogMs =
-      -10000.0; // Last WRONGFLASH_HEALTH log time
-  double _wrongFlashSessionStartMs = 0.0; // Session start monotonic time
-
-  // FIX BUG SESSION-005 #4: Track MISS notes for red keyboard feedback
-  DateTime? _lastMissHitAt;
-  int? _lastMissNote;
 
   // FIX BUG P0 (FALSE RED): Track recently validated HIT notes with timestamps
   // Prevents notes from turning red after being correctly validated

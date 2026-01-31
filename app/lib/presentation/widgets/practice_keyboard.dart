@@ -4,9 +4,17 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/constants/app_constants.dart';
+import '../../core/practice/feedback/ui_feedback_engine.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 
+/// Clavier de pratique RENDER-ONLY (SESSION-056)
+///
+/// Ce widget ne contient AUCUNE logique de décision.
+/// Il reçoit une Map keyColors pré-calculée et peint.
+///
+/// La décision (priorité VERT, ROUGE, BLEU, CYAN, neutre)
+/// est faite par UIFeedbackEngine.computeKeyColors()
 class PracticeKeyboard extends StatelessWidget {
   final double totalWidth;
   final double whiteWidth;
@@ -16,25 +24,13 @@ class PracticeKeyboard extends StatelessWidget {
   final int firstKey;
   final int lastKey;
   final List<int> blackKeys;
-  final Set<int> targetNotes;
-  final int? detectedNote;
-  final int? successFlashNote;
-  final bool successFlashActive;
-  final int? wrongFlashNote;
-  final bool wrongFlashActive;
-  // FIX BUG SESSION-005 #4: Miss flash for red keyboard feedback
-  final int? missFlashNote;
-  final bool missFlashActive;
-  // SESSION-036: Anticipated flash for zero-lag feel (CYAN #00BCD4)
-  final int? anticipatedFlashNote;
-  final bool anticipatedFlashActive;
-  // SESSION-036c: Detected note flash for "REAL-TIME FEEL" (BLUE #2196F3)
-  final int? detectedFlashNote;
-  final bool detectedFlashActive;
   final double Function(int) noteToXFn;
   final bool showDebugLabels;
   final bool showMidiNumbers;
-  final Set<int> recentlyHitNotes; // FIX: Track recently validated HIT notes
+
+  /// État visuel pré-calculé pour chaque touche (RENDER-ONLY)
+  /// Produit par UIFeedbackEngine.computeKeyColors()
+  final Map<int, KeyVisualState> keyColors;
 
   const PracticeKeyboard({
     super.key,
@@ -46,22 +42,10 @@ class PracticeKeyboard extends StatelessWidget {
     required this.firstKey,
     required this.lastKey,
     required this.blackKeys,
-    required this.targetNotes,
-    required this.detectedNote,
-    this.successFlashNote,
-    this.successFlashActive = false,
-    this.wrongFlashNote,
-    this.wrongFlashActive = false,
-    this.missFlashNote, // FIX BUG SESSION-005 #4
-    this.missFlashActive = false, // FIX BUG SESSION-005 #4
-    this.anticipatedFlashNote, // SESSION-036: Anticipated flash (CYAN)
-    this.anticipatedFlashActive = false, // SESSION-036
-    this.detectedFlashNote, // SESSION-036c: Detected flash (BLUE)
-    this.detectedFlashActive = false, // SESSION-036c
     required this.noteToXFn,
+    required this.keyColors,
     this.showDebugLabels = false,
     this.showMidiNumbers = false,
-    this.recentlyHitNotes = const {}, // FIX: Default to empty set
   });
 
   static double noteToX({
@@ -174,6 +158,10 @@ class PracticeKeyboard extends StatelessWidget {
     return '$base$octave';
   }
 
+  /// Construit une touche de piano RENDER-ONLY
+  ///
+  /// La couleur est lue directement depuis keyColors[note]
+  /// AUCUNE logique de décision ici.
   Widget _buildPianoKey(
     BuildContext context,
     int note, {
@@ -181,117 +169,27 @@ class PracticeKeyboard extends StatelessWidget {
     required double width,
     required double height,
   }) {
-    final isExpected = targetNotes.contains(note);
-    final isDetected = note == detectedNote;
-    // FIX BUG SESSION-004 #1: Check if note was recently validated as HIT
-    // This prevents the "green switch" when uiDetectedMidi expires but note is still active
-    final wasRecentlyHit = recentlyHitNotes.contains(note);
+    // ═══════════════════════════════════════════════════════════════════════
+    // RENDER-ONLY: Lire la couleur pré-calculée
+    // ═══════════════════════════════════════════════════════════════════════
+    final visualState = keyColors[note] ??
+        (isBlack ? KeyVisualState.neutralBlack : KeyVisualState.neutralWhite);
 
-    Color keyColor;
-    if (successFlashActive &&
-        successFlashNote != null &&
-        note == successFlashNote) {
-      // SESSION-034 FIX: Use full opacity on black keys for visibility
-      // CAUSE: alpha:0.9 blended with black base = nearly invisible green
-      // PREUVE: FLASH_KEY_RENDER midi=61 finalColor=GREEN but video shows no flash
-      // Black keys (C#, D#, F#, G#, A#) need full color to be visible
-      keyColor = isBlack
-          ? AppColors
-                .success // Full opacity on black keys
-          : AppColors.success.withValues(alpha: 0.9);
-    } else if (wrongFlashActive &&
-        wrongFlashNote != null &&
-        note == wrongFlashNote) {
-      // FIX BUG P0 (PHANTOM RED): Only show red via wrongFlash (scored as wrong)
-      // Removed standalone isWrong condition - it caused phantom reds from mic noise
-      // SESSION-034 FIX: Use full opacity on black keys for visibility
-      keyColor = isBlack
-          ? AppColors
-                .error // Full opacity on black keys
-          : AppColors.error.withValues(alpha: 0.9);
-    } else if (anticipatedFlashActive &&
-        anticipatedFlashNote != null &&
-        note == anticipatedFlashNote) {
-      // SESSION-036: Anticipated flash (CYAN #00BCD4) for zero-lag feel
-      // Priority: success > wrong > anticipated > detected > neutral
-      // CYAN provides instant visual feedback on onset detection before pitch confirmation
-      const cyanColor = Color(0xFF00BCD4); // Material CYAN 500
-      keyColor = isBlack
-          ? cyanColor // Full opacity on black keys
-          : cyanColor.withValues(alpha: 0.9);
-    } else if (detectedFlashActive &&
-        detectedFlashNote != null &&
-        note == detectedFlashNote) {
-      // SESSION-036c: Detected flash (BLUE #2196F3) for "REAL-TIME FEEL"
-      // Priority: success > wrong > anticipated > detected > neutral
-      // BLUE shows what the mic actually heard (independent of scoring)
-      const blueColor = Color(0xFF2196F3); // Material BLUE 500
-      keyColor = isBlack
-          ? blueColor // Full opacity on black keys
-          : blueColor.withValues(alpha: 0.9);
-    }
-    // FIX BUG SESSION-007 #2: REMOVED missFlash red for missed notes
-    // Miss = note NOT played → keyboard stays BLACK (no feedback)
-    // Keyboard reflects only PLAYED notes, not unplayed expected notes
-    // Previously: missFlashActive && missFlashNote == note → red
-    // Now: removed - keyboard only shows feedback for PLAYED notes
-    else if (isDetected && isExpected) {
-      // FIX BUG (GHOST GREEN): Only show green if note is CURRENTLY expected
-      keyColor = AppColors.success;
-    } else if (isExpected && wasRecentlyHit) {
-      // FIX BUG SESSION-004 #1: Note was hit and is still expected = keep solid green
-      // This prevents the visual "switch" between solid green and semi-transparent
-      keyColor = AppColors.success;
-    }
-    // FIX BUG SESSION-008 #1+2: REMOVED green highlight for unplayed expected notes
-    // Before: isExpected alone would light keyboard green even if note wasn't played
-    // This caused:
-    //   - BUG 1: Missed notes showing green keyboard (should stay black)
-    //   - BUG 2: "Double green" illusion when miss + next note same pitch
-    // Now: Keyboard only shows green if note is DETECTED or was RECENTLY HIT
-    // Expected-but-unplayed notes stay at their natural color (black/white)
-    else if (isBlack) {
-      keyColor = AppColors.blackKey;
-    } else {
-      keyColor = AppColors.whiteKey;
-    }
+    final keyColor = _stateToColor(visualState, isBlack);
 
-    // SESSION-035/036/036c: Enhanced log for flash debugging with ARGB values
-    // Logs ONLY for flash-targeted notes to avoid spam
-    // CRITICAL: Proves whether flash props reach keyboard and final color applied
-    if (kDebugMode &&
-        (note == successFlashNote ||
-            note == wrongFlashNote ||
-            note == anticipatedFlashNote ||
-            note == detectedFlashNote)) {
-      const cyanColor = Color(0xFF00BCD4);
-      const blueColor = Color(0xFF2196F3);
-      final colorName =
-          keyColor == AppColors.success ||
-              keyColor == AppColors.success.withValues(alpha: 0.9)
-          ? 'GREEN'
-          : keyColor == AppColors.error ||
-                keyColor == AppColors.error.withValues(alpha: 0.9)
-          ? 'RED'
-          : keyColor == cyanColor ||
-                keyColor == cyanColor.withValues(alpha: 0.9)
-          ? 'CYAN'
-          : keyColor == blueColor ||
-                keyColor == blueColor.withValues(alpha: 0.9)
-          ? 'BLUE'
-          : keyColor == AppColors.blackKey
-          ? 'BLACK'
-          : 'WHITE';
-      // SESSION-035: Add ARGB hex for precise color verification
-      final argbHex =
-          '0x${keyColor.toARGB32().toRadixString(16).padLeft(8, '0').toUpperCase()}';
+    // Debug log pour flash states uniquement
+    if (kDebugMode && visualState != KeyVisualState.neutralBlack &&
+        visualState != KeyVisualState.neutralWhite &&
+        visualState != KeyVisualState.cyan) {
+      final colorName = switch (visualState) {
+        KeyVisualState.green => 'GREEN',
+        KeyVisualState.red => 'RED',
+        KeyVisualState.blue => 'BLUE',
+        KeyVisualState.cyan => 'CYAN',
+        _ => 'NEUTRAL',
+      };
       debugPrint(
-        'FLASH_KEY_RENDER midi=$note isBlack=$isBlack isDetected=$isDetected isExpected=$isExpected '
-        'wasRecentlyHit=$wasRecentlyHit successActive=$successFlashActive successMidi=$successFlashNote '
-        'wrongActive=$wrongFlashActive wrongMidi=$wrongFlashNote '
-        'anticipatedActive=$anticipatedFlashActive anticipatedMidi=$anticipatedFlashNote '
-        'detectedActive=$detectedFlashActive detectedMidi=$detectedFlashNote '
-        'finalColor=$colorName argb=$argbHex',
+        'S56_KEY_RENDER midi=$note state=$visualState color=$colorName isBlack=$isBlack',
       );
     }
 
@@ -360,5 +258,25 @@ class PracticeKeyboard extends StatelessWidget {
           ),
       ],
     );
+  }
+
+  /// Convertit KeyVisualState en Color (AUCUNE décision, juste mapping)
+  Color _stateToColor(KeyVisualState state, bool isBlack) {
+    return switch (state) {
+      KeyVisualState.green => isBlack
+          ? AppColors.success
+          : AppColors.success.withValues(alpha: 0.9),
+      KeyVisualState.red => isBlack
+          ? AppColors.error
+          : AppColors.error.withValues(alpha: 0.9),
+      KeyVisualState.blue => isBlack
+          ? const Color(0xFF2196F3)
+          : const Color(0xFF2196F3).withValues(alpha: 0.9),
+      KeyVisualState.cyan => isBlack
+          ? const Color(0xFF00BCD4)
+          : const Color(0xFF00BCD4).withValues(alpha: 0.9),
+      KeyVisualState.neutralBlack => AppColors.blackKey,
+      KeyVisualState.neutralWhite => AppColors.whiteKey,
+    };
   }
 }

@@ -275,17 +275,6 @@ const double _targetChordToleranceSec = 0.03;
 const double _videoSyncOffsetSec = -0.06;
 const double _mergeEventOverlapToleranceSec = 0.05;
 const double _mergeEventGapToleranceSec = 0.08;
-// SESSION-035 FIX: Flash duration for visual feedback
-// SESSION-053: 350→200ms based on UX studies (150-200ms optimal for micro-interactions)
-// Still > 50ms retinal persistence, responsive but perceptible
-const Duration _successFlashDuration = Duration(milliseconds: 200);
-// SESSION-025 FIX: Separate gate duration for _registerWrongHit anti-spam
-// PREUVE: logcat session-025 shows WRONG_FLASH EMIT every ~150-200ms from MicEngine,
-//         but _registerWrongHit silently blocks flashes < 200ms apart (same note)
-// CAUSE: _successFlashDuration=200ms used for BOTH display duration AND gate
-// CORRECTION: Use dedicated _wrongFlashGateDuration for gate, aligned with MicEngine
-// SESSION-053: 150→65ms for real-time human feedback (trills up to 15/sec)
-const Duration _wrongFlashGateDuration = Duration(milliseconds: 65);
 const Duration _devTapWindow = Duration(seconds: 2);
 const int _devTapTarget = 5;
 const double _videoCropFactor = 0.65;
@@ -569,11 +558,6 @@ class _PracticePageState extends _PracticePageStateBase
       return <int>{};
     }
     return impact.map(_normalizeToKeyboardRange).whereType<int>().toSet();
-  }
-
-  @override
-  int? _uiDetectedNote() {
-    return _normalizeToKeyboardRange(_detectedNote);
   }
 
   // _handleDevHudTap, _buildMicDebugHud, _copyDebugReport, _permissionLabel
@@ -1526,7 +1510,6 @@ class _PracticePageState extends _PracticePageStateBase
             stateBefore.perfectCount +
             stateBefore.goodCount +
             stateBefore.okCount;
-        final wrongCountBefore = stateBefore.wrongCount;
 
         final playedEvent = PracticeController.createPlayedEvent(
           midi: note,
@@ -1539,14 +1522,14 @@ class _PracticePageState extends _PracticePageStateBase
         final stateAfter = _newController!.currentScoringState;
         final correctCountAfter =
             stateAfter.perfectCount + stateAfter.goodCount + stateAfter.okCount;
-        final wrongCountAfter = stateAfter.wrongCount;
 
-        if (correctCountAfter > correctCountBefore) {
-          _registerCorrectHit(targetNote: note, detectedNote: note, now: now);
-          setState(() {});
-        } else if (wrongCountAfter > wrongCountBefore) {
-          _registerWrongHit(detectedNote: note, now: now);
-          setState(() {});
+        // SESSION-057: Notify UIFeedbackEngine of HIT for green flash
+        if (correctCountAfter > correctCountBefore && _uiFeedbackEngine != null) {
+          final elapsedMs = elapsed * 1000.0;
+          _uiFeedbackEngine!.notifyHit(
+            hitMidi: note,
+            nowMs: elapsedMs.round(),
+          );
         }
       }
       // ═══════════════════════════════════════════════════════════════
