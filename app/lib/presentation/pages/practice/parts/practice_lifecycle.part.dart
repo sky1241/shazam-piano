@@ -433,6 +433,27 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
     }
     // ══════════════════════════════════════════════════════════════════════
 
+    // ══════════════════════════════════════════════════════════════════════
+    // SESSION-056: Initialize UI Feedback Engine (perceptive motor)
+    // Source de vérité = PERCEPTION utilisateur (pas scoring)
+    // ══════════════════════════════════════════════════════════════════════
+    if (_useNewFeedbackEngine) {
+      _uiFeedbackEngine = UIFeedbackEngine(
+        onStateChanged: (state) {
+          // Callback when feedback state changes - trigger UI rebuild
+          if (mounted && _practiceRunning) {
+            setState(() {});
+          }
+        },
+      );
+      if (kDebugMode) {
+        debugPrint(
+          'SESSION56_UI_ENGINE: Initialized perceptive feedback motor',
+        );
+      }
+    }
+    // ══════════════════════════════════════════════════════════════════════
+
     _lastCorrectHitAt = null;
     _lastCorrectNote = null;
     _lastCorrectNoteIndex = null; // FIX BUG SESSION-005 #1+2

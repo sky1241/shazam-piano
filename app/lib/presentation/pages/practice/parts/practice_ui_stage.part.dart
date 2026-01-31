@@ -303,6 +303,77 @@ mixin _PracticeUiStageMixin on _PracticePageStateBase {
     required bool showMidiNumbers,
   }) {
     final now = DateTime.now();
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SESSION-056: USE NEW PERCEPTIVE FEEDBACK ENGINE (if enabled)
+    // Simple rules: BLEU=detection, CYAN=partition, VERT=success, ROUGE=error
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (_useNewFeedbackEngine && _uiFeedbackEngine != null && _practiceRunning) {
+      final fbState = _uiFeedbackEngine!.state;
+
+      // BLEU = what mic detects (immediate)
+      final blueMidi = fbState.blueMidi;
+      final blueActive = blueMidi != null;
+
+      // CYAN = what partition expects (always visible for active notes)
+      // Already passed via targetNotes parameter
+
+      // VERT = BLEU ∩ CYAN (pitch class match = success)
+      final greenMidi = fbState.greenMidi;
+      final greenActive = greenMidi != null;
+
+      // ROUGE = BLEU without CYAN nearby (clear error)
+      final redMidi = fbState.redMidi;
+      final redActive = redMidi != null;
+
+      // Log for debug (SESSION-056)
+      if (kDebugMode && (blueActive || greenActive || redActive)) {
+        debugPrint(
+          'S56_KEYBOARD blue=$blueMidi green=$greenMidi red=$redMidi '
+          'cyan=${fbState.cyanMidis} conf=${fbState.confidence.toStringAsFixed(2)} '
+          'greenCount=${_uiFeedbackEngine!.greenCount}',
+        );
+      }
+
+      return PracticeKeyboard(
+        key: const Key('practice_keyboard'),
+        totalWidth: totalWidth,
+        whiteWidth: whiteWidth,
+        blackWidth: blackWidth,
+        whiteHeight: whiteHeight,
+        blackHeight: blackHeight,
+        firstKey: _displayFirstKey,
+        lastKey: _displayLastKey,
+        blackKeys: _blackKeys,
+        targetNotes: targetNotes,
+        detectedNote: blueMidi, // BLEU = detected note
+        // VERT = success (pitch class match)
+        successFlashNote: greenMidi,
+        successFlashActive: greenActive,
+        // ROUGE = error (BLEU without CYAN)
+        wrongFlashNote: redMidi,
+        wrongFlashActive: redActive,
+        // Disable old miss flash (not needed in S56)
+        missFlashNote: null,
+        missFlashActive: false,
+        // CYAN = anticipated (partition) - use first cyan if multiple
+        anticipatedFlashNote: fbState.cyanMidis.isNotEmpty
+            ? fbState.cyanMidis.first
+            : null,
+        anticipatedFlashActive: fbState.cyanMidis.isNotEmpty,
+        // BLEU = detected (already shown via detectedNote, but also flash)
+        detectedFlashNote: blueMidi,
+        detectedFlashActive: blueActive && !greenActive, // Hide blue if green
+        noteToXFn: noteToXFn,
+        showDebugLabels: showDebugLabels,
+        showMidiNumbers: showMidiNumbers,
+        recentlyHitNotes: const {}, // Not needed in S56
+      );
+    }
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FALLBACK: Old complex logic (when S56 engine not active)
+    // ═══════════════════════════════════════════════════════════════════════════
+
     final successFlashActive = _isSuccessFlashActive(now);
     final wrongFlashActive = _isWrongFlashActive(now);
     final missFlashActive = _isMissFlashActive(now); // FIX BUG SESSION-005 #4

@@ -35,6 +35,7 @@ import '../../widgets/banner_ad_placeholder.dart';
 import 'controller/practice_controller.dart';
 import 'pitch_detector.dart';
 import 'mic_engine.dart' as mic;
+import '../../../core/practice/feedback/ui_feedback_engine.dart';
 
 part 'parts/falling_notes_painter.part.dart';
 part 'parts/practice_models.part.dart';

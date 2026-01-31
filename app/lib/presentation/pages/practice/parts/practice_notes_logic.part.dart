@@ -7,6 +7,7 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
   double? _guidanceElapsedSec();
   bool _isSessionActive(int sessionId);
   void _logMicDebug(DateTime now);
+  Set<int> _computeImpactNotes({double? elapsedSec}); // SESSION-056: For UI feedback
 
   // SESSION-041: TTL constant for wrong-flash dedup (1500ms)
   static const double _wrongFlashDedupTtlMs = 1500.0;
@@ -38,6 +39,7 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
 
     // ═══════════════════════════════════════════════════════════════
     // CRITICAL: MicEngine scoring (all gating + buffering internal)
+    // MUST RUN FIRST to update lastRawMidi/lastRawConf for S56 engine
     // ═══════════════════════════════════════════════════════════════
     final elapsed = _guidanceElapsedSec();
     if (elapsed != null && _micEngine != null) {
@@ -59,6 +61,29 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
         _micRmsSum += _micRms;
         _micSampleCount++;
       }
+
+      // ═══════════════════════════════════════════════════════════════
+      // SESSION-056: Feed UI Feedback Engine AFTER pitch detection
+      // Now lastRawMidi/lastRawConf are CURRENT frame values
+      // This is the PERCEPTIVE feedback loop - immediate, no arbitration
+      // ═══════════════════════════════════════════════════════════════
+      if (_useNewFeedbackEngine && _uiFeedbackEngine != null) {
+        // Get CURRENT raw pitch detection (just updated by onAudioChunk)
+        final rawMidi = _micEngine!.lastRawMidi;
+        final rawConf = _micEngine!.lastRawConf ?? 0.0;
+
+        // Compute expected notes currently active (partition)
+        final expectedMidis = _computeImpactNotes(elapsedSec: elapsed);
+
+        // Feed the perceptive motor with FRESH data
+        _uiFeedbackEngine!.update(
+          detectedMidi: rawMidi,
+          confidence: rawConf,
+          expectedMidis: expectedMidis,
+          nowMs: elapsedMs.round(),
+        );
+      }
+      // ═══════════════════════════════════════════════════════════════
 
       // ═══════════════════════════════════════════════════════════════
       // SESSION-036: Anticipated flash - onset-first zero-lag feedback

@@ -82,6 +82,14 @@ abstract class _PracticePageStateBase extends ConsumerState<PracticePage>
   PracticeController? _newController; // New controller instance
   final bool _useNewScoringSystem = true; // Flag to enable/disable new system
 
+  // ══════════════════════════════════════════════════════════════════════
+  // SESSION-056: UI Feedback Engine - Moteur perceptif "jeu vidéo"
+  // Source de vérité = PERCEPTION utilisateur (pas scoring)
+  // BLEU=détection, CYAN=partition, VERT=succès, ROUGE=erreur
+  // ══════════════════════════════════════════════════════════════════════
+  UIFeedbackEngine? _uiFeedbackEngine;
+  final bool _useNewFeedbackEngine = true; // Flag to enable S56 motor
+
   // Anti-spam note tenue: cache séparé pour hit vs wrong (FIX BUG #1)
   int? _lastHitMidi;
   DateTime? _lastHitAt;
