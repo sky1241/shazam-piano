@@ -2,7 +2,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'dart:async';
 import 'core/theme/app_theme.dart';
 import 'core/config/app_config.dart';
@@ -32,18 +31,6 @@ void main() {
       } catch (e, stackTrace) {
         debugPrint('App initialization failed: $e');
         debugPrint('Stack trace: $stackTrace');
-      }
-
-      // Request microphone permission at app launch
-      try {
-        final status = await Permission.microphone.status;
-        debugPrint('MIC_PERMISSION_STARTUP: status=$status');
-        if (!status.isGranted && !status.isPermanentlyDenied) {
-          final result = await Permission.microphone.request();
-          debugPrint('MIC_PERMISSION_STARTUP: result=$result');
-        }
-      } catch (e) {
-        debugPrint('MIC_PERMISSION_STARTUP: error=$e');
       }
 
       runApp(
