@@ -37,7 +37,12 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
       DebugJobGuard.setCurrentJobId(jobId);
     }
     if (!_isTestEnv) {
-      unawaited(_requestMicPermissionProactive());
+      // Request mic permission after first frame to ensure widget is ready
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _requestMicPermissionProactive();
+        }
+      });
     }
     _ticker = createTicker((_) {
       final isPlaying = _videoController?.value.isPlaying ?? false;

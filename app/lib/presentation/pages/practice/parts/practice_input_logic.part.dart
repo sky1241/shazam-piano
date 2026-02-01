@@ -44,15 +44,35 @@ mixin _PracticeInputLogicMixin on _PracticePageStateBase {
     }
     try {
       final status = await Permission.microphone.status;
+      if (kDebugMode) {
+        debugPrint('MIC_PERMISSION_PROACTIVE: initial status=$status');
+      }
       _setMicPermissionStatus(status);
-      if (status.isGranted || status.isPermanentlyDenied) {
-        return; // Already granted or need to go to settings
+      if (status.isGranted) {
+        if (kDebugMode) {
+          debugPrint('MIC_PERMISSION_PROACTIVE: already granted, skipping');
+        }
+        return;
+      }
+      if (status.isPermanentlyDenied) {
+        if (kDebugMode) {
+          debugPrint('MIC_PERMISSION_PROACTIVE: permanently denied, need settings');
+        }
+        return;
       }
       // Request directly without rationale dialog at startup
+      if (kDebugMode) {
+        debugPrint('MIC_PERMISSION_PROACTIVE: requesting permission now...');
+      }
       final requestStatus = await Permission.microphone.request();
+      if (kDebugMode) {
+        debugPrint('MIC_PERMISSION_PROACTIVE: request result=$requestStatus');
+      }
       _setMicPermissionStatus(requestStatus);
-    } catch (_) {
-      // Ignore permission errors
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('MIC_PERMISSION_PROACTIVE: error=$e');
+      }
     }
   }
 
