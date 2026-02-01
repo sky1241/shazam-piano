@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:developer' as developer;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import '../../core/constants/app_constants.dart';
@@ -41,9 +42,26 @@ class RecordingNotifier extends StateNotifier<RecordingState> {
     _permissionChecked = true;
 
     try {
-      final granted = await _recorder.hasPermission();
-      state = state.copyWith(micPermissionGranted: granted);
-      _logInfo('Preflight mic permission: ${granted ? "granted" : "denied"}');
+      // Use permission_handler to actually REQUEST permission (not just check)
+      final status = await Permission.microphone.status;
+      _logInfo('Preflight mic permission: initial status=$status');
+
+      if (status.isGranted) {
+        state = state.copyWith(micPermissionGranted: true);
+        return;
+      }
+
+      if (status.isPermanentlyDenied) {
+        state = state.copyWith(micPermissionGranted: false);
+        _logWarning('Preflight mic permission: permanently denied');
+        return;
+      }
+
+      // Actually REQUEST permission - this shows the dialog
+      _logInfo('Preflight mic permission: requesting...');
+      final result = await Permission.microphone.request();
+      _logInfo('Preflight mic permission: result=$result');
+      state = state.copyWith(micPermissionGranted: result.isGranted);
     } catch (e) {
       _logWarning('Preflight mic permission failed: $e');
       state = state.copyWith(micPermissionGranted: false);
