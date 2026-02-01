@@ -5,6 +5,7 @@ part of '../practice_page.dart';
 mixin _PracticeLifecycleMixin on _PracticePageStateBase {
   // Abstract methods that must be implemented by the class using this mixin
   String? _extractJobId(String url);
+  // ignore: unused_element (called from _PracticeMicDebugMixin)
   Future<void> _refreshMicPermission();
   Future<void> _requestMicPermissionProactive();
   Future<void> _initVideo();
