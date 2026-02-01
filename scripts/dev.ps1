@@ -253,6 +253,7 @@ PROOF_LOG_FILE        = $logFile
       $headerContent | Out-File -Encoding utf8 -FilePath $logFile
 
       # Simple logcat script - stream all logs from app
+      # Note: Use $appPid instead of $pid (reserved variable in PowerShell)
       $logcatScript = @'
 param($pkg, $serial, $logPath, $timeout)
 $host.UI.RawUI.WindowTitle = 'Logcat'
@@ -271,40 +272,40 @@ Invoke-Expression "adb $adbArgs logcat -c" 2>$null
 
 # Wait for PID
 Write-Host 'Waiting for app PID...' -ForegroundColor Yellow
-$pid = $null
-for ($i = 0; $i -lt $timeout -and -not $pid; $i++) {
+$appPid = $null
+for ($i = 0; $i -lt $timeout -and -not $appPid; $i++) {
     Start-Sleep -Seconds 1
-    $pid = Invoke-Expression "adb $adbArgs shell pidof -s $pkg" 2>$null
-    if ($pid) { $pid = $pid.Trim() }
+    $appPid = Invoke-Expression "adb $adbArgs shell pidof -s $pkg" 2>$null
+    if ($appPid) { $appPid = $appPid.Trim() }
     Write-Host "." -NoNewline
 }
 Write-Host ''
 
-if (-not $pid) {
+if (-not $appPid) {
     Write-Host "FAIL: PID not found after $timeout seconds" -ForegroundColor Red
     "PROOF_PID = FAIL_NOT_FOUND" | Out-File -Append -Encoding utf8 -FilePath $logPath
     exit 1
 }
 
-Write-Host "PID = $pid" -ForegroundColor Green
-"PROOF_PID = $pid" | Out-File -Append -Encoding utf8 -FilePath $logPath
+Write-Host "PID = $appPid" -ForegroundColor Green
+"PROOF_PID = $appPid" | Out-File -Append -Encoding utf8 -FilePath $logPath
 Write-Host ''
 Write-Host 'Streaming logs (Ctrl+C to stop)...' -ForegroundColor Cyan
 
 # Stream with --pid if supported, else full stream
-$testPid = Invoke-Expression "adb $adbArgs logcat --pid=1 -d -t 1 2>&1"
-if ($testPid -notmatch 'unknown|error|Invalid') {
+$testResult = Invoke-Expression "adb $adbArgs logcat --pid=1 -d -t 1 2>&1"
+if ($testResult -notmatch 'unknown|error|Invalid') {
     Write-Host "MODE = PID_NATIVE" -ForegroundColor Green
     "PROOF_MODE = PID_NATIVE" | Out-File -Append -Encoding utf8 -FilePath $logPath
-    Invoke-Expression "adb $adbArgs logcat --pid=$pid -v time" 2>&1 | ForEach-Object {
+    Invoke-Expression "adb $adbArgs logcat --pid=$appPid -v time" 2>&1 | ForEach-Object {
         $_ | Out-File -Append -Encoding utf8 -FilePath $logPath
         Write-Host $_
     }
 } else {
-    Write-Host "MODE = FULL_CAPTURE (filtering by PID $pid)" -ForegroundColor Yellow
+    Write-Host "MODE = FULL_CAPTURE (filtering by PID $appPid)" -ForegroundColor Yellow
     "PROOF_MODE = FULL_CAPTURE" | Out-File -Append -Encoding utf8 -FilePath $logPath
     Invoke-Expression "adb $adbArgs logcat -v time" 2>&1 | ForEach-Object {
-        if ($_ -match "\s+$pid\s+") {
+        if ($_ -match "\s+$appPid\s+") {
             $_ | Out-File -Append -Encoding utf8 -FilePath $logPath
             Write-Host $_
         }
@@ -314,7 +315,8 @@ if ($testPid -notmatch 'unknown|error|Invalid') {
       # Write script to temp file and execute
       $tempScript = Join-Path $env:TEMP "logcat_script_$logTimestamp.ps1"
       $logcatScript | Out-File -Encoding utf8 -FilePath $tempScript
-      Start-Process -FilePath $shell -ArgumentList "-NoExit", "-File", $tempScript, "-pkg", $packageName, "-serial", $deviceSerial, "-logPath", $logFile, "-timeout", $pidTimeout | Out-Null
+      # Use quoted paths for spaces
+      Start-Process -FilePath $shell -ArgumentList "-NoExit", "-File", "`"$tempScript`"", "-pkg", "`"$packageName`"", "-serial", "`"$deviceSerial`"", "-logPath", "`"$logFile`"", "-timeout", $pidTimeout | Out-Null
       Write-Host "LOGCAT_FILE=$logFile (PID-filtered, all tags)" -ForegroundColor Green
     } else {
       Write-Host ""
