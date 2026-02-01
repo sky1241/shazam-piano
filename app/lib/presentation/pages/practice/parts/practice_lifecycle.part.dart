@@ -6,6 +6,7 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
   // Abstract methods that must be implemented by the class using this mixin
   String? _extractJobId(String url);
   Future<void> _refreshMicPermission();
+  Future<void> _requestMicPermissionProactive();
   Future<void> _initVideo();
   Future<void> _loadNoteEvents({required int sessionId});
   Future<void> _loadSavedLatency();
@@ -36,7 +37,7 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
       DebugJobGuard.setCurrentJobId(jobId);
     }
     if (!_isTestEnv) {
-      unawaited(_refreshMicPermission());
+      unawaited(_requestMicPermissionProactive());
     }
     _ticker = createTicker((_) {
       final isPlaying = _videoController?.value.isPlaying ?? false;

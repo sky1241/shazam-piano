@@ -33,6 +33,29 @@ mixin _PracticeInputLogicMixin on _PracticePageStateBase {
     }
   }
 
+  /// Request microphone permission proactively at page startup.
+  /// Unlike _ensureMicPermission(), this doesn't show a rationale dialog
+  /// to avoid blocking the UI - the rationale will be shown if user taps Play
+  /// and permission is still not granted.
+  // ignore: unused_element (called from _PracticeLifecycleMixin.initState)
+  Future<void> _requestMicPermissionProactive() async {
+    if (_isTestEnv) {
+      return;
+    }
+    try {
+      final status = await Permission.microphone.status;
+      _setMicPermissionStatus(status);
+      if (status.isGranted || status.isPermanentlyDenied) {
+        return; // Already granted or need to go to settings
+      }
+      // Request directly without rationale dialog at startup
+      final requestStatus = await Permission.microphone.request();
+      _setMicPermissionStatus(requestStatus);
+    } catch (_) {
+      // Ignore permission errors
+    }
+  }
+
   Future<bool> _ensureMicPermission() async {
     if (_isTestEnv) {
       return true;
