@@ -33,7 +33,7 @@ function Stop-WindowByTitle {
 }
 
 # PID timeout for logcat (seconds) - needs to be long enough for Flutter build+install
-$pidTimeout = 120
+$pidTimeout = 600
 
 function Get-AndroidPackageInfo {
   param([string]$RepoRoot)
