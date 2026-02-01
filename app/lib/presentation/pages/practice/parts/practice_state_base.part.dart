@@ -1,5 +1,20 @@
 part of '../practice_page.dart';
 
+// ════════════════════════════════════════════════════════════════════════════
+// LOI V3: JUGE DE FRAPPE - Machine d'état globale
+// ════════════════════════════════════════════════════════════════════════════
+// ACTIVE = micro ON, frappes traitées, flash possible
+// ENDED = micro OFF (conceptuel), aucun traitement, zéro flash
+// Transition ACTIVE→ENDED : irréversible quand dernière note hors écran
+// ════════════════════════════════════════════════════════════════════════════
+enum JudgeSessionState {
+  /// Session active - micro ON, frappes jugées
+  active,
+
+  /// Session terminée - micro OFF, aucun flash
+  ended,
+}
+
 /// Base class containing all state fields for _PracticePageState.
 /// Mixins can extend this to access state without circular dependency.
 abstract class _PracticePageStateBase extends ConsumerState<PracticePage>
@@ -88,6 +103,24 @@ abstract class _PracticePageStateBase extends ConsumerState<PracticePage>
   // BLEU=détection, CYAN=partition, VERT=succès, ROUGE=erreur
   // ══════════════════════════════════════════════════════════════════════
   UIFeedbackEngine? _uiFeedbackEngine;
+
+  // ══════════════════════════════════════════════════════════════════════
+  // LOI V3: JUGE DE FRAPPE - État de session
+  // ══════════════════════════════════════════════════════════════════════
+  /// État du JUGE: ACTIVE (micro ON) ou ENDED (micro OFF)
+  JudgeSessionState _judgeState = JudgeSessionState.active;
+
+  /// Fin de la dernière note de la mélodie (secondes)
+  /// Utilisé pour calculer quand la dernière note sort de l'écran
+  double _lastNoteEndSec = 0.0;
+
+  /// Hauteur de la zone de chute (pixels) - mise à jour par le layout
+  /// Utilisé pour calculer si la dernière note est hors écran
+  double _judgeFallAreaHeight = 0.0;
+
+  /// Temps de chute (secondes) - copié depuis le painter
+  /// Doit être identique à fallLead utilisé dans _FallingNotesPainter
+  double _judgeFallLeadSec = 0.0;
 
   /// Vérifie si le mode S56 est PRÊT à produire du feedback
   bool _isS56ModeReady() {

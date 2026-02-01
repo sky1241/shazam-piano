@@ -11,6 +11,73 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
     double? elapsedSec,
   }); // SESSION-056: For UI feedback
 
+  // ════════════════════════════════════════════════════════════════════════════
+  // LOI V3: JUGE DE FRAPPE - Fonctions helper
+  // ════════════════════════════════════════════════════════════════════════════
+
+  /// Calcule la position Y d'une note - IDENTIQUE au painter (_FallingNotesPainter)
+  /// [noteTimeSec] = note.start ou note.end selon ce qu'on calcule
+  /// [elapsedSec] = temps écoulé actuel
+  /// [fallLeadSec] = temps de chute (doit être _judgeFallLeadSec)
+  /// [fallAreaHeightPx] = hauteur de la zone (doit être _judgeFallAreaHeight)
+  double _judgeComputeNoteYPosition({
+    required double noteTimeSec,
+    required double elapsedSec,
+    required double fallLeadSec,
+    required double fallAreaHeightPx,
+  }) {
+    if (fallLeadSec <= 0) return 0;
+    final progress = (elapsedSec - (noteTimeSec - fallLeadSec)) / fallLeadSec;
+    return progress * fallAreaHeightPx;
+  }
+
+  /// Vérifie si la dernière note est hors écran et effectue la transition ACTIVE→ENDED
+  /// Retourne true si l'état est maintenant ENDED (ou était déjà ENDED)
+  bool _judgeCheckAndTransitionToEnded(double elapsedSec, double elapsedMs) {
+    // Déjà ENDED ? Pas besoin de re-vérifier
+    if (_judgeState == JudgeSessionState.ended) {
+      return true;
+    }
+
+    // Paramètres du layout pas encore initialisés ? Ne pas transitionner
+    if (_judgeFallAreaHeight <= 0 || _judgeFallLeadSec <= 0) {
+      return false;
+    }
+
+    // Pas de notes ? Ne pas transitionner (ou transitionner immédiatement ?)
+    if (_lastNoteEndSec <= 0) {
+      return false;
+    }
+
+    // Calculer la position Y du HAUT de la dernière note (topY = note.end)
+    final lastNoteTopY = _judgeComputeNoteYPosition(
+      noteTimeSec: _lastNoteEndSec,
+      elapsedSec: elapsedSec,
+      fallLeadSec: _judgeFallLeadSec,
+      fallAreaHeightPx: _judgeFallAreaHeight,
+    );
+
+    // Condition ENDED : le haut de la dernière note est >= hauteur visible
+    // (identique au culling du painter: rectTop > fallAreaHeight)
+    final isLastNoteOffscreen = lastNoteTopY >= _judgeFallAreaHeight;
+
+    if (isLastNoteOffscreen) {
+      // TRANSITION ACTIVE → ENDED (irréversible)
+      _judgeState = JudgeSessionState.ended;
+
+      if (kDebugMode) {
+        debugPrint(
+          'STATE_TRANSITION ts=${elapsedMs.round()} from=ACTIVE to=ENDED '
+          'reason=last_note_offscreen lastNoteEndSec=${_lastNoteEndSec.toStringAsFixed(3)} '
+          'lastNoteTopY=${lastNoteTopY.toStringAsFixed(1)} fallAreaHeight=${_judgeFallAreaHeight.toStringAsFixed(1)}',
+        );
+      }
+      return true;
+    }
+
+    return false;
+  }
+
   void _processSamples(
     List<double> samples, {
     required DateTime now,
@@ -33,6 +100,15 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
       return;
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // LOI V3: JUGE DE FRAPPE - Vérifier état ENDED (micro OFF conceptuel)
+    // Si ENDED : aucun traitement, aucun flash, sortie immédiate
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (_judgeState == JudgeSessionState.ended) {
+      // Micro conceptuellement OFF - ignorer tous les samples
+      return;
+    }
+
     // FIX CASCADE: Update timestamp APRÈS guards (consistent pattern)
     _lastMicFrameAt = now;
 
@@ -44,6 +120,15 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
     if (elapsed != null && _micEngine != null) {
       final prevAccuracy = _accuracy;
       final elapsedMs = elapsed * 1000.0;
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // LOI V3: Vérifier transition ACTIVE → ENDED (dernière note hors écran)
+      // ═══════════════════════════════════════════════════════════════════════
+      if (_judgeCheckAndTransitionToEnded(elapsed, elapsedMs)) {
+        // ENDED : micro OFF conceptuel, aucun traitement
+        return;
+      }
+
       final decisions = _micEngine!.onAudioChunk(samples, now, elapsedMs);
 
       // FIX CASCADE CRITIQUE: Update mic state IMMEDIATELY après onAudioChunk
@@ -61,27 +146,103 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
         _micSampleCount++;
       }
 
-      // ═══════════════════════════════════════════════════════════════
-      // SESSION-056: Feed UI Feedback Engine AFTER pitch detection
-      // SESSION-057: Use getRawMidiForUi() which is NEVER snapped/merged
-      // and returns null if stale (> 150ms) for auto-clear
-      // ═══════════════════════════════════════════════════════════════
+      // ═══════════════════════════════════════════════════════════════════════
+      // LOI V3: JUGE DE FRAPPE - Arbitre central unique
+      // ═══════════════════════════════════════════════════════════════════════
+      // ENTRÉES:
+      //   - rapport_detection: rawMidiForUi (0 ou 1 candidat après best-guess MicEngine)
+      //   - notes_attendues_actives: expectedMidis
+      //   - état: _judgeState (ACTIVE garanti ici car check plus haut)
+      // SORTIES:
+      //   - FLASH_VERT(touche) si verdict CORRECT
+      //   - FLASH_ROUGE(touche) si verdict INCORRECT
+      //   - NO_FLASH si rapport_detection vide
+      // ═══════════════════════════════════════════════════════════════════════
       if (_uiFeedbackEngine != null) {
-        // SESSION-057: Get RAW MIDI FOR UI - never snapped/merged
-        // Returns null if stale (> 150ms) to trigger clear
+        // Rapport de détection (déjà best-guess par MicEngine)
         final rawMidiForUi = _micEngine!.getRawMidiForUi(elapsed);
         final rawConfForUi = _micEngine!.getRawConfForUi(elapsed) ?? 0.0;
 
-        // Compute expected notes currently active (partition)
+        // Notes attendues actives (partition)
         final expectedMidis = _computeImpactNotes(elapsedSec: elapsed);
 
-        // Feed the perceptive motor with RAW (unmerged) data
-        _uiFeedbackEngine!.update(
-          detectedMidi: rawMidiForUi,
-          confidence: rawConfForUi,
-          expectedMidis: expectedMidis,
-          nowMs: elapsedMs.round(),
-        );
+        // Format rapport_detection pour log
+        final rapportDetection = rawMidiForUi != null
+            ? '[$rawMidiForUi@${rawConfForUi.toStringAsFixed(2)}]'
+            : '[]';
+
+        // LOG JUDGE_IN
+        if (kDebugMode && rawMidiForUi != null) {
+          debugPrint(
+            'JUDGE_IN ts=${elapsedMs.round()} rapport_detection=$rapportDetection '
+            'attendues=$expectedMidis state=ACTIVE',
+          );
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
+        // PHASE 1: Estimation de la note jouée
+        // E1: Si ≥1 candidat → note_estimée = ce candidat (best-guess déjà fait)
+        // E2: Si 0 candidat → note_estimée = INESTIMABLE → NO_FLASH
+        // ═══════════════════════════════════════════════════════════════════
+        if (rawMidiForUi == null) {
+          // E2: Rapport vide → NO_FLASH (silence autorisé)
+          // Pas de log JUDGE_OUT car pas de frappe détectée
+          // Mais on doit quand même appeler update() pour gérer le clear
+          _uiFeedbackEngine!.update(
+            detectedMidi: null,
+            confidence: rawConfForUi,
+            expectedMidis: expectedMidis,
+            nowMs: elapsedMs.round(),
+          );
+        } else {
+          // E1: Note estimée disponible
+          final noteEstimee = rawMidiForUi;
+
+          // ═══════════════════════════════════════════════════════════════
+          // PHASE 2: Association frappe-note
+          // A1/A2: Chercher si note_estimée ∈ expectedMidis
+          // ═══════════════════════════════════════════════════════════════
+          final hasMatch = expectedMidis.contains(noteEstimee);
+
+          // ═══════════════════════════════════════════════════════════════
+          // PHASE 3: Verdict et Flash
+          // V1: Si match → CORRECT → FLASH_VERT
+          // V2: Si no match → INCORRECT → FLASH_ROUGE
+          // ═══════════════════════════════════════════════════════════════
+          if (hasMatch) {
+            // V1: CORRECT → FLASH_VERT
+            _uiFeedbackEngine!.judgeFlashVert(
+              midi: noteEstimee,
+              nowMs: elapsedMs.round(),
+            );
+
+            if (kDebugMode) {
+              debugPrint(
+                'JUDGE_OUT ts=${elapsedMs.round()} note_estimee=$noteEstimee '
+                'verdict=CORRECT flash=VERT touche=$noteEstimee',
+              );
+            }
+          } else {
+            // V2: INCORRECT → FLASH_ROUGE
+            _uiFeedbackEngine!.judgeFlashRouge(
+              midi: noteEstimee,
+              nowMs: elapsedMs.round(),
+            );
+
+            if (kDebugMode) {
+              debugPrint(
+                'JUDGE_OUT ts=${elapsedMs.round()} note_estimee=$noteEstimee '
+                'verdict=INCORRECT flash=ROUGE touche=$noteEstimee',
+              );
+            }
+          }
+
+          // Mettre à jour uniquement les cyan (notes attendues) sans écraser le verdict
+          _uiFeedbackEngine!.judgeUpdateCyan(
+            expectedMidis: expectedMidis,
+            nowMs: elapsedMs.round(),
+          );
+        }
       }
 
       // Apply decisions (HIT/MISS/wrongFlash)

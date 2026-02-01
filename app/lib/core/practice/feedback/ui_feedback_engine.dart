@@ -565,6 +565,84 @@ class UIFeedbackEngine {
     }
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // LOI V3: API JUGE DE FRAPPE - Exécution directe des verdicts
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Exécute un flash VERT ordonné par le JUGE (verdict CORRECT)
+  /// Le JUGE a déjà décidé - cette méthode exécute sans logique supplémentaire
+  void judgeFlashVert({required int midi, required int nowMs}) {
+    _lastGreenMidi = midi;
+    _lastGreenTimestampMs = nowMs;
+    _greenCount++;
+
+    // Mettre à jour l'état avec le flash vert
+    final newState = _state.copyWith(
+      greenMidi: midi,
+      timestampMs: nowMs,
+      clearRed: true, // Vert efface rouge sur même touche
+    );
+    _state = newState;
+    onStateChanged?.call(_state);
+
+    if (kDebugMode) {
+      debugPrint('JUDGE_FLASH_VERT midi=$midi nowMs=$nowMs');
+    }
+  }
+
+  /// Exécute un flash ROUGE ordonné par le JUGE (verdict INCORRECT)
+  /// Le JUGE a déjà décidé - cette méthode exécute sans logique supplémentaire
+  void judgeFlashRouge({required int midi, required int nowMs}) {
+    // Mettre à jour l'état avec le flash rouge
+    final newRedMidis = Set<int>.from(_state.redMidis)..add(midi);
+    final newState = _state.copyWith(
+      redMidis: newRedMidis,
+      timestampMs: nowMs,
+    );
+    _state = newState;
+    _currentRedMidis = newRedMidis;
+    onStateChanged?.call(_state);
+
+    if (kDebugMode) {
+      debugPrint('JUDGE_FLASH_ROUGE midi=$midi nowMs=$nowMs');
+    }
+  }
+
+  /// Met à jour uniquement les cyan (notes attendues) sans toucher vert/rouge
+  /// Utilisé après judgeFlashVert/judgeFlashRouge pour maintenir l'affichage cyan
+  void judgeUpdateCyan({
+    required Set<int> expectedMidis,
+    required int nowMs,
+  }) {
+    final newState = _state.copyWith(
+      cyanMidis: expectedMidis,
+      timestampMs: nowMs,
+    );
+    if (_state.cyanMidis != newState.cyanMidis) {
+      _state = newState;
+      onStateChanged?.call(_state);
+    }
+  }
+
+  /// Clear tous les flashs (appelé par le JUGE pour NO_FLASH ou reset)
+  void judgeClearFlash({required int nowMs}) {
+    final newState = _state.copyWith(
+      clearGreen: true,
+      clearRed: true,
+      clearBlue: true,
+      timestampMs: nowMs,
+    );
+    _state = newState;
+    _currentRedMidis = {};
+    _lastGreenMidi = null;
+    _lastBlueMidi = null;
+    onStateChanged?.call(_state);
+
+    if (kDebugMode) {
+      debugPrint('JUDGE_CLEAR_FLASH nowMs=$nowMs');
+    }
+  }
+
   /// Reset complet de l'état
   void reset() {
     _state = UIFeedbackState.empty;

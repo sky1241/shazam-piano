@@ -173,6 +173,9 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
     _micRmsMax = null;
     _micRmsSum = 0.0;
     _micSampleCount = 0;
+    // LOI V3: Reset JUGE state for new session
+    _judgeState = JudgeSessionState.active;
+    _lastNoteEndSec = 0.0;
     if (_videoController != null && _videoController!.value.isInitialized) {
       await _videoController!.pause();
       await _videoController!.seekTo(Duration.zero);
@@ -331,6 +334,24 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
       }
     }
     _totalNotes = _noteEvents.length;
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // LOI V3: Calculer la fin de la dernière note pour détecter ENDED
+    // ══════════════════════════════════════════════════════════════════════════
+    if (_noteEvents.isNotEmpty) {
+      _lastNoteEndSec = _noteEvents.fold<double>(
+        0.0,
+        (maxEnd, note) => note.end > maxEnd ? note.end : maxEnd,
+      );
+      if (kDebugMode) {
+        debugPrint(
+          'JUDGE_INIT lastNoteEndSec=${_lastNoteEndSec.toStringAsFixed(3)} totalNotes=$_totalNotes',
+        );
+      }
+    } else {
+      _lastNoteEndSec = 0.0;
+    }
+
     // BUG FIX #12: Rebuild list in-place to maintain MicEngine reference
     _hitNotes.clear();
     _hitNotes.addAll(List<bool>.filled(_noteEvents.length, false));

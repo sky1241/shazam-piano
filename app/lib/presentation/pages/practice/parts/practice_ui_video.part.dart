@@ -224,6 +224,14 @@ mixin _PracticeUiVideoMixin on _PracticePageStateBase {
     // Solution: Use constant _fallLeadSec (2.0s) for both states - notes fall at consistent speed
     final effectiveFallLead = _fallLeadSec;
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // LOI V3: Stocker les paramètres du painter pour le JUGE
+    // Ces valeurs sont utilisées pour calculer quand la dernière note sort de l'écran
+    // MUST be identical to values passed to _FallingNotesPainter
+    // ══════════════════════════════════════════════════════════════════════════
+    _judgeFallAreaHeight = overlayHeight;
+    _judgeFallLeadSec = effectiveFallLead;
+
     // SESSION-056: Pass neutral values - S56 handles all visual feedback on keyboard
     // Falling notes only show bars, no flash feedback needed
     return IgnorePointer(
