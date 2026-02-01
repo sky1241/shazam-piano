@@ -56,7 +56,9 @@ mixin _PracticeInputLogicMixin on _PracticePageStateBase {
       }
       if (status.isPermanentlyDenied) {
         if (kDebugMode) {
-          debugPrint('MIC_PERMISSION_PROACTIVE: permanently denied, need settings');
+          debugPrint(
+            'MIC_PERMISSION_PROACTIVE: permanently denied, need settings',
+          );
         }
         return;
       }

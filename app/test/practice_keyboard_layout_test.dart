@@ -25,8 +25,9 @@ void main() {
     final keyColors = <int, KeyVisualState>{};
     for (int note = firstKey; note <= lastKey; note++) {
       final isBlack = blackKeys.contains(note % 12);
-      keyColors[note] =
-          isBlack ? KeyVisualState.neutralBlack : KeyVisualState.neutralWhite;
+      keyColors[note] = isBlack
+          ? KeyVisualState.neutralBlack
+          : KeyVisualState.neutralWhite;
     }
 
     await tester.pumpWidget(
@@ -130,8 +131,9 @@ void main() {
       if (note == midi60) {
         keyColors[note] = KeyVisualState.green; // Success state
       } else {
-        keyColors[note] =
-            isBlack ? KeyVisualState.neutralBlack : KeyVisualState.neutralWhite;
+        keyColors[note] = isBlack
+            ? KeyVisualState.neutralBlack
+            : KeyVisualState.neutralWhite;
       }
     }
 
@@ -167,9 +169,7 @@ void main() {
     // Should render green for midi60 - visual verification would need golden tests
   });
 
-  testWidgets('PracticeKeyboard renders red for error state', (
-    tester,
-  ) async {
+  testWidgets('PracticeKeyboard renders red for error state', (tester) async {
     // SESSION-056: Test render-only keyboard with RED state
     const firstKey = 36;
     const lastKey = 96;
@@ -195,8 +195,9 @@ void main() {
       if (note == midi60) {
         keyColors[note] = KeyVisualState.red; // Error state
       } else {
-        keyColors[note] =
-            isBlack ? KeyVisualState.neutralBlack : KeyVisualState.neutralWhite;
+        keyColors[note] = isBlack
+            ? KeyVisualState.neutralBlack
+            : KeyVisualState.neutralWhite;
       }
     }
 
@@ -260,8 +261,9 @@ void main() {
       if (note == midi60) {
         keyColors[note] = KeyVisualState.cyan; // Expected state
       } else {
-        keyColors[note] =
-            isBlack ? KeyVisualState.neutralBlack : KeyVisualState.neutralWhite;
+        keyColors[note] = isBlack
+            ? KeyVisualState.neutralBlack
+            : KeyVisualState.neutralWhite;
       }
     }
 

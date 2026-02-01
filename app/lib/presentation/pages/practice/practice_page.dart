@@ -1524,12 +1524,10 @@ class _PracticePageState extends _PracticePageStateBase
             stateAfter.perfectCount + stateAfter.goodCount + stateAfter.okCount;
 
         // SESSION-057: Notify UIFeedbackEngine of HIT for green flash
-        if (correctCountAfter > correctCountBefore && _uiFeedbackEngine != null) {
+        if (correctCountAfter > correctCountBefore &&
+            _uiFeedbackEngine != null) {
           final elapsedMs = elapsed * 1000.0;
-          _uiFeedbackEngine!.notifyHit(
-            hitMidi: note,
-            nowMs: elapsedMs.round(),
-          );
+          _uiFeedbackEngine!.notifyHit(hitMidi: note, nowMs: elapsedMs.round());
         }
       }
       // ═══════════════════════════════════════════════════════════════

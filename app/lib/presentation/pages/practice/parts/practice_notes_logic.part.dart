@@ -399,5 +399,4 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
 
     return merged;
   }
-
 }

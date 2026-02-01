@@ -172,13 +172,15 @@ class PracticeKeyboard extends StatelessWidget {
     // ═══════════════════════════════════════════════════════════════════════
     // RENDER-ONLY: Lire la couleur pré-calculée
     // ═══════════════════════════════════════════════════════════════════════
-    final visualState = keyColors[note] ??
+    final visualState =
+        keyColors[note] ??
         (isBlack ? KeyVisualState.neutralBlack : KeyVisualState.neutralWhite);
 
     final keyColor = _stateToColor(visualState, isBlack);
 
     // Debug log pour flash states uniquement
-    if (kDebugMode && visualState != KeyVisualState.neutralBlack &&
+    if (kDebugMode &&
+        visualState != KeyVisualState.neutralBlack &&
         visualState != KeyVisualState.neutralWhite &&
         visualState != KeyVisualState.cyan) {
       final colorName = switch (visualState) {
@@ -263,18 +265,18 @@ class PracticeKeyboard extends StatelessWidget {
   /// Convertit KeyVisualState en Color (AUCUNE décision, juste mapping)
   Color _stateToColor(KeyVisualState state, bool isBlack) {
     return switch (state) {
-      KeyVisualState.green => isBlack
-          ? AppColors.success
-          : AppColors.success.withValues(alpha: 0.9),
-      KeyVisualState.red => isBlack
-          ? AppColors.error
-          : AppColors.error.withValues(alpha: 0.9),
-      KeyVisualState.blue => isBlack
-          ? const Color(0xFF2196F3)
-          : const Color(0xFF2196F3).withValues(alpha: 0.9),
-      KeyVisualState.cyan => isBlack
-          ? const Color(0xFF00BCD4)
-          : const Color(0xFF00BCD4).withValues(alpha: 0.9),
+      KeyVisualState.green =>
+        isBlack ? AppColors.success : AppColors.success.withValues(alpha: 0.9),
+      KeyVisualState.red =>
+        isBlack ? AppColors.error : AppColors.error.withValues(alpha: 0.9),
+      KeyVisualState.blue =>
+        isBlack
+            ? const Color(0xFF2196F3)
+            : const Color(0xFF2196F3).withValues(alpha: 0.9),
+      KeyVisualState.cyan =>
+        isBlack
+            ? const Color(0xFF00BCD4)
+            : const Color(0xFF00BCD4).withValues(alpha: 0.9),
       KeyVisualState.neutralBlack => AppColors.blackKey,
       KeyVisualState.neutralWhite => AppColors.whiteKey,
     };
