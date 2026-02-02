@@ -35,15 +35,20 @@ enum OnsetState {
 /// 4. Block evaluations outside burst (sustain/reverb filtering)
 /// 5. Optional probe failsafe for missed soft onsets
 class OnsetDetector {
+  // SESSION-065: Optimized defaults based on research + weak signal diagnosis
+  // - onsetMinRms: 0.008→0.005 (detect weaker signals, session-065 had RMS=0.0052)
+  // - onsetDeltaRatioMin: 1.8→1.5 (more sensitive to onset variations)
+  // - onsetCooldownMs: 180→120 (faster passages, research suggests 50-60ms for trills)
+  // - probeIntervalMs: 300→200 (5 probes/s instead of 3, catches soft attacks)
   OnsetDetector({
     this.emaAlpha = 0.15,
-    this.onsetMinRms = 0.008,
+    this.onsetMinRms = 0.005, // SESSION-065: was 0.008, lowered for weak signals
     this.onsetDeltaAbsMin = 0.004,
-    this.onsetDeltaRatioMin = 1.8,
-    this.onsetCooldownMs = 180,
+    this.onsetDeltaRatioMin = 1.5, // SESSION-065: was 1.8, more sensitive
+    this.onsetCooldownMs = 120, // SESSION-065: was 180, allows faster passages
     this.attackBurstMs = 200,
     this.maxEvalsPerBurst = 3,
-    this.probeIntervalMs = 300,
+    this.probeIntervalMs = 200, // SESSION-065: was 300, 5 probes/s instead of 3
     this.probeEnabled = true,
   });
 
@@ -63,7 +68,7 @@ class OnsetDetector {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // PARAMETERS (tuned for session-013 evidence)
+  // PARAMETERS (session-013 + session-065 optimizations + research document)
   // ─────────────────────────────────────────────────────────────────────────
 
   /// EMA smoothing factor (0 = no smoothing, 1 = instant).
@@ -73,7 +78,7 @@ class OnsetDetector {
 
   /// Minimum RMS to even consider an onset.
   /// Session-013 evidence: silence RMS ≈ 0.001, attack RMS ≈ 0.035-0.244.
-  /// 0.008 catches soft attacks while rejecting ambient noise.
+  /// SESSION-065: lowered from 0.008 to 0.005 to catch weak signals (RMS=0.0052 was missed).
   final double onsetMinRms;
 
   /// Minimum absolute delta (rmsNow - rmsEma) for onset.
@@ -83,12 +88,13 @@ class OnsetDetector {
 
   /// Minimum ratio (rmsNow / rmsEma) for onset.
   /// Session-013: ratio 0.035/0.001 = 35x for clean attack.
-  /// 1.8x handles cases where rmsEma is elevated from previous note decay.
+  /// SESSION-065: lowered from 1.8 to 1.5 for more sensitivity to onset variations.
   final double onsetDeltaRatioMin;
 
   /// Cooldown after onset before allowing another onset (ms).
   /// Session-013: note transitions ~788ms minimum (F→D# problem).
-  /// 180ms prevents double-triggers while allowing fast passages.
+  /// SESSION-065: reduced from 180ms to 120ms (research: 50-60ms for fast trills).
+  /// 120ms balances sustain filtering with fast passage support.
   final double onsetCooldownMs;
 
   /// Duration of attack burst window after onset (ms).
@@ -102,7 +108,7 @@ class OnsetDetector {
 
   /// Interval for probe failsafe when no onset detected (ms).
   /// Allows catching very soft attacks that don't trigger onset.
-  /// 300ms = ~3 probes per second (conservative).
+  /// SESSION-065: reduced from 300ms to 200ms = 5 probes/s (was 3 probes/s).
   final double probeIntervalMs;
 
   /// Enable probe failsafe.

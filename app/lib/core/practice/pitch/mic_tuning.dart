@@ -236,8 +236,9 @@ class MicTuning {
 
       case ReverbProfile.medium:
         // ─────────────────────────────────────────────────────────────────────
-        // PATCH LEDGER: medium = exact baseline values from codebase
+        // PATCH LEDGER: medium = baseline values (SESSION-065 optimized)
         // Each param has: baseline(old): <value> (source: <file>:<line>)
+        // SESSION-065: Optimized based on research + weak signal diagnosis
         // ─────────────────────────────────────────────────────────────────────
         return const MicTuning(
           profile: ReverbProfile.medium,
@@ -245,22 +246,22 @@ class MicTuning {
           // === ONSET DETECTOR (onset_detector.dart) ===
           // baseline(old): 0.15 (source: onset_detector.dart:37 emaAlpha default)
           emaAlpha: 0.15,
-          // baseline(old): 0.008 (source: onset_detector.dart:38 onsetMinRms default)
-          onsetMinRms: 0.008,
+          // SESSION-065: 0.008→0.005 (weak signal RMS=0.0052 was missed)
+          onsetMinRms: 0.005,
           // baseline(old): 0.004 (source: onset_detector.dart:39 onsetDeltaAbsMin default)
           onsetDeltaAbsMin: 0.004,
-          // baseline(old): 1.8 (source: onset_detector.dart:40 onsetDeltaRatioMin default)
-          onsetDeltaRatioMin: 1.8,
-          // baseline(old): 180 (source: onset_detector.dart:41 onsetCooldownMs default)
-          onsetCooldownMs: 180.0,
+          // SESSION-065: 1.8→1.5 (more sensitive to onset variations)
+          onsetDeltaRatioMin: 1.5,
+          // SESSION-065: 180→120ms (research: 50-60ms for trills, 120ms balances sustain)
+          onsetCooldownMs: 120.0,
           // baseline(old): 200 (source: onset_detector.dart:42 attackBurstMs default)
           attackBurstMs: 200.0,
           // baseline(old): 3 (source: onset_detector.dart:43 maxEvalsPerBurst default)
           maxEvalsPerBurst: 3,
           // baseline(old): true (source: onset_detector.dart:45 probeEnabled default)
           probeEnabled: true,
-          // baseline(old): 300 (source: onset_detector.dart:44 probeIntervalMs default)
-          probeIntervalMs: 300.0,
+          // SESSION-065: 300→200ms (5 probes/s instead of 3, catches soft attacks)
+          probeIntervalMs: 200.0,
 
           // === NOTE TRACKER (note_tracker.dart) ===
           // SESSION-054: 160→60ms for low-end hardware baseline (more attacks recognized)
@@ -339,18 +340,19 @@ class MicTuning {
     }
   }
 
-  /// Default tuning (medium profile).
+  /// Default tuning (medium profile, SESSION-065 optimized).
+  /// SESSION-065: Optimized based on research document + weak signal diagnosis
   static const MicTuning defaultTuning = MicTuning(
     profile: ReverbProfile.medium,
     emaAlpha: 0.15,
-    onsetMinRms: 0.008,
+    onsetMinRms: 0.005, // SESSION-065: 0.008→0.005 (weak signals)
     onsetDeltaAbsMin: 0.004,
-    onsetDeltaRatioMin: 1.8,
-    onsetCooldownMs: 180.0,
+    onsetDeltaRatioMin: 1.5, // SESSION-065: 1.8→1.5 (more sensitive)
+    onsetCooldownMs: 120.0, // SESSION-065: 180→120ms (faster passages)
     attackBurstMs: 200.0,
     maxEvalsPerBurst: 3,
     probeEnabled: true,
-    probeIntervalMs: 300.0,
+    probeIntervalMs: 200.0, // SESSION-065: 300→200ms (5 probes/s)
     pitchClassCooldownMs: 60.0, // SESSION-054: 160→60ms
     postHitCooldownMs: 200.0,
     releaseRatio: 0.40,

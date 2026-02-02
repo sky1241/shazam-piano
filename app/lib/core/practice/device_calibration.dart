@@ -123,7 +123,7 @@ class PracticeCalibration {
   // FACTORY CONSTRUCTORS FOR DEVICE TIERS
   // ═══════════════════════════════════════════════════════════════════════════
 
-  /// LOW-END DEVICE PROFILE (Session-009 baseline)
+  /// LOW-END DEVICE PROFILE (Session-009 baseline, Session-065 optimized)
   ///
   /// Optimized for:
   /// - Budget phones (~100-200 CHF)
@@ -135,6 +135,10 @@ class PracticeCalibration {
   /// - Longer sustain filter to ignore reverb
   /// - Higher confidence thresholds to reduce false positives
   /// - Slower pitch interval to reduce CPU load
+  ///
+  /// SESSION-065: Optimized based on research document (piano trills, perception)
+  /// - eventDebounceSec: 80ms→60ms (allows trills up to 15 notes/s)
+  /// - wrongFlashCooldownSec: 250ms→150ms (more responsive error feedback)
   factory PracticeCalibration.lowEnd() {
     return const PracticeCalibration(
       // Timing: very forgiving windows for high latency
@@ -150,8 +154,10 @@ class PracticeCalibration {
       // Anti-ghost: aggressive sustain filtering
       sustainFilterMs:
           600.0, // SESSION-009: NEW - ignore previous note for 600ms
-      eventDebounceSec: 0.08, // 80ms debounce (SESSION-009: was 0.05)
-      wrongFlashCooldownSec: 0.25, // 250ms cooldown (SESSION-009: was 0.15)
+      // SESSION-065: 60ms allows trills up to 15 notes/s (research: 50-60ms optimal)
+      eventDebounceSec: 0.06, // 60ms debounce (was 0.08, research recommends 50-60ms)
+      // SESSION-065: 150ms more responsive (research: 100-150ms optimal)
+      wrongFlashCooldownSec: 0.15, // 150ms cooldown (was 0.25, research recommends 100-150ms)
       // Stability: prioritize reliability over speed
       minStabilityFrames: 1, // Keep at 1 (piano needs fast response)
       pitchWindowSize: 2048, // Standard buffer

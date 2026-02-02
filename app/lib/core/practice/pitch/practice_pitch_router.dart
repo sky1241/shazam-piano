@@ -407,25 +407,45 @@ class PracticePitchRouter {
       return [];
     }
 
-    // Convert to MIDI
-    final detectedMidi = _yin.frequencyToMidiNote(freq);
+    // Convert to MIDI (raw YIN detection, may have octave error)
+    final yinRawMidi = _yin.frequencyToMidiNote(freq);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SESSION-063: OCTAVE DISAMBIGUATION
+    // YIN often detects one octave below due to "period doubling" error.
+    // Use Goertzel to compare fundamental energy at detected MIDI vs octaves.
+    // ═══════════════════════════════════════════════════════════════════════════
+    final octaveResult = _goertzel.disambiguateOctave(
+      samples,
+      sampleRate,
+      yinRawMidi,
+    );
+    final detectedMidi = octaveResult.correctedMidi;
+
+    // Log octave correction if it happened
+    if (kDebugMode && octaveResult.wasCorrected) {
+      debugPrint(
+        'OCTAVE_CORRECTION yinRaw=$yinRawMidi corrected=$detectedMidi '
+        'reason=${octaveResult.reason} conf=${octaveResult.confidence.toStringAsFixed(2)}',
+      );
+    }
 
     // Compute confidence from RMS (same heuristic as MicEngine)
     final conf = (rms / 0.05).clamp(0.0, 1.0);
 
     // SESSION-037: Capture raw detection BEFORE confidence filtering
     // This allows UI to show BLUE feedback even for low-conf detections
+    // SESSION-063: Use CORRECTED midi (after octave disambiguation)
     _lastRawMidi = detectedMidi;
-    _lastRawFreq = freq;
+    _lastRawFreq = GoertzelDetector.midiToFrequency(detectedMidi);
     _lastRawConf = conf;
     _lastRawTSec = tSec;
-    _lastRawSource = 'yin';
+    _lastRawSource = octaveResult.wasCorrected ? 'yin+octave_fix' : 'yin';
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // SESSION-057: Capture RAW MIDI FOR UI - NEVER snapped/merged
-    // This is the TRUE pitch detected by YIN, used for ROUGE/BLEU positioning.
-    // Written here BEFORE any snapping or confidence filtering.
-    // Goertzel does NOT write to these fields (it only detects expected notes).
+    // SESSION-057 + SESSION-063: Capture RAW MIDI FOR UI
+    // This is the TRUE pitch detected, AFTER octave disambiguation.
+    // Used for ROUGE/BLEU positioning on the CORRECT key.
     // ═══════════════════════════════════════════════════════════════════════════
     _lastRawMidiForUi = detectedMidi;
     _lastRawConfForUi = conf;
@@ -446,13 +466,16 @@ class PracticePitchRouter {
     // Debug log (grep-friendly YIN_CALLED format)
     if (kDebugMode) {
       debugPrint(
-        'YIN_CALLED expected=[$expectedMidi] detectedMidi=$detectedMidi '
-        'snappedMidi=$snappedMidi freq=${freq.toStringAsFixed(1)} conf=${conf.toStringAsFixed(2)}',
+        'YIN_CALLED expected=[$expectedMidi] yinRaw=$yinRawMidi '
+        'correctedMidi=$detectedMidi snappedMidi=$snappedMidi '
+        'freq=${freq.toStringAsFixed(1)} conf=${conf.toStringAsFixed(2)} '
+        'octaveFix=${octaveResult.wasCorrected}',
       );
-      // SESSION-057: ROUTER_OUTPUT shows rawMidiForUi vs scoringMidi
+      // SESSION-057 + SESSION-063: ROUTER_OUTPUT shows rawMidiForUi vs scoringMidi
       debugPrint(
         'ROUTER_OUTPUT rawMidiForUi=$detectedMidi scoringMidi=$snappedMidi '
-        'source=yin snapped=${snappedMidi != detectedMidi}',
+        'source=${octaveResult.wasCorrected ? "yin+octave_fix" : "yin"} '
+        'snapped=${snappedMidi != detectedMidi}',
       );
     }
 

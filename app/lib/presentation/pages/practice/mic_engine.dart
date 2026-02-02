@@ -418,6 +418,31 @@ const double kSustainExtendMinRms =
 const bool kForceFixedSampleRate = true;
 const int kFixedSampleRate = 44100;
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// SESSION-065: AGC (Automatic Gain Control) for consistent detection
+// ═══════════════════════════════════════════════════════════════════════════════
+// Problem: Audio signal level varies widely (0.0052 to 0.2464 in same session)
+//          causing onset detector to miss notes with weak signal.
+// Solution: Normalize audio buffer to target RMS level before pitch detection.
+//          This makes detection robust to piano volume and mic distance.
+// ═══════════════════════════════════════════════════════════════════════════════
+/// Enable AGC normalization before pitch detection.
+const bool kAgcEnabled = true;
+
+/// Target RMS level after AGC normalization.
+/// 0.15 is a good level that provides strong signal without clipping.
+const double kAgcTargetRms = 0.15;
+
+/// Maximum gain to apply (prevents amplifying silence/noise excessively).
+/// 20x means a signal with RMS 0.0075 would be amplified to 0.15.
+const double kAgcMaxGain = 20.0;
+
+/// Minimum gain to apply (prevents attenuation of already good signals).
+const double kAgcMinGain = 0.5;
+
+/// Minimum input RMS to apply AGC (below this, don't amplify noise).
+const double kAgcMinInputRms = 0.003;
+
 /// MicEngine: Robust scoring engine for Practice mode
 /// Handles: pitch detection → event buffer → note matching → decisions
 /// ZERO dependency on "nextDetected" stability gates
@@ -1371,9 +1396,16 @@ class MicEngine {
           return decisions;
         }
 
+        // ═══════════════════════════════════════════════════════════════════
+        // SESSION-065: Apply AGC to normalize audio level before pitch detection
+        // This ensures consistent detection regardless of piano volume or mic distance
+        // ═══════════════════════════════════════════════════════════════════
+        final windowRms = _computeRmsFloat32(window);
+        final normalizedWindow = _applyAgc(window, windowRms);
+
         // Call router to decide YIN vs Goertzel
         final routerEvents = _router.decide(
-          samples: window,
+          samples: normalizedWindow,
           sampleRate: _detectedSampleRate,
           activeExpectedMidis: activeExpectedMidis,
           rms: rms,
@@ -1940,6 +1972,52 @@ class MicEngine {
   }
 
   double _computeRms(List<double> samples) {
+    if (samples.isEmpty) return 0.0;
+    double sum = 0.0;
+    for (final s in samples) {
+      sum += s * s;
+    }
+    return sqrt(sum / samples.length);
+  }
+
+  /// SESSION-065: Apply AGC to normalize audio buffer for consistent pitch detection.
+  ///
+  /// Returns a new Float32List with samples scaled to target RMS level.
+  /// This ensures pitch detection works consistently regardless of input volume.
+  Float32List _applyAgc(Float32List samples, double inputRms) {
+    // Skip AGC if disabled or input too weak (avoid amplifying noise)
+    if (!kAgcEnabled || inputRms < kAgcMinInputRms) {
+      return samples;
+    }
+
+    // Calculate gain needed to reach target RMS
+    double gain = kAgcTargetRms / inputRms;
+
+    // Clamp gain to reasonable range
+    gain = gain.clamp(kAgcMinGain, kAgcMaxGain);
+
+    // Apply gain (create new buffer to avoid modifying original)
+    final normalized = Float32List(samples.length);
+    for (var i = 0; i < samples.length; i++) {
+      // Apply gain and soft-clip to prevent harsh distortion
+      final amplified = samples[i] * gain;
+      normalized[i] = amplified.clamp(-1.0, 1.0);
+    }
+
+    if (kDebugMode) {
+      final outputRms = _computeRmsFloat32(normalized);
+      debugPrint(
+        'AGC_APPLIED inputRms=${inputRms.toStringAsFixed(4)} '
+        'gain=${gain.toStringAsFixed(2)} outputRms=${outputRms.toStringAsFixed(4)} '
+        'target=$kAgcTargetRms',
+      );
+    }
+
+    return normalized;
+  }
+
+  /// Compute RMS for Float32List (used by AGC debug logging)
+  double _computeRmsFloat32(Float32List samples) {
     if (samples.isEmpty) return 0.0;
     double sum = 0.0;
     for (final s in samples) {

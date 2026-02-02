@@ -279,4 +279,170 @@ class GoertzelDetector {
   static int frequencyToMidi(double frequency) {
     return (69 + 12 * log(frequency / 440.0) / ln2).round();
   }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SESSION-063: OCTAVE DISAMBIGUATION - Fix YIN octave errors
+  // ══════════════════════════════════════════════════════════════════════════
+  //
+  // Problem: YIN pitch detection sometimes detects the wrong octave due to
+  // "period doubling" - it finds a period 2x longer (octave below) when
+  // harmonics are stronger than the fundamental.
+  //
+  // Solution: After YIN detects a pitch, use Goertzel to compare energy at:
+  //   - detected MIDI (from YIN)
+  //   - detected MIDI + 12 (octave above)
+  //   - detected MIDI - 12 (octave below)
+  // Return the MIDI with highest fundamental energy.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Disambiguate octave using Goertzel energy comparison.
+  ///
+  /// YIN often detects one octave below due to period doubling.
+  /// This method compares energy at the detected MIDI and adjacent octaves
+  /// to find the true fundamental.
+  ///
+  /// Parameters:
+  /// - [samples]: Audio buffer (mono, normalized -1..1)
+  /// - [sampleRate]: Sample rate in Hz (typically 44100)
+  /// - [detectedMidi]: MIDI note detected by YIN
+  /// - [applyHannWindow]: Apply Hann window (default true)
+  ///
+  /// Returns:
+  /// - [OctaveDisambiguationResult] with corrected MIDI and confidence
+  OctaveDisambiguationResult disambiguateOctave(
+    Float32List samples,
+    int sampleRate,
+    int detectedMidi, {
+    bool applyHannWindow = true,
+  }) {
+    // Handle empty or too short buffer
+    if (samples.isEmpty || samples.length < 64) {
+      return OctaveDisambiguationResult(
+        originalMidi: detectedMidi,
+        correctedMidi: detectedMidi,
+        wasCorrected: false,
+        confidence: 0.0,
+        reason: 'buffer_too_short',
+      );
+    }
+
+    // Compute total energy for normalization
+    final energy = _computeEnergy(samples);
+
+    if (energy < 1e-10) {
+      return OctaveDisambiguationResult(
+        originalMidi: detectedMidi,
+        correctedMidi: detectedMidi,
+        wasCorrected: false,
+        confidence: 0.0,
+        reason: 'silent',
+      );
+    }
+
+    // Apply Hann window if requested
+    final processedSamples =
+        applyHannWindow ? _applyHannWindow(samples) : samples;
+
+    // Candidate octaves to test
+    // MIDI range for piano: 21 (A0) to 108 (C8)
+    final candidates = <int>[];
+
+    // Add detected MIDI
+    candidates.add(detectedMidi);
+
+    // Add octave above (if within piano range)
+    final octaveAbove = detectedMidi + 12;
+    if (octaveAbove <= 108) {
+      candidates.add(octaveAbove);
+    }
+
+    // Add octave below (if within piano range)
+    final octaveBelow = detectedMidi - 12;
+    if (octaveBelow >= 21) {
+      candidates.add(octaveBelow);
+    }
+
+    // Compute fundamental power for each candidate
+    // Use ONLY the fundamental (1 harmonic) to avoid harmonic confusion
+    final scores = <int, double>{};
+    for (final midi in candidates) {
+      final f0 = midiToFrequencyWithOffset(midi);
+
+      // Skip if frequency is above Nyquist or below reasonable range
+      if (f0 >= sampleRate / 2 || f0 < 50.0) {
+        scores[midi] = 0.0;
+        continue;
+      }
+
+      final power = _goertzelPower(processedSamples, sampleRate, f0);
+      scores[midi] = power;
+    }
+
+    // Find the candidate with highest fundamental power
+    int bestMidi = detectedMidi;
+    double bestScore = scores[detectedMidi] ?? 0.0;
+
+    for (final entry in scores.entries) {
+      if (entry.value > bestScore) {
+        bestScore = entry.value;
+        bestMidi = entry.key;
+      }
+    }
+
+    // Compute confidence (normalized score)
+    final confidence = (bestScore / (energy + 1e-12) * normalizationGain)
+        .clamp(0.0, 1.0);
+
+    // Determine if correction occurred
+    final wasCorrected = bestMidi != detectedMidi;
+    final correction = bestMidi - detectedMidi;
+    final reason = wasCorrected
+        ? (correction > 0 ? 'octave_up_$correction' : 'octave_down_$correction')
+        : 'no_correction';
+
+    return OctaveDisambiguationResult(
+      originalMidi: detectedMidi,
+      correctedMidi: bestMidi,
+      wasCorrected: wasCorrected,
+      confidence: confidence,
+      reason: reason,
+      scores: scores,
+    );
+  }
+}
+
+/// Result of octave disambiguation.
+class OctaveDisambiguationResult {
+  const OctaveDisambiguationResult({
+    required this.originalMidi,
+    required this.correctedMidi,
+    required this.wasCorrected,
+    required this.confidence,
+    required this.reason,
+    this.scores,
+  });
+
+  /// Original MIDI detected by YIN.
+  final int originalMidi;
+
+  /// Corrected MIDI after octave disambiguation.
+  final int correctedMidi;
+
+  /// Whether the octave was corrected.
+  final bool wasCorrected;
+
+  /// Confidence in the corrected MIDI (0.0-1.0).
+  final double confidence;
+
+  /// Reason for the correction (e.g., 'octave_up_12', 'no_correction').
+  final String reason;
+
+  /// Optional: scores for each candidate MIDI (for debugging).
+  final Map<int, double>? scores;
+
+  @override
+  String toString() {
+    return 'OctaveDisambiguationResult(original=$originalMidi, corrected=$correctedMidi, '
+        'wasCorrected=$wasCorrected, conf=${confidence.toStringAsFixed(2)}, reason=$reason)';
+  }
 }

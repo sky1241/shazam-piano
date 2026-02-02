@@ -271,22 +271,46 @@ class UIFeedbackEngine {
       }
     } else {
       // SESSION-057: CLEAR IMMÉDIAT - pas de détection = pas de bleu
-      // SESSION-059 ROUGE: Clear rouge aussi (rouge lié à tenue, pas de pitch = relâche)
-      final hadFeedback = _lastBlueMidi != null || _currentRedMidis.isNotEmpty;
-      if (hadFeedback) {
-        if (kDebugMode) {
-          debugPrint(
-            'UI_CLEAR_TRIGGER reason=${detectedMidi == null ? "no_pitch" : "low_conf"} '
-            'prevBlue=$_lastBlueMidi prevRed=$_currentRedMidis prevGreen=$_lastGreenMidi nowMs=$nowMs',
-          );
-        }
+      // SESSION-065: ROUGE avec TOLÉRANCE - miroir de l'audio détecté
+      // Le rouge ne s'efface PAS immédiatement, il utilise toleranceMicroCoupuresMs
+      final hadBlue = _lastBlueMidi != null;
+      if (hadBlue && kDebugMode) {
+        debugPrint(
+          'UI_CLEAR_BLUE reason=${detectedMidi == null ? "no_pitch" : "low_conf"} '
+          'prevBlue=$_lastBlueMidi nowMs=$nowMs',
+        );
       }
       blueMidi = null;
       _lastBlueMidi = null;
-      // SESSION-059 ROUGE: Clear tous les rouges (rouge lié à tenue)
+
+      // SESSION-065: ROUGE avec TOLÉRANCE - effacer uniquement après toleranceMicroCoupuresMs
+      // Ceci permet au rouge de "persister" et refléter la durée réelle de l'audio
+      if (_currentRedMidis.isNotEmpty) {
+        final staleReds = <int>{};
+        for (final midi in _currentRedMidis) {
+          final lastActive = _redMidiLastActiveMs[midi] ?? 0;
+          final elapsed = nowMs - lastActive;
+          if (elapsed > toleranceMicroCoupuresMs) {
+            staleReds.add(midi);
+          }
+        }
+
+        if (staleReds.isNotEmpty) {
+          if (kDebugMode) {
+            debugPrint(
+              'UI_CLEAR_RED_TOLERANCE staleReds=$staleReds '
+              'tolerance=${toleranceMicroCoupuresMs}ms nowMs=$nowMs',
+            );
+          }
+          _currentRedMidis.removeAll(staleReds);
+          for (final midi in staleReds) {
+            _redMidiLastActiveMs.remove(midi);
+          }
+        }
+        // Si tous les rouges sont stale, le set sera vide
+        // Sinon, les rouges récents sont préservés (miroir audio)
+      }
       // VERT survit au clear (flash de HIT_VALIDÉ indépendant du pitch courant)
-      _currentRedMidis = {};
-      _redMidiLastActiveMs.clear();
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -386,6 +410,18 @@ class UIFeedbackEngine {
     // ══════════════════════════════════════════════════════════════════════
 
     final Set<int> redMidis = {};
+
+    // SESSION-065: Si blueMidi == null, préserver les rouges non-stale
+    // (déjà filtrés par la logique de tolérance dans le bloc else ci-dessus)
+    // Ceci permet au rouge de "persister" tant que la note est tenue
+    if (blueMidi == null && _currentRedMidis.isNotEmpty) {
+      redMidis.addAll(_currentRedMidis);
+      if (kDebugMode) {
+        debugPrint(
+          'RED_PRESERVE_NO_PITCH preserved=$_currentRedMidis nowMs=$nowMs',
+        );
+      }
+    }
 
     // Arbitrage Source_A vs Source_B
     // Source_A = expectedMidis (paramètre passé à update, vient de la timeline)
@@ -592,19 +628,27 @@ class UIFeedbackEngine {
 
   /// Exécute un flash ROUGE ordonné par le JUGE (verdict INCORRECT)
   /// Le JUGE a déjà décidé - cette méthode exécute sans logique supplémentaire
+  /// SESSION-065: Met à jour _redMidiLastActiveMs pour le système de tolérance
   void judgeFlashRouge({required int midi, required int nowMs}) {
-    // Mettre à jour l'état avec le flash rouge
-    final newRedMidis = Set<int>.from(_state.redMidis)..add(midi);
+    // FIX BUG S62: REMPLACER le set rouge, pas ACCUMULER
+    // Avant: Set.from(_state.redMidis)..add(midi) → accumulation infinie
+    // Après: {midi} → seule la note fausse actuelle est rouge
+    final newRedMidis = {midi};
     final newState = _state.copyWith(
       redMidis: newRedMidis,
       timestampMs: nowMs,
     );
     _state = newState;
     _currentRedMidis = newRedMidis;
+
+    // SESSION-065: CRUCIAL - tracker le timestamp pour la tolérance
+    // Sans ça, le rouge serait effacé immédiatement par update(null)
+    _redMidiLastActiveMs[midi] = nowMs;
+
     onStateChanged?.call(_state);
 
     if (kDebugMode) {
-      debugPrint('JUDGE_FLASH_ROUGE midi=$midi nowMs=$nowMs');
+      debugPrint('JUDGE_FLASH_ROUGE midi=$midi nowMs=$nowMs redSet=$newRedMidis');
     }
   }
 
