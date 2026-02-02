@@ -159,6 +159,8 @@ class UIFeedbackEngine {
   int _lastBlueTimestampMs = 0;
 
   /// Dernier VERT (HIT_VALIDÉ) avec timestamp (pour durée flash)
+  /// Note: Utilisé pour tracking interne, lecture future possible
+  // ignore: unused_field
   int? _lastGreenMidi;
   int _lastGreenTimestampMs = 0;
 
