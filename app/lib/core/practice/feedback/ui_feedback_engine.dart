@@ -212,7 +212,9 @@ class UIFeedbackEngine {
   /// SESSION-059: Tolérance micro-coupures (ms)
   /// Durée maximale d'absence de pitch avant RELÂCHÉE_CONFIRMÉE
   /// PARAMÈTRE À CALIBRER - valeur initiale conservative
-  static const int toleranceMicroCoupuresMs = 80;
+  // SESSION-066: 80→200ms for perceptible red flash (research: 150-200ms optimal)
+  // Video evidence showed red clearing in 1 frame (~42ms) - imperceptible
+  static const int toleranceMicroCoupuresMs = 200;
 
   /// SESSION-059: Critère d'entrée en tenue (ms de pitch stable)
   /// PARAMÈTRE À CALIBRER - valeur initiale conservative
@@ -501,21 +503,58 @@ class UIFeedbackEngine {
       else if (expectedActif &&
           !effectiveExpectedMidis.contains(midi) &&
           tenueState == TenueState.tenueConfirmee) {
+        // SESSION-066: PRESERVE recent reds when pitch jumps octaves
+        // Problem: YIN jumps 72→73→62, old reds were lost
+        // Solution: Keep reds within tolerance window (same logic as judgeFlashRouge)
+        for (final entry in _redMidiLastActiveMs.entries) {
+          final elapsed = nowMs - entry.value;
+          if (elapsed <= toleranceMicroCoupuresMs) {
+            redMidis.add(entry.key);
+          }
+        }
         redMidis.add(midi);
         _redMidiLastActiveMs[midi] = nowMs; // Tracker activité
-        if (!_currentRedMidis.contains(midi) && kDebugMode) {
+
+        // SESSION-066: Limit to max 3 reds to avoid visual clutter
+        if (redMidis.length > 3) {
+          // Keep only the most recent 3
+          final sorted = redMidis.toList()
+            ..sort((a, b) =>
+                (_redMidiLastActiveMs[b] ?? 0) - (_redMidiLastActiveMs[a] ?? 0));
+          redMidis.clear();
+          redMidis.addAll(sorted.take(3));
+        }
+
+        if (kDebugMode) {
           debugPrint(
             'RED_SET_ROUGES midi=$midi reason=mismatch '
-            'expected=$effectiveExpectedMidis played=$midi',
+            'expected=$effectiveExpectedMidis redSet=$redMidis',
           );
         }
       }
       // P6: Rouge générique (aucun expected actif) + tenue
       else if (!expectedActif && tenueState == TenueState.tenueConfirmee) {
+        // SESSION-066: PRESERVE recent reds (same logic as P5)
+        for (final entry in _redMidiLastActiveMs.entries) {
+          final elapsed = nowMs - entry.value;
+          if (elapsed <= toleranceMicroCoupuresMs) {
+            redMidis.add(entry.key);
+          }
+        }
         redMidis.add(midi);
         _redMidiLastActiveMs[midi] = nowMs; // Tracker activité
-        if (!_currentRedMidis.contains(midi) && kDebugMode) {
-          debugPrint('RED_GENERIC midi=$midi reason=no_expected_active');
+
+        // SESSION-066: Limit to max 3 reds
+        if (redMidis.length > 3) {
+          final sorted = redMidis.toList()
+            ..sort((a, b) =>
+                (_redMidiLastActiveMs[b] ?? 0) - (_redMidiLastActiveMs[a] ?? 0));
+          redMidis.clear();
+          redMidis.addAll(sorted.take(3));
+        }
+
+        if (kDebugMode) {
+          debugPrint('RED_GENERIC midi=$midi reason=no_expected_active redSet=$redMidis');
         }
       }
     }
@@ -631,17 +670,32 @@ class UIFeedbackEngine {
   /// Exécute un flash ROUGE ordonné par le JUGE (verdict INCORRECT)
   /// Le JUGE a déjà décidé - cette méthode exécute sans logique supplémentaire
   /// SESSION-065: Met à jour _redMidiLastActiveMs pour le système de tolérance
+  /// SESSION-066: MERGE au lieu de REMPLACER - garder les rouges récents (octave jumps)
   void judgeFlashRouge({required int midi, required int nowMs}) {
-    // FIX BUG S62: REMPLACER le set rouge, pas ACCUMULER
-    // Avant: Set.from(_state.redMidis)..add(midi) → accumulation infinie
-    // Après: {midi} → seule la note fausse actuelle est rouge
-    final newRedMidis = {midi};
+    // SESSION-066: MERGE avec rouges récents au lieu de REMPLACER
+    // Problème: YIN saute entre octaves (61→73→62), le rouge disparaissait trop vite
+    // Solution: Garder tous les rouges encore dans la fenêtre de tolérance
+    final recentReds = <int>{};
+    for (final entry in _redMidiLastActiveMs.entries) {
+      final elapsed = nowMs - entry.value;
+      if (elapsed <= toleranceMicroCoupuresMs) {
+        recentReds.add(entry.key);
+      }
+    }
+    // Ajouter le nouveau rouge
+    recentReds.add(midi);
+
+    // SESSION-066: Limiter à max 3 rouges pour éviter pollution visuelle
+    final newRedMidis = recentReds.length > 3
+        ? {midi} // Fallback: si trop de rouges, garder seulement le nouveau
+        : recentReds;
+
     final newState = _state.copyWith(
       redMidis: newRedMidis,
       timestampMs: nowMs,
     );
     _state = newState;
-    _currentRedMidis = newRedMidis;
+    _currentRedMidis = Set.from(newRedMidis);
 
     // SESSION-065: CRUCIAL - tracker le timestamp pour la tolérance
     // Sans ça, le rouge serait effacé immédiatement par update(null)
@@ -650,7 +704,7 @@ class UIFeedbackEngine {
     onStateChanged?.call(_state);
 
     if (kDebugMode) {
-      debugPrint('JUDGE_FLASH_ROUGE midi=$midi nowMs=$nowMs redSet=$newRedMidis');
+      debugPrint('JUDGE_FLASH_ROUGE midi=$midi nowMs=$nowMs redSet=$newRedMidis recentMerged=${recentReds.length}');
     }
   }
 
