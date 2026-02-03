@@ -1043,6 +1043,26 @@ class MicEngine {
   /// 30ms is safe for piano MIDI where chord notes may have slightly different starts.
   static const double _epsilonStartSec = 0.03;
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SESSION-070: Check if ANY note is active using MATCHING window (includes note.end)
+  // This is used for onset detection to allow probes during note sustain.
+  // Unlike _computeActiveExpectedMidisForRouting which uses start-only window,
+  // this uses the full matching window [note.start - head, note.end + tail].
+  // ═══════════════════════════════════════════════════════════════════════════
+  bool _hasActiveNoteForMatching(double elapsedSec) {
+    for (var idx = 0; idx < noteEvents.length; idx++) {
+      if (hitNotes[idx]) continue;
+      final note = noteEvents[idx];
+      // Matching window: includes note.end (same as _matchNotes)
+      final windowStart = note.start - headWindowSec;
+      final windowEnd = note.end + tailWindowSec;
+      if (elapsedSec >= windowStart && elapsedSec <= windowEnd) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// Compute active expected MIDIs for routing decision (epsilon grouping).
   ///
   /// This groups notes by their start time (within epsilon) to correctly
@@ -1381,14 +1401,27 @@ class MicEngine {
         // ONSET GATING: Only allow pitch detection during attack bursts
         // This prevents sustain/reverb from previous notes from polluting detection
         // ─────────────────────────────────────────────────────────────────────
+        // SESSION-070: Use MATCHING window (includes note.end) for onset detection
+        // This allows probes during note sustain, not just during attack window.
+        // The routing window is too short for long notes, causing missed detections.
+        final hasActiveNoteForOnset = _hasActiveNoteForMatching(elapsedSec);
         final onsetState = _onsetDetector.update(
           rmsNow: rms,
           nowMs: elapsedMs,
-          hasExpectedNotes: activeExpectedMidis.isNotEmpty,
+          hasExpectedNotes: hasActiveNoteForOnset,
         );
 
         // If onset gate says skip, don't call pitch detector at all
         if (onsetState == OnsetState.skip) {
+          // SESSION-068: Debug log to diagnose skip conditions
+          if (kDebugMode && rms >= 0.05) {
+            debugPrint(
+              'ONSET_SKIP_DEBUG t=${elapsedMs.toStringAsFixed(0)}ms '
+              'rms=${rms.toStringAsFixed(4)} rmsEma=${_onsetDetector.rmsEma.toStringAsFixed(4)} '
+              'hasExpected=$hasActiveNoteForOnset '
+              'routingMidis=$activeExpectedMidis',
+            );
+          }
           // Still prune old events and run matching (for MISS detection)
           _events.removeWhere((e) => elapsedSec - e.tSec > 2.0);
           decisions.addAll(_matchNotes(elapsedSec, now));
@@ -1444,6 +1477,14 @@ class MicEngine {
               'nowMs=${elapsedMs.toStringAsFixed(0)}',
             );
           }
+
+          // SESSION-068: Signal pitch to onset detector for pitch-change re-trigger
+          // This allows detecting rapid note changes (C5→D5→E5) even without RMS spikes
+          _onsetDetector.signalPitchDetected(
+            midi: re.midi,
+            nowMs: elapsedMs,
+            rmsNow: rms,
+          );
         }
 
         // SESSION-014: Convert OnsetState to PitchEventSource for tracking
@@ -3220,8 +3261,10 @@ class MicEngine {
     // SESSION-020 FIX BUG #1: Max delta for PROBE override
     // PROBE events with delta >= this threshold are NEVER allowed through probeOverride
     // because they are likely harmonics/artifacts, not real wrong notes.
-    // Value 7 = perfect 5th - anything beyond is suspicious for a "wrong key" scenario.
-    const int probeOverrideMaxDelta = 7;
+    // SESSION-070: Increased from 7 to 13 to allow octave errors (delta=12).
+    // Value 13 = just over 1 octave - catches common "wrong octave" mistakes.
+    // Harmonics at 2 octaves (delta=24) are still blocked.
+    const int probeOverrideMaxDelta = 13;
 
     /// Check if event is a high-confidence attack (for logging purposes).
     bool isHighConfidenceAttack(PitchEvent e) {

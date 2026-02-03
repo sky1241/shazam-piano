@@ -36,6 +36,7 @@ class MicTuning {
     required this.maxEvalsPerBurst,
     required this.probeEnabled,
     required this.probeIntervalMs,
+    this.probeRmsRatio = 0.3, // SESSION-068: default 0.3 (was implicit 0.5)
     // Cooldown / anti-tail (NoteTracker)
     required this.pitchClassCooldownMs,
     required this.postHitCooldownMs,
@@ -99,6 +100,11 @@ class MicTuning {
 
   /// Interval for probe failsafe when no onset detected (ms).
   final double probeIntervalMs;
+
+  /// SESSION-068: Ratio of onsetMinRms for probe threshold.
+  /// Probe triggers when rmsNow >= onsetMinRms * probeRmsRatio.
+  /// Lower = more sensitive probes (catches softer notes during sustain).
+  final double probeRmsRatio;
 
   // ─────────────────────────────────────────────────────────────────────────
   // COOLDOWN / ANTI-TAIL (NoteTracker parameters)
@@ -210,7 +216,8 @@ class MicTuning {
           attackBurstMs: 150.0, // Shorter burst (was 200)
           maxEvalsPerBurst: 3, // Same
           probeEnabled: true,
-          probeIntervalMs: 250.0, // Faster probes (was 300)
+          probeIntervalMs: 100.0, // SESSION-068: was 250, 10 probes/s
+          probeRmsRatio: 0.3, // SESSION-068: more sensitive probes
           // Cooldown / anti-tail - FASTER RELEASE
           // SESSION-054: 120→60ms for low-end hardware baseline
           pitchClassCooldownMs: 60.0, // Shorter (was 160→120→60)
@@ -260,8 +267,10 @@ class MicTuning {
           maxEvalsPerBurst: 3,
           // baseline(old): true (source: onset_detector.dart:45 probeEnabled default)
           probeEnabled: true,
-          // SESSION-065: 300→200ms (5 probes/s instead of 3, catches soft attacks)
-          probeIntervalMs: 200.0,
+          // SESSION-068: 200→100ms (10 probes/s, catches fast sequences)
+          probeIntervalMs: 100.0,
+          // SESSION-068: more sensitive probe threshold
+          probeRmsRatio: 0.3,
 
           // === NOTE TRACKER (note_tracker.dart) ===
           // SESSION-054: 160→60ms for low-end hardware baseline (more attacks recognized)
@@ -314,7 +323,8 @@ class MicTuning {
           attackBurstMs: 250.0, // Longer burst (was 200)
           maxEvalsPerBurst: 4, // More evals to find stable pitch
           probeEnabled: true,
-          probeIntervalMs: 400.0, // Slower probes (was 300)
+          probeIntervalMs: 150.0, // SESSION-068: was 400, still slower than medium but faster
+          probeRmsRatio: 0.4, // SESSION-068: slightly higher for reverberant spaces
           // Cooldown / anti-tail - MORE CONSERVATIVE
           // SESSION-054: 220→100ms even for high reverb (need feedback)
           pitchClassCooldownMs: 100.0, // (was 160→220→100)
@@ -352,7 +362,8 @@ class MicTuning {
     attackBurstMs: 200.0,
     maxEvalsPerBurst: 3,
     probeEnabled: true,
-    probeIntervalMs: 200.0, // SESSION-065: 300→200ms (5 probes/s)
+    probeIntervalMs: 100.0, // SESSION-068: 200→100ms (10 probes/s)
+    probeRmsRatio: 0.3, // SESSION-068: more sensitive probes
     pitchClassCooldownMs: 60.0, // SESSION-054: 160→60ms
     postHitCooldownMs: 200.0,
     releaseRatio: 0.40,

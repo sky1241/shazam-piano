@@ -491,9 +491,35 @@ class PracticePitchRouter {
     ];
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SESSION-067: ADJACENT OCTAVE EXPANSION
+  // Expands MIDI notes to include ±12 semitones (adjacent octaves)
+  // This allows Goertzel to detect when user plays the wrong octave
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /// Expand MIDI notes to include adjacent octaves (±12 semitones).
+  /// Returns a set containing original notes plus octave variations.
+  /// Clamps to valid MIDI range (21-108 for piano).
+  Set<int> _expandMidisToAdjacentOctaves(List<int> midis) {
+    final expanded = <int>{};
+    for (final midi in midis) {
+      expanded.add(midi); // Original note
+      // Add octave below (if in valid piano range)
+      if (midi - 12 >= 21) {
+        expanded.add(midi - 12);
+      }
+      // Add octave above (if in valid piano range)
+      if (midi + 12 <= 108) {
+        expanded.add(midi + 12);
+      }
+    }
+    return expanded;
+  }
+
   /// Detect notes using Goertzel algorithm.
   ///
   /// Returns up to [maxSimultaneousNotes] PitchEvents for detected notes.
+  /// SESSION-067: Now searches adjacent octaves to detect wrong-octave playing.
   List<RouterPitchEvent> _detectWithGoertzel({
     required Float32List samples,
     required int sampleRate,
@@ -505,11 +531,15 @@ class PracticePitchRouter {
     required int harmonics,
     required double minConfidence,
   }) {
-    // Detect presence of all expected notes
+    // SESSION-067: Expand to adjacent octaves for better detection
+    final expandedMidis = _expandMidisToAdjacentOctaves(activeExpectedMidis);
+    final originalMidiSet = activeExpectedMidis.toSet();
+
+    // Detect presence of all expected notes + adjacent octaves
     final presenceMap = _goertzel.detectPresence(
       samples,
       sampleRate,
-      activeExpectedMidis,
+      expandedMidis.toList(),
       dominanceRatio: dominanceRatio,
       harmonics: harmonics,
       minConfidence: minConfidence,
@@ -517,6 +547,7 @@ class PracticePitchRouter {
 
     // SESSION-037: Capture raw detection from highest-confidence Goertzel bin
     // This captures even sub-threshold detections for BLUE UI feedback
+    // SESSION-067: Now also captures adjacent octave detections for proper UI positioning
     if (presenceMap.isNotEmpty) {
       final sortedAll = presenceMap.entries.toList()
         ..sort((a, b) => b.value.compareTo(a.value));
@@ -525,7 +556,22 @@ class PracticePitchRouter {
       _lastRawFreq = GoertzelDetector.midiToFrequency(best.key);
       _lastRawConf = best.value;
       _lastRawTSec = tSec;
-      _lastRawSource = 'goertzel';
+      final isAdjacent = !originalMidiSet.contains(best.key);
+      _lastRawSource = isAdjacent ? 'goertzel_adjacent' : 'goertzel';
+
+      // SESSION-067: Capture rawMidiForUi for adjacent octave detections
+      // This allows ROUGE to show on the ACTUAL key played (wrong octave)
+      if (isAdjacent && best.value >= minConfidence) {
+        _lastRawMidiForUi = best.key;
+        _lastRawConfForUi = best.value;
+        _lastRawMidiForUiTSec = tSec;
+        if (kDebugMode) {
+          debugPrint(
+            'GOERTZEL_ADJACENT_OCTAVE detected=${best.key} conf=${best.value.toStringAsFixed(2)} '
+            'expected=$activeExpectedMidis → rawMidiForUi updated',
+          );
+        }
+      }
     }
 
     // Filter notes above threshold and sort by confidence (descending)
@@ -537,12 +583,16 @@ class PracticePitchRouter {
     final topNotes = detected.take(maxSimultaneousNotes).toList();
 
     // Debug log (grep-friendly GOERTZEL_CALLED format)
+    // SESSION-067: Show which detections are from adjacent octaves
     if (kDebugMode) {
-      final presentList = topNotes
-          .map((e) => '(${e.key},${e.value.toStringAsFixed(2)})')
-          .join(',');
+      final presentList = topNotes.map((e) {
+        final isAdjacent = !originalMidiSet.contains(e.key);
+        final tag = isAdjacent ? '*ADJ*' : '';
+        return '(${e.key}$tag,${e.value.toStringAsFixed(2)})';
+      }).join(',');
       debugPrint(
-        'GOERTZEL_CALLED targets=$activeExpectedMidis present=[$presentList]',
+        'GOERTZEL_CALLED targets=$activeExpectedMidis '
+        'expanded=${expandedMidis.toList()} present=[$presentList]',
       );
     }
 

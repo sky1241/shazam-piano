@@ -1,5 +1,6 @@
 import 'dart:math';
-import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart';
 
 /// Goertzel-based multi-bin presence detector with harmonic weighting.
 ///
@@ -282,6 +283,7 @@ class GoertzelDetector {
 
   // ══════════════════════════════════════════════════════════════════════════
   // SESSION-063: OCTAVE DISAMBIGUATION - Fix YIN octave errors
+  // SESSION-069: Added dominance ratio requirement to prevent false corrections
   // ══════════════════════════════════════════════════════════════════════════
   //
   // Problem: YIN pitch detection sometimes detects the wrong octave due to
@@ -292,8 +294,18 @@ class GoertzelDetector {
   //   - detected MIDI (from YIN)
   //   - detected MIDI + 12 (octave above)
   //   - detected MIDI - 12 (octave below)
-  // Return the MIDI with highest fundamental energy.
+  // Return the MIDI with highest fundamental energy, BUT only if it has
+  // significantly more power (>= octaveCorrectionDominance) than the original.
+  //
+  // SESSION-069 FIX: Without dominance check, noise at harmonic frequencies
+  // could cause false octave corrections. E.g., 278 Hz (C#4) incorrectly
+  // "corrected" to 554 Hz (C#5) because of slight noise at 554 Hz.
   // ══════════════════════════════════════════════════════════════════════════
+
+  /// Minimum ratio by which an alternative octave must exceed the original
+  /// YIN detection to trigger a correction. Default 2.0 = must have 2x power.
+  /// SESSION-069: Added to prevent false octave corrections from noise.
+  static const double octaveCorrectionDominance = 2.0;
 
   /// Disambiguate octave using Goertzel energy comparison.
   ///
@@ -378,12 +390,22 @@ class GoertzelDetector {
       scores[midi] = power;
     }
 
-    // Find the candidate with highest fundamental power
+    // SESSION-069: Find the candidate with highest fundamental power,
+    // BUT only correct if it has >= octaveCorrectionDominance times the
+    // power of the original YIN detection.
+    final originalScore = scores[detectedMidi] ?? 0.0;
     int bestMidi = detectedMidi;
-    double bestScore = scores[detectedMidi] ?? 0.0;
+    double bestScore = originalScore;
 
     for (final entry in scores.entries) {
-      if (entry.value > bestScore) {
+      // Skip the original detection
+      if (entry.key == detectedMidi) continue;
+
+      // SESSION-069: Only consider correction if alternative has
+      // significantly more power than the original (dominance check)
+      final isDominant = entry.value >= originalScore * octaveCorrectionDominance;
+
+      if (entry.value > bestScore && isDominant) {
         bestScore = entry.value;
         bestMidi = entry.key;
       }
@@ -399,6 +421,15 @@ class GoertzelDetector {
     final reason = wasCorrected
         ? (correction > 0 ? 'octave_up_$correction' : 'octave_down_$correction')
         : 'no_correction';
+
+    // SESSION-069: Debug log for octave disambiguation decision
+    if (kDebugMode) {
+      debugPrint(
+        'OCTAVE_DISAMB original=$detectedMidi origScore=${originalScore.toStringAsFixed(2)} '
+        'best=$bestMidi bestScore=${bestScore.toStringAsFixed(2)} '
+        'dominanceRequired=${octaveCorrectionDominance}x wasCorrected=$wasCorrected',
+      );
+    }
 
     return OctaveDisambiguationResult(
       originalMidi: detectedMidi,

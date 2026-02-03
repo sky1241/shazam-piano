@@ -40,6 +40,8 @@ class OnsetDetector {
   // - onsetDeltaRatioMin: 1.8→1.5 (more sensitive to onset variations)
   // - onsetCooldownMs: 180→120 (faster passages, research suggests 50-60ms for trills)
   // - probeIntervalMs: 300→200 (5 probes/s instead of 3, catches soft attacks)
+  // SESSION-068: probeIntervalMs: 200→100 (10 probes/s, catches fast sequences like C5-D5-E5)
+  // SESSION-068: probeRmsRatio: 0.5→0.3 (more sensitive probe threshold)
   OnsetDetector({
     this.emaAlpha = 0.15,
     this.onsetMinRms = 0.005, // SESSION-065: was 0.008, lowered for weak signals
@@ -48,8 +50,9 @@ class OnsetDetector {
     this.onsetCooldownMs = 120, // SESSION-065: was 180, allows faster passages
     this.attackBurstMs = 200,
     this.maxEvalsPerBurst = 3,
-    this.probeIntervalMs = 200, // SESSION-065: was 300, 5 probes/s instead of 3
+    this.probeIntervalMs = 100, // SESSION-068: was 200, 10 probes/s for fast sequences
     this.probeEnabled = true,
+    this.probeRmsRatio = 0.3, // SESSION-068: was 0.5 (implicit), lower threshold
   });
 
   /// SESSION-016: Create OnsetDetector from MicTuning preset.
@@ -64,6 +67,7 @@ class OnsetDetector {
       maxEvalsPerBurst: tuning.maxEvalsPerBurst,
       probeIntervalMs: tuning.probeIntervalMs,
       probeEnabled: tuning.probeEnabled,
+      probeRmsRatio: tuning.probeRmsRatio, // SESSION-068
     );
   }
 
@@ -115,6 +119,12 @@ class OnsetDetector {
   /// Set false to completely block evaluations outside onsets.
   final bool probeEnabled;
 
+  /// SESSION-068: Ratio of onsetMinRms for probe threshold.
+  /// Probe triggers when rmsNow >= onsetMinRms * probeRmsRatio.
+  /// Lower = more sensitive probes (catches softer notes during sustain).
+  /// Default 0.3 (was implicit 0.5 before SESSION-068).
+  final double probeRmsRatio;
+
   // ─────────────────────────────────────────────────────────────────────────
   // STATE
   // ─────────────────────────────────────────────────────────────────────────
@@ -125,6 +135,16 @@ class OnsetDetector {
   int _evalsInCurrentBurst = 0;
   double _lastProbeMs = -10000.0;
   bool _initialized = false;
+
+  // SESSION-068: Track last detected pitch for pitch-change re-trigger
+  int? _lastDetectedMidi;
+  double _lastPitchChangeMs = -10000.0;
+  static const double _pitchChangeCooldownMs = 80.0; // Min time between pitch-change triggers
+  static const int _pitchChangeMinSemitones = 2; // Min semitone diff to trigger
+
+  // SESSION-068: Force probes during warmup period even if no expected notes
+  double _sessionStartMs = 0.0;
+  static const double _warmupPeriodMs = 3000.0; // 3s warmup for early detection
 
   /// Last RMS EMA value (for debugging).
   double get rmsEma => _rmsEma;
@@ -137,6 +157,52 @@ class OnsetDetector {
     _evalsInCurrentBurst = 0;
     _lastProbeMs = -10000.0;
     _initialized = false;
+    // SESSION-068: Reset pitch-change state
+    _lastDetectedMidi = null;
+    _lastPitchChangeMs = -10000.0;
+    // SESSION-068: Reset warmup tracking
+    _sessionStartMs = 0.0;
+  }
+
+  /// SESSION-068: Signal that a new pitch was detected.
+  /// If pitch changed significantly, force a new burst to capture the note.
+  /// Returns true if a burst was forced (caller should continue processing).
+  bool signalPitchDetected({
+    required int midi,
+    required double nowMs,
+    required double rmsNow,
+  }) {
+    final prevMidi = _lastDetectedMidi;
+    _lastDetectedMidi = midi;
+
+    // No previous pitch - nothing to compare
+    if (prevMidi == null) return false;
+
+    // Check if pitch changed significantly
+    final semitoneDiff = (midi - prevMidi).abs();
+    if (semitoneDiff < _pitchChangeMinSemitones) return false;
+
+    // Check cooldown since last pitch-change trigger
+    final msSincePitchChange = nowMs - _lastPitchChangeMs;
+    if (msSincePitchChange < _pitchChangeCooldownMs) return false;
+
+    // Check RMS threshold (must have some energy)
+    if (rmsNow < onsetMinRms * probeRmsRatio) return false;
+
+    // PITCH-CHANGE TRIGGER: Force a new burst
+    _lastPitchChangeMs = nowMs;
+    _burstStartMs = nowMs;
+    _evalsInCurrentBurst = 0; // Reset eval count for new burst
+
+    if (kDebugMode) {
+      debugPrint(
+        'ONSET_PITCH_CHANGE t=${nowMs.toStringAsFixed(0)}ms '
+        'prevMidi=$prevMidi newMidi=$midi diff=$semitoneDiff '
+        'rmsNow=${rmsNow.toStringAsFixed(4)} reason=pitch_shift_detected',
+      );
+    }
+
+    return true;
   }
 
   /// Update detector with current RMS and time.
@@ -159,13 +225,38 @@ class OnsetDetector {
     if (!_initialized) {
       _rmsEma = rmsNow;
       _initialized = true;
+      _sessionStartMs = nowMs; // SESSION-068: Track session start
     }
 
     // Update EMA (exponential moving average)
     _rmsEma = _rmsEma * (1 - emaAlpha) + rmsNow * emaAlpha;
 
-    // If no expected notes, always skip (nothing to detect)
+    // SESSION-068: Check if in warmup period (allow probes even without expected notes)
+    final inWarmup = (nowMs - _sessionStartMs) < _warmupPeriodMs;
+
+    // If no expected notes, skip UNLESS in warmup period with sufficient RMS
     if (!hasExpectedNotes) {
+      // SESSION-068: During warmup, allow probes to detect early wrong notes
+      if (inWarmup && rmsNow >= onsetMinRms) {
+        final msSinceProbe = nowMs - _lastProbeMs;
+        if (msSinceProbe >= probeIntervalMs) {
+          _lastProbeMs = nowMs;
+          if (kDebugMode) {
+            debugPrint(
+              'ONSET_WARMUP_PROBE t=${nowMs.toStringAsFixed(0)}ms '
+              'rms=${rmsNow.toStringAsFixed(4)} reason=warmup_no_expected',
+            );
+          }
+          return OnsetState.probe;
+        }
+      }
+      // SESSION-068: Debug log for no expected notes
+      if (kDebugMode && rmsNow >= onsetMinRms) {
+        debugPrint(
+          'ONSET_NO_EXPECTED t=${nowMs.toStringAsFixed(0)}ms '
+          'rms=${rmsNow.toStringAsFixed(4)} inWarmup=$inWarmup reason=hasExpectedNotes_false',
+        );
+      }
       return OnsetState.skip;
     }
 
@@ -223,7 +314,8 @@ class OnsetDetector {
     // No onset detected - check probe failsafe
     if (probeEnabled && hasExpectedNotes) {
       final msSinceProbe = nowMs - _lastProbeMs;
-      if (msSinceProbe >= probeIntervalMs && rmsNow >= onsetMinRms * 0.5) {
+      // SESSION-068: Use configurable probeRmsRatio instead of hardcoded 0.5
+      if (msSinceProbe >= probeIntervalMs && rmsNow >= onsetMinRms * probeRmsRatio) {
         // Probe allowed - but very limited
         _lastProbeMs = nowMs;
 
