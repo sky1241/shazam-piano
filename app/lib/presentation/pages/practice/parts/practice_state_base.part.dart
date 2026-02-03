@@ -135,6 +135,13 @@ abstract class _PracticePageStateBase extends ConsumerState<PracticePage>
   int? _lastWrongMidi;
   DateTime? _lastWrongAt;
 
+  // SESSION-066: GREEN PROTECTION WINDOW
+  // Prevent ROUGE for a note that was just VERT (held note becomes wrong bug)
+  // If midi was green within this window, skip ROUGE to avoid visual flicker
+  int? _lastJudgeGreenMidi;
+  int _lastJudgeGreenTimestampMs = 0;
+  final int _greenProtectionWindowMs = 300; // 300ms immunity after VERT
+
   // Constantes gating audio
   // FIX BUG SESSION-005: Augmenter sensibilité micro (0.0020 → 0.0010)
   // Piano acoustique à 50cm dans pièce silencieuse = notes bien captées

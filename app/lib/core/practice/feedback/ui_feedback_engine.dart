@@ -648,6 +648,7 @@ class UIFeedbackEngine {
 
   /// Exécute un flash VERT ordonné par le JUGE (verdict CORRECT)
   /// Le JUGE a déjà décidé - cette méthode exécute sans logique supplémentaire
+  /// SESSION-066: Clear _currentRedMidis pour éviter réapparition du rouge
   void judgeFlashVert({required int midi, required int nowMs}) {
     _lastGreenMidi = midi;
     _lastGreenTimestampMs = nowMs;
@@ -657,13 +658,19 @@ class UIFeedbackEngine {
     final newState = _state.copyWith(
       greenMidi: midi,
       timestampMs: nowMs,
-      clearRed: true, // Vert efface rouge sur même touche
+      clearRed: true, // Vert efface tous les rouges
     );
     _state = newState;
+
+    // SESSION-066: CRUCIAL - aussi clear les trackers internes
+    // Sans ça, update(null) pourrait restaurer les rouges depuis _currentRedMidis
+    _currentRedMidis = {};
+    _redMidiLastActiveMs.clear();
+
     onStateChanged?.call(_state);
 
     if (kDebugMode) {
-      debugPrint('JUDGE_FLASH_VERT midi=$midi nowMs=$nowMs');
+      debugPrint('JUDGE_FLASH_VERT midi=$midi nowMs=$nowMs clearedReds=true');
     }
   }
 

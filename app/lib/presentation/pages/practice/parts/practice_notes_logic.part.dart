@@ -216,6 +216,10 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
               nowMs: elapsedMs.round(),
             );
 
+            // SESSION-066: Track green for protection window
+            _lastJudgeGreenMidi = noteEstimee;
+            _lastJudgeGreenTimestampMs = elapsedMs.round();
+
             if (kDebugMode) {
               debugPrint(
                 'JUDGE_OUT ts=${elapsedMs.round()} note_estimee=$noteEstimee '
@@ -223,17 +227,35 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
               );
             }
           } else {
-            // V2: INCORRECT → FLASH_ROUGE
-            _uiFeedbackEngine!.judgeFlashRouge(
-              midi: noteEstimee,
-              nowMs: elapsedMs.round(),
-            );
+            // SESSION-066: GREEN PROTECTION WINDOW
+            // If this note was just VERT within the last 300ms, skip ROUGE
+            // This prevents "held note becomes wrong" visual flicker
+            final timeSinceGreen = elapsedMs.round() - _lastJudgeGreenTimestampMs;
+            final isProtected = _lastJudgeGreenMidi == noteEstimee &&
+                timeSinceGreen < _greenProtectionWindowMs;
 
-            if (kDebugMode) {
-              debugPrint(
-                'JUDGE_OUT ts=${elapsedMs.round()} note_estimee=$noteEstimee '
-                'verdict=INCORRECT flash=ROUGE touche=$noteEstimee',
+            if (isProtected) {
+              // Skip ROUGE - note is in green immunity window
+              if (kDebugMode) {
+                debugPrint(
+                  'JUDGE_SKIP_ROUGE ts=${elapsedMs.round()} midi=$noteEstimee '
+                  'reason=green_protection timeSinceGreen=${timeSinceGreen}ms '
+                  'window=${_greenProtectionWindowMs}ms',
+                );
+              }
+            } else {
+              // V2: INCORRECT → FLASH_ROUGE
+              _uiFeedbackEngine!.judgeFlashRouge(
+                midi: noteEstimee,
+                nowMs: elapsedMs.round(),
               );
+
+              if (kDebugMode) {
+                debugPrint(
+                  'JUDGE_OUT ts=${elapsedMs.round()} note_estimee=$noteEstimee '
+                  'verdict=INCORRECT flash=ROUGE touche=$noteEstimee',
+                );
+              }
             }
           }
 
