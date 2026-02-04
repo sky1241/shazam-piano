@@ -60,8 +60,10 @@ class PracticePitchRouter {
     GoertzelDetector? goertzelDetector,
     this.snapSemitoneTolerance = 0,
     this.goertzelConfidenceThreshold = 0.5,
-    this.yinValidationIntervalSec = 1.0,
-    this.yinWarmupPeriodSec = 1.5,
+    // SESSION-074: Reduced from 1.0 to 0.05 to detect wrong notes (YIN runs 20x/sec)
+    this.yinValidationIntervalSec = 0.05,
+    // SESSION-074: Reduced from 1.5 to 0.3 for faster wrong note detection
+    this.yinWarmupPeriodSec = 0.3,
     this.yinMinRmsForOverride = 0.05,
     this.yinRmsNoiseMultiplier = 3.0,
   }) : _yin = yinService ?? YinPitchService(),
@@ -244,14 +246,18 @@ class PracticePitchRouter {
         : goertzelResults.map((e) => e.conf).reduce(max);
 
     // ══════════════════════════════════════════════════════════════════════════
-    // STEP 2: YIN CONDITIONAL (mono only, when needed)
+    // STEP 2: YIN ALWAYS RUNS (SESSION-074 SIMPLIFICATION)
     // ══════════════════════════════════════════════════════════════════════════
-    final isMono = activeExpectedMidis.length == 1;
-    final goertzelNeedsHelp = bestGoertzelConf < goertzelConfidenceThreshold;
-    final yinValidationDue =
-        (tSec - _lastYinTimeSec) > yinValidationIntervalSec;
+    // AVANT: YIN ne tournait que si mono + (Goertzel faible OU timeout)
+    // PROBLÈME: Si Goertzel "croit" trouver ou si multi-notes, YIN ne tourne pas
+    //           → rawMidiForUi jamais mis à jour → ROUGE jamais émis
+    // FIX: YIN tourne TOUJOURS pour garantir rawMidiForUi = vraie note jouée
+    // CPU: YIN est O(N), N petit (~2048 samples), ~1ms par frame = acceptable
+    // ══════════════════════════════════════════════════════════════════════════
+    final yinThrottleDue = (tSec - _lastYinTimeSec) > yinValidationIntervalSec;
 
-    final shouldRunYin = isMono && (goertzelNeedsHelp || yinValidationDue);
+    // YIN tourne TOUJOURS (throttled à 20x/sec pour CPU)
+    final shouldRunYin = yinThrottleDue;
 
     if (shouldRunYin) {
       _lastYinTimeSec = tSec;
@@ -279,9 +285,8 @@ class PracticePitchRouter {
       // Debug log
       if (kDebugMode) {
         debugPrint(
-          'ROUTER_YIN_TRIGGERED t=${tSec.toStringAsFixed(2)} '
+          'ROUTER_YIN_ALWAYS t=${tSec.toStringAsFixed(2)} '
           'goertzelConf=${bestGoertzelConf.toStringAsFixed(2)} '
-          'reason=${goertzelNeedsHelp ? "lowConf" : "periodic"} '
           'yinMidi=${yinResults.isNotEmpty ? yinResults.first.midi : "none"} '
           'merged=${merged.isNotEmpty ? merged.first.midi : "none"}',
         );
@@ -493,24 +498,36 @@ class PracticePitchRouter {
 
   // ═══════════════════════════════════════════════════════════════════════════
   // SESSION-067: ADJACENT OCTAVE EXPANSION
-  // Expands MIDI notes to include ±12 semitones (adjacent octaves)
-  // This allows Goertzel to detect when user plays the wrong octave
+  // SESSION-074: Expanded from ±12 to ±24 semitones (2 octaves) for better
+  // wrong-note detection. Human error range is typically within 2 octaves.
   // ═══════════════════════════════════════════════════════════════════════════
 
-  /// Expand MIDI notes to include adjacent octaves (±12 semitones).
+  /// Expand MIDI notes to include adjacent octaves (±24 semitones = 2 octaves).
   /// Returns a set containing original notes plus octave variations.
   /// Clamps to valid MIDI range (21-108 for piano).
+  ///
+  /// SESSION-074: Expanded from ±12 to ±24 to catch:
+  /// - User plays C3 instead of C5 (2 octaves below)
+  /// - User plays C7 instead of C5 (2 octaves above)
   Set<int> _expandMidisToAdjacentOctaves(List<int> midis) {
     final expanded = <int>{};
     for (final midi in midis) {
       expanded.add(midi); // Original note
-      // Add octave below (if in valid piano range)
+      // Add 1 octave below (if in valid piano range)
       if (midi - 12 >= 21) {
         expanded.add(midi - 12);
       }
-      // Add octave above (if in valid piano range)
+      // Add 2 octaves below (if in valid piano range)
+      if (midi - 24 >= 21) {
+        expanded.add(midi - 24);
+      }
+      // Add 1 octave above (if in valid piano range)
       if (midi + 12 <= 108) {
         expanded.add(midi + 12);
+      }
+      // Add 2 octaves above (if in valid piano range)
+      if (midi + 24 <= 108) {
+        expanded.add(midi + 24);
       }
     }
     return expanded;

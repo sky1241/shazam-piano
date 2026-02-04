@@ -356,9 +356,9 @@ const int kHitCandidateMaxCount = 64;
 ///        when main buffer is empty (fallback for probe/failsafe detections).
 const bool kWrongFlashRestoreEnabled = true;
 
-/// SESSION-047: Arbiter shadow mode - runs DecisionArbiter in parallel for validation
-/// When true, logs ARBITER_SHADOW_MATCH/MISMATCH without affecting legacy behavior
-const bool kArbiterShadowEnabled = true;
+/// SESSION-073 (Deep Research): Arbiter ACTIVE mode
+/// When true, arbiter takes real decisions (replaces legacy checkWrongNote logic)
+const bool kArbiterActiveEnabled = true;
 
 /// Maximum age (ms) for a wrong sample to be considered for fallback.
 const int kWrongSampleMaxAgeMs = 200;
@@ -371,9 +371,8 @@ const double kWrongSampleMinConf = 0.95;
 
 /// SESSION-038 FIX: Grace period before emitting fallback wrong flash.
 /// SESSION-054 FIX: 400→150ms - too long was blocking early attacks
-/// PREUVE: session-054 had 9 WRONG_FLASH_SKIP due to grace_period (only 3 emits!)
-/// Human reaction ~150-250ms, so 150ms grace is sufficient.
-const double kFallbackGracePeriodMs = 150.0;
+/// SESSION-074 FIX: 150→50ms - still blocking too many flashes (Guitar Hero needs instant feedback)
+const double kFallbackGracePeriodMs = 50.0;
 
 /// SESSION-021 FIX #3: Enable spike clamp for latency estimation.
 /// When true, rejects latency samples > 2x current median to filter spikes.
@@ -475,15 +474,17 @@ class MicEngine {
     // Protection: high confidence (0.75) + confirmation still required
     this.maxSemitoneDeltaForWrong = 24,
     // SESSION-014: PROBE safety - max semitone distance to allow WRONG_FLASH from PROBE events
-    // PROBE events with delta > 3 are likely artifacts, not real wrong notes
-    this.probeSafetyMaxDelta = 3,
+    // SESSION-070: Increased from 3 to 13 to match probeOverrideMaxDelta (allow octave errors)
+    this.probeSafetyMaxDelta = 13,
     // SESSION-015: Minimum confidence required to emit WRONG_FLASH (filters weak artifacts)
-    // Higher than minConfForWrong to avoid ghost flashes from low-confidence detections
-    // 0.75 = user must really be pressing the wrong key with conviction
-    this.wrongFlashMinConf = 0.75,
+    // SESSION-074 FIX: 0.75→0.55 - was rejecting valid notes (conf=0.74 rejected!)
+    // Guitar Hero needs responsive feedback, not paranoid filtering
+    this.wrongFlashMinConf = 0.55,
     // SESSION-015: Block WRONG_FLASH from PROBE events entirely (artifacts, not real mistakes)
     // When true, PROBE events never trigger WRONG_FLASH regardless of delta
-    this.probeBlockWrongFlash = true,
+    // SESSION-072: Changed to false - blocking PROBEs prevented ALL wrong-flash detection
+    // when no expected note was in the routing window. Deep Research confirms this fix.
+    this.probeBlockWrongFlash = false,
     // SESSION-015: Confirmation temporelle - require N detections of same wrong midi
     // within a time window to trigger WRONG_FLASH (anti-single-spike filter)
     // This prevents sustain/reverb artifacts from triggering ghost red flashes
@@ -577,7 +578,7 @@ class MicEngine {
   /// SESSION-016: Now configured via MicTuning.
   final NoteTracker _noteTracker;
 
-  /// SESSION-047: Decision arbiter for unified HIT/WRONG/MISS logic (shadow mode)
+  /// SESSION-073: Decision arbiter for unified HIT/WRONG/MISS logic
   final DecisionArbiter _arbiter = DecisionArbiter();
 
   String? _sessionId;
@@ -3328,21 +3329,11 @@ class MicEngine {
         continue;
       }
 
-      // FILTER 2: PROBE safety fallback (if probeBlockWrongFlash=false)
-      // Don't flag wrong notes from PROBE if delta > probeSafetyMaxDelta
-      // EXCEPTION: probeOverride bypasses this filter too
-      if (!probeOverride &&
-          event.source == PitchEventSource.probe &&
-          minDeltaToExpected > probeSafetyMaxDelta) {
-        if (kDebugMode) {
-          debugPrint(
-            'WRONG_FLASH_DROP reason=probe_safety midi=${event.midi} '
-            'conf=${event.conf.toStringAsFixed(2)} minDelta=$minDeltaToExpected '
-            'threshold=$probeSafetyMaxDelta',
-          );
-        }
-        continue;
-      }
+      // FILTER 2: REMOVED (SESSION-073 Deep Research)
+      // Deep Research: "Cascading filters as bug patches - each extra filter
+      // multiplies failure modes; one overly strict gate can zero out the subsystem"
+      // The maxSemitoneDeltaForWrong filter (FILTER 3) already handles outliers.
+      // probeSafetyMaxDelta was redundant and contributed to wrong-flash suppression.
 
       // FILTER 3: Outlier filter - skip events too far from any expected note
       // This filters subharmonics like MIDI 34 when expecting MIDI 60-70
@@ -3351,21 +3342,12 @@ class MicEngine {
       // Now: outlier filter ALWAYS applies regardless of confidence
       // Rationale: A note 10 semitones away is NEVER the "wrong key pressed" - it's noise/harmonic
       //
-      // SESSION-023 FIX #1: Don't DROP outlier when no expected notes active
-      // When activeExpectedMidis is empty, minDelta=999 (sentinel) causes false DROP.
-      // Instead, SKIP with explicit reason to avoid polluting logs.
-      if (activeExpectedMidis.isEmpty) {
-        _engineSkipOtherCount++; // SESSION-038: Count other skip
-        if (kDebugMode) {
-          debugPrint(
-            'WRONG_FLASH_SKIP reason=no_expected_active midi=${event.midi} '
-            'conf=${event.conf.toStringAsFixed(2)} '
-            'activeExpectedCount=0',
-          );
-        }
-        continue;
-      }
-      if (minDeltaToExpected > maxSemitoneDeltaForWrong) {
+      // SESSION-073 (Deep Research): When no expected notes active, DON'T skip.
+      // Deep Research: "When expected list is empty, arbiter should still classify
+      // as WRONG_FREEPLAY and flash the detected key."
+      // The outlier filter only applies when there ARE expected notes to compare against.
+      // When empty, we let the event through (silenceGateOk will filter later).
+      if (activeExpectedMidis.isNotEmpty && minDeltaToExpected > maxSemitoneDeltaForWrong) {
         if (kDebugMode) {
           debugPrint(
             'WRONG_FLASH_DROP reason=outlier midi=${event.midi} '
@@ -3483,16 +3465,69 @@ class MicEngine {
     // Mode detection: mismatch (hasActiveNoteInWindow=true) vs silence (false)
     final bool isSilenceMode = !hasActiveNoteInWindow;
 
-    // SESSION-018: Stricter gate for silence mode to avoid noise spam
-    // In silence: require trigger/burst source AND very high confidence
-    const double silenceModeMinConf = 0.92;
-    final bool silenceGateOk =
-        !isSilenceMode ||
-        (bestWrongEvent != null &&
-            bestWrongEvent.source != PitchEventSource.probe &&
-            bestWrongEvent.conf >= silenceModeMinConf);
+    // ═══════════════════════════════════════════════════════════════════════
+    // SESSION-073 (Deep Research): Use arbiter for SILENCE mode (no expected notes)
+    // "When expected list is empty, arbiter should classify as WRONG_FREEPLAY"
+    // ═══════════════════════════════════════════════════════════════════════
+    if (isSilenceMode && bestWrongEvent != null) {
+      // Convert to ArbiterPitchEvent
+      final arbiterEvent = ArbiterPitchEvent(
+        midi: bestWrongEvent.midi,
+        conf: bestWrongEvent.conf,
+        tSec: bestWrongEvent.tSec,
+        source: _mapSourceType(bestWrongEvent.source),
+        rms: bestWrongEvent.rms,
+      );
 
-    if (bestWrongEvent != null && silenceGateOk) {
+      final freeplayResult = _arbiter.processFreeplay(
+        event: arbiterEvent,
+        nowMs: now.millisecondsSinceEpoch.toDouble(),
+        wrongFlashMinConf: wrongFlashMinConf,
+        lastWrongFlashAtMs:
+            _lastWrongFlashAt?.millisecondsSinceEpoch.toDouble(),
+        lastWrongFlashForMidiMs:
+            _lastWrongFlashByMidi[bestWrongEvent.midi]
+                ?.millisecondsSinceEpoch
+                .toDouble(),
+        wrongFlashEmittedThisTick: _wrongFlashEmittedThisTick,
+      );
+
+      if (freeplayResult.result == DecisionResult.wrongFreeplay) {
+        decisions.add(
+          NoteDecision(
+            type: DecisionType.wrongFlash,
+            noteIndex: null, // No expected note in silence mode
+            expectedMidi: null,
+            detectedMidi: bestWrongEvent.midi,
+            confidence: bestWrongEvent.conf,
+          ),
+        );
+        _lastWrongFlashAt = now;
+        _lastWrongFlashByMidi[bestWrongEvent.midi] = now;
+        if (kWrongFlashRestoreEnabled) {
+          _wrongFlashEmittedThisTick = true;
+        }
+        _engineEmitCount++;
+
+        if (kDebugMode) {
+          debugPrint(
+            'WRONG_FLASH_EMIT_FREEPLAY midi=${bestWrongEvent.midi} '
+            'conf=${bestWrongEvent.conf.toStringAsFixed(2)} '
+            'path=${freeplayResult.path}',
+          );
+        }
+      } else if (kDebugMode) {
+        debugPrint(
+          'WRONG_FLASH_SKIP_FREEPLAY midi=${bestWrongEvent.midi} '
+          'reason=${freeplayResult.reason} gatedBy=${freeplayResult.gatedBy}',
+        );
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Legacy path: POST_MATCH_MISMATCH (when expected notes ARE active)
+    // ═══════════════════════════════════════════════════════════════════════
+    if (!isSilenceMode && bestWrongEvent != null) {
       // SESSION-031: Check per-tick flag first (skip if already emitted this tick)
       final tickOk = !kWrongFlashRestoreEnabled || !_wrongFlashEmittedThisTick;
 
@@ -3600,213 +3635,10 @@ class MicEngine {
           );
         }
       }
-    } else if (bestWrongEvent != null && !silenceGateOk) {
-      // Log silence gate rejection
-      _engineSkipOtherCount++; // SESSION-038: Count other skip
-      if (kDebugMode) {
-        debugPrint(
-          'WRONG_FLASH_SKIP reason=silence_gate midi=$bestWrongMidi '
-          'conf=${bestWrongEvent.conf.toStringAsFixed(2)} source=${bestWrongEvent.source.name} '
-          'requiredConf=$silenceModeMinConf',
-        );
-      }
     }
-
-    // SESSION-047: Arbiter shadow comparison (debug-only validation)
-    if (kArbiterShadowEnabled && kDebugMode) {
-      _runArbiterShadow(decisions, elapsed, now);
-    }
+    // SESSION-073: Removed legacy silenceGateOk block - silence mode now handled by arbiter
 
     return decisions;
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // SESSION-047: ARBITER SHADOW - Validate DecisionArbiter against legacy
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  void _runArbiterShadow(
-    List<NoteDecision> legacyDecisions,
-    double elapsed,
-    DateTime now,
-  ) {
-    final elapsedMs = elapsed * 1000.0;
-    final nowMs = now.millisecondsSinceEpoch.toDouble();
-
-    for (final legacy in legacyDecisions) {
-      final idx = legacy.noteIndex;
-      if (idx == null || idx < 0 || idx >= noteEvents.length) continue;
-
-      final note = noteEvents[idx];
-      // SESSION-048: Pass overrides to simulate PRE-MUTATION state
-      // Legacy mutates hitNotes[idx] and _wfDedupHistory BEFORE shadow runs
-      // SESSION-049: alreadyHitOverride=false for HIT+MISS (not just MISS)
-      final inputs = _collectArbiterInputs(
-        noteIdx: idx,
-        note: note,
-        elapsedMs: elapsedMs,
-        nowMs: nowMs,
-        alreadyHitOverride:
-            (legacy.type == DecisionType.miss ||
-                legacy.type == DecisionType.hit)
-            ? false
-            : null,
-        wrongFlashEmittedThisTickOverride: false,
-        wfDedupLastEmitMsOverride: -1,
-      );
-
-      final arbiterOut = _arbiter.process(inputs);
-
-      // Map arbiter result to legacy DecisionType
-      final arbiterType = switch (arbiterOut.result) {
-        DecisionResult.hit => DecisionType.hit,
-        DecisionResult.miss => DecisionType.miss,
-        DecisionResult.wrong => DecisionType.wrongFlash,
-        DecisionResult.skip => null,
-        DecisionResult.ambiguous => null,
-      };
-
-      final isMatch =
-          (arbiterType == legacy.type) ||
-          (arbiterType == null &&
-              legacy.type != DecisionType.hit &&
-              legacy.type != DecisionType.miss &&
-              legacy.type != DecisionType.wrongFlash);
-
-      if (isMatch) {
-        debugPrint(
-          'ARBITER_SHADOW_MATCH noteIdx=$idx legacy=${legacy.type.name} '
-          'arbiter=${arbiterOut.result.name} path=${arbiterOut.path}',
-        );
-      } else {
-        debugPrint(
-          'ARBITER_SHADOW_MISMATCH noteIdx=$idx legacy=${legacy.type.name} '
-          'arbiter=${arbiterOut.result.name} reason=${arbiterOut.reason} '
-          'path=${arbiterOut.path} gatedBy=${arbiterOut.gatedBy ?? "none"}',
-        );
-      }
-    }
-  }
-
-  DecisionInputs _collectArbiterInputs({
-    required int noteIdx,
-    required NoteEvent note,
-    required double elapsedMs,
-    required double nowMs,
-    bool? alreadyHitOverride,
-    bool? wrongFlashEmittedThisTickOverride,
-    int? wfDedupLastEmitMsOverride,
-  }) {
-    final windowStartMs = (note.start - headWindowSec) * 1000.0;
-    final windowEndMs = (note.end + tailWindowSec) * 1000.0;
-    final attackId = _lastOnsetTriggerElapsedMs.round();
-    final wfDedupKey = '${noteIdx}_$attackId';
-
-    // Collect best event from buffer
-    ArbiterPitchEvent? bestEvent;
-    double? bestDistance;
-    int bestStabilityFrames = 0;
-    for (final e in _events) {
-      final eTms = e.tSec * 1000.0;
-      if (eTms < windowStartMs || eTms > windowEndMs) continue;
-      final dist = (e.midi - note.pitch).abs().toDouble();
-      if (bestDistance == null || dist < bestDistance) {
-        bestDistance = dist;
-        bestStabilityFrames = e.stabilityFrames;
-        bestEvent = ArbiterPitchEvent(
-          midi: e.midi,
-          conf: e.conf,
-          tSec: e.tSec,
-          source: _mapSourceType(e.source),
-          rms: e.rms,
-        );
-      }
-    }
-
-    // Compute dt if we have a match
-    double? candidateDtMs;
-    if (bestEvent != null && bestDistance != null && bestDistance <= 3.0) {
-      candidateDtMs = (bestEvent.tSec - note.start) * 1000.0;
-    }
-
-    // Check lookahead
-    final isLookahead =
-        bestEvent != null &&
-        _isLookaheadMatch(
-          detectedMidi: bestEvent.midi,
-          currentNoteIdx: noteIdx,
-          noteEvents: noteEvents,
-          hitNotes: hitNotes,
-          elapsed: elapsedMs / 1000.0,
-          headWindowSec: headWindowSec,
-          tailWindowSec: tailWindowSec,
-          path: 'arbiter_shadow',
-        );
-
-    // wfDedup with override support for PRE-MUTATION state
-    final int? wfDedupLastEmitMs;
-    if (wfDedupLastEmitMsOverride != null) {
-      wfDedupLastEmitMs = wfDedupLastEmitMsOverride < 0
-          ? null
-          : wfDedupLastEmitMsOverride;
-    } else {
-      wfDedupLastEmitMs = _wfDedupHistory[wfDedupKey];
-    }
-
-    // Convert DateTime fields to ms
-    final lastWfAtMs = _lastWrongFlashAt?.millisecondsSinceEpoch.toDouble();
-    final lastWfForMidiMs = bestEvent != null
-        ? _lastWrongFlashByMidi[bestEvent.midi]?.millisecondsSinceEpoch
-              .toDouble()
-        : null;
-    final recentHitPcMs = bestEvent != null
-        ? _recentlyHitPitchClasses[bestEvent.midi % 12]?.millisecondsSinceEpoch
-              .toDouble()
-        : null;
-
-    return DecisionInputs(
-      elapsedMs: elapsedMs,
-      noteWindowStartMs: windowStartMs,
-      noteWindowEndMs: windowEndMs,
-      noteIdx: noteIdx,
-      expectedMidi: note.pitch,
-      alreadyHit: alreadyHitOverride ?? hitNotes[noteIdx],
-      bestEvent: bestEvent,
-      bestDistance: bestDistance,
-      matchedCandidate: null, // Simplified - no candidate fallback in shadow
-      fallbackSample: null, // Simplified - no fallback sample in shadow
-      onsetState: _lastOnsetState,
-      lastOnsetTriggerMs: _lastOnsetTriggerElapsedMs,
-      attackId: attackId,
-      isWithinGracePeriod: (elapsedMs - windowStartMs) < kFallbackGracePeriodMs,
-      isLookaheadMatch: isLookahead,
-      wrongFlashEmittedThisTick:
-          wrongFlashEmittedThisTickOverride ?? _wrongFlashEmittedThisTick,
-      lastWrongFlashAtMs: lastWfAtMs,
-      lastWrongFlashForMidiMs: lastWfForMidiMs,
-      lastTripleFlashMs: null, // Simplified
-      wfDedupLastEmitMs: wfDedupLastEmitMs,
-      hitAttackIdMs: _hitAttackIdHistory[attackId],
-      recentHitForDetectedPCMs: recentHitPcMs,
-      clearPitchAgeMs: _lastDetectedElapsedMs > 0
-          ? (elapsedMs - _lastDetectedElapsedMs * 1000.0)
-          : 9999.0,
-      hitDistanceThreshold: 3.0,
-      dtMaxMs: kHitDtMaxMs.toDouble(),
-      wrongFlashMinConf: wrongFlashMinConf,
-      gracePeriodMs: kFallbackGracePeriodMs.toDouble(),
-      sustainThresholdMs: kSustainWrongSuppressTriggerMs.toDouble(),
-      confirmationCount: 1, // Simplified
-      candidateDtMs: candidateDtMs,
-      snapAllowed:
-          bestEvent != null &&
-          _shouldSnapToExpected(
-            detectedMidi: bestEvent.midi,
-            expectedMidi: note.pitch,
-            conf: bestEvent.conf,
-            stabilityFrames: bestStabilityFrames,
-          ),
-      nowMs: nowMs,
-    );
   }
 
   PitchSourceType _mapSourceType(PitchEventSource source) {

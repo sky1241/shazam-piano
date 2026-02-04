@@ -8,7 +8,8 @@ import 'onset_detector.dart';
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Decision result types
-enum DecisionResult { hit, wrong, miss, skip, ambiguous }
+/// SESSION-073 (Deep Research): Added wrongFreeplay for "no expected notes" case
+enum DecisionResult { hit, wrong, wrongFreeplay, miss, skip, ambiguous }
 
 /// Source of pitch event for tail-aware suppression
 enum PitchSourceType { trigger, burst, probe, legacy }
@@ -318,6 +319,8 @@ class ArbiterStats {
         missCount++;
         break;
       case DecisionResult.wrong:
+      case DecisionResult.wrongFreeplay:
+        // SESSION-073: wrongFreeplay counts as wrong for stats
         wrongCount++;
         wrongByReason[output.reason] = (wrongByReason[output.reason] ?? 0) + 1;
         break;
@@ -809,11 +812,8 @@ class DecisionArbiter {
         );
       }
 
-      // FIX #1: clearPitchRecentMs gate DISABLED in shadow mode
-      // NO legacy value found - this was a new heuristic.
+      // NOTE: clearPitchRecentMs gate not implemented here.
       // clearPitchAgeMs is kept in DECIDE_IN/OUT logs for diagnostic only.
-      // Gate disabled to ensure shadow mode is faithful to legacy behavior.
-      // TODO: Re-enable after shadow validation if AC1 requires it.
 
       // Promote to WRONG (same as legacy behavior)
       return output.copyWith(
@@ -844,6 +844,124 @@ class DecisionArbiter {
     }
 
     return finalOutput;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // SESSION-073 (Deep Research): FREEPLAY MODE - No expected notes active
+  // "When expected list is empty, arbiter should still classify as
+  // WRONG_FREEPLAY and flash the detected key."
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /// Process a detection when NO expected notes are active (freeplay/silence mode).
+  /// This implements the Deep Research recommendation to not gate event generation
+  /// on expected-notes routing windows.
+  DecisionOutput processFreeplay({
+    required ArbiterPitchEvent event,
+    required double nowMs,
+    required double wrongFlashMinConf,
+    required double? lastWrongFlashAtMs,
+    required double? lastWrongFlashForMidiMs,
+    required bool wrongFlashEmittedThisTick,
+    int plausibleMinMidi = 21, // Piano low A
+    int plausibleMaxMidi = 108, // Piano high C
+  }) {
+    if (kDebugMode) {
+      debugPrint(
+        'DECIDE_FREEPLAY_IN midi=${event.midi} conf=${event.conf.toStringAsFixed(2)} '
+        'source=${event.source.name} nowMs=${nowMs.toStringAsFixed(0)}',
+      );
+    }
+
+    // ═══ F1: Range filter - must be in plausible keyboard range ═══
+    if (event.midi < plausibleMinMidi || event.midi > plausibleMaxMidi) {
+      final output = DecisionOutput(
+        result: DecisionResult.skip,
+        reason: 'freeplay_out_of_range',
+        path: 'F1_RANGE_FILTER',
+        detectedMidi: event.midi,
+        gatedBy: 'range',
+      );
+      stats.recordDecision(output);
+      return output;
+    }
+
+    // ═══ F2: Confidence filter ═══
+    if (event.conf < wrongFlashMinConf) {
+      final output = DecisionOutput(
+        result: DecisionResult.skip,
+        reason: 'freeplay_low_conf',
+        path: 'F2_CONF_FILTER',
+        detectedMidi: event.midi,
+        confidence: event.conf,
+        gatedBy: 'confidence',
+      );
+      stats.recordDecision(output);
+      return output;
+    }
+
+    // ═══ F3: Per-tick flag (only one wrong per tick) ═══
+    if (wrongFlashEmittedThisTick) {
+      final output = DecisionOutput(
+        result: DecisionResult.skip,
+        reason: 'freeplay_already_emitted_tick',
+        path: 'F3_PER_TICK',
+        detectedMidi: event.midi,
+        gatedBy: 'per_tick',
+      );
+      stats.recordDecision(output);
+      return output;
+    }
+
+    // ═══ F4: Global cooldown ═══
+    if (lastWrongFlashAtMs != null) {
+      final msSinceLast = nowMs - lastWrongFlashAtMs;
+      if (msSinceLast < globalCooldownMs) {
+        final output = DecisionOutput(
+          result: DecisionResult.skip,
+          reason: 'freeplay_global_cooldown',
+          path: 'F4_GLOBAL_COOLDOWN',
+          detectedMidi: event.midi,
+          gatedBy: 'cooldown',
+        );
+        stats.recordDecision(output);
+        return output;
+      }
+    }
+
+    // ═══ F5: Per-midi dedup ═══
+    if (lastWrongFlashForMidiMs != null) {
+      final msSinceLast = nowMs - lastWrongFlashForMidiMs;
+      if (msSinceLast < perMidiDedupMs) {
+        final output = DecisionOutput(
+          result: DecisionResult.skip,
+          reason: 'freeplay_per_midi_dedup',
+          path: 'F5_PER_MIDI_DEDUP',
+          detectedMidi: event.midi,
+          gatedBy: 'per_midi',
+        );
+        stats.recordDecision(output);
+        return output;
+      }
+    }
+
+    // ═══ All gates passed → WRONG_FREEPLAY ═══
+    final output = DecisionOutput(
+      result: DecisionResult.wrongFreeplay,
+      reason: 'freeplay_detected',
+      path: 'FREEPLAY_CONFIRMED',
+      detectedMidi: event.midi,
+      confidence: event.conf,
+    );
+
+    if (kDebugMode) {
+      debugPrint(
+        'DECIDE_FREEPLAY_OUT result=${output.result.name} '
+        'midi=${event.midi} conf=${event.conf.toStringAsFixed(2)}',
+      );
+    }
+
+    stats.recordDecision(output);
+    return output;
   }
 
   /// Get summary string for session end
