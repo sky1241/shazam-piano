@@ -219,7 +219,43 @@ class PracticePitchRouter {
     double goertzelMinConfidence = 0.08,
     double yinMinConfidence = 0.40,
   }) {
-    // No expected notes → no detection
+    // ══════════════════════════════════════════════════════════════════════════
+    // SESSION-075: YIN RUNS FIRST (even with empty expected) for rawMidiForUi
+    // ══════════════════════════════════════════════════════════════════════════
+    // PROBLÈME: Si activeExpectedMidis vide, return [] → YIN ne tournait pas
+    //           → rawMidiForUi jamais mis à jour → ROUGE jamais émis
+    // FIX: YIN tourne TOUJOURS pour garantir rawMidiForUi = vraie note jouée
+    //      Utiliser C4 (60) comme référence si pas de notes attendues
+    // ══════════════════════════════════════════════════════════════════════════
+    final yinThrottleDue = (tSec - _lastYinTimeSec) > yinValidationIntervalSec;
+    List<RouterPitchEvent> yinResults = [];
+
+    if (yinThrottleDue) {
+      _lastYinTimeSec = tSec;
+
+      // Utiliser C4 (60) comme référence si pas de notes attendues
+      final refMidi = activeExpectedMidis.isNotEmpty ? activeExpectedMidis.first : 60;
+
+      yinResults = _detectWithYin(
+        samples: samples,
+        sampleRate: sampleRate,
+        expectedMidi: refMidi,
+        rms: rms,
+        tSec: tSec,
+        minConfidence: yinMinConfidence,
+      );
+
+      // Log si YIN détecte quelque chose sans notes attendues (ROUGE potentiel)
+      if (kDebugMode && activeExpectedMidis.isEmpty && yinResults.isNotEmpty) {
+        debugPrint(
+          'ROUTER_YIN_NO_EXPECTED t=${tSec.toStringAsFixed(2)} '
+          'yinMidi=${yinResults.first.midi} conf=${yinResults.first.conf.toStringAsFixed(2)} '
+          '→ rawMidiForUi updated for ROUGE detection',
+        );
+      }
+    }
+
+    // No expected notes → no scoring possible, but rawMidiForUi was updated above
     if (activeExpectedMidis.isEmpty) {
       _lastMode = DetectionMode.none;
       return [];
@@ -246,31 +282,9 @@ class PracticePitchRouter {
         : goertzelResults.map((e) => e.conf).reduce(max);
 
     // ══════════════════════════════════════════════════════════════════════════
-    // STEP 2: YIN ALWAYS RUNS (SESSION-074 SIMPLIFICATION)
+    // STEP 2: Use YIN results from above (already ran for rawMidiForUi)
     // ══════════════════════════════════════════════════════════════════════════
-    // AVANT: YIN ne tournait que si mono + (Goertzel faible OU timeout)
-    // PROBLÈME: Si Goertzel "croit" trouver ou si multi-notes, YIN ne tourne pas
-    //           → rawMidiForUi jamais mis à jour → ROUGE jamais émis
-    // FIX: YIN tourne TOUJOURS pour garantir rawMidiForUi = vraie note jouée
-    // CPU: YIN est O(N), N petit (~2048 samples), ~1ms par frame = acceptable
-    // ══════════════════════════════════════════════════════════════════════════
-    final yinThrottleDue = (tSec - _lastYinTimeSec) > yinValidationIntervalSec;
-
-    // YIN tourne TOUJOURS (throttled à 20x/sec pour CPU)
-    final shouldRunYin = yinThrottleDue;
-
-    if (shouldRunYin) {
-      _lastYinTimeSec = tSec;
-
-      final yinResults = _detectWithYin(
-        samples: samples,
-        sampleRate: sampleRate,
-        expectedMidi: activeExpectedMidis.first,
-        rms: rms,
-        tSec: tSec,
-        minConfidence: yinMinConfidence,
-      );
-
+    if (yinThrottleDue && yinResults.isNotEmpty) {
       // ════════════════════════════════════════════════════════════════════════
       // STEP 3: MERGE RESULTS (with SESSION-052 warmup/RMS guards)
       // ════════════════════════════════════════════════════════════════════════
@@ -296,7 +310,7 @@ class PracticePitchRouter {
       return merged;
     }
 
-    // No YIN needed, return Goertzel results directly
+    // No YIN results, return Goertzel results directly
     _lastMode = DetectionMode.goertzel;
     return goertzelResults;
   }
@@ -576,18 +590,16 @@ class PracticePitchRouter {
       final isAdjacent = !originalMidiSet.contains(best.key);
       _lastRawSource = isAdjacent ? 'goertzel_adjacent' : 'goertzel';
 
-      // SESSION-067: Capture rawMidiForUi for adjacent octave detections
-      // This allows ROUGE to show on the ACTUAL key played (wrong octave)
-      if (isAdjacent && best.value >= minConfidence) {
-        _lastRawMidiForUi = best.key;
-        _lastRawConfForUi = best.value;
-        _lastRawMidiForUiTSec = tSec;
-        if (kDebugMode) {
-          debugPrint(
-            'GOERTZEL_ADJACENT_OCTAVE detected=${best.key} conf=${best.value.toStringAsFixed(2)} '
-            'expected=$activeExpectedMidis → rawMidiForUi updated',
-          );
-        }
+      // SESSION-067: REMOVED - Goertzel adjacent octave pollutes rawMidiForUi with harmonics
+      // SESSION-075: YIN is the source of truth for rawMidiForUi (real note played)
+      // Goertzel adjacent octave detects harmonics/sub-harmonics, NOT the actual key pressed
+      // Example: User plays D5, Goertzel finds energy at C#3 (harmonic) → wrong ROUGE!
+      // FIX: Only YIN updates rawMidiForUi, Goertzel is for scoring only
+      if (isAdjacent && best.value >= minConfidence && kDebugMode) {
+        debugPrint(
+          'GOERTZEL_ADJACENT_OCTAVE detected=${best.key} conf=${best.value.toStringAsFixed(2)} '
+          'expected=$activeExpectedMidis → IGNORED for rawMidiForUi (YIN is source of truth)',
+        );
       }
     }
 

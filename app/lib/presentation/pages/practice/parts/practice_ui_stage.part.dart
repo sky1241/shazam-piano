@@ -84,6 +84,16 @@ mixin _PracticeUiStageMixin on _PracticePageStateBase {
     final confStr = conf.toStringAsFixed(2);
     final rawConfStr = rawConf != null ? rawConf.toStringAsFixed(2) : '--';
 
+    // SESSION-075: DEBUG log pour comparer avec S56_KEYBOARD
+    // Ce log doit TOUJOURS matcher S56_KEYBOARD car ils lisent le même état
+    if (kDebugMode && (blueMidi != null || greenMidi != null || redMidis.isNotEmpty)) {
+      debugPrint(
+        'S56_OVERLAY blue=$blueMidi green=$greenMidi red=$redMidis '
+        'cyan=$cyanMidis conf=${conf.toStringAsFixed(2)} '
+        'raw=$rawMidi rawConf=${rawConf?.toStringAsFixed(2) ?? "--"}',
+      );
+    }
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       margin: const EdgeInsets.only(top: 4),

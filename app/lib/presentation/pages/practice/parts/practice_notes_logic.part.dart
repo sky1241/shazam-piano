@@ -15,6 +15,36 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
   // LOI V3: JUGE DE FRAPPE - Fonctions helper
   // ════════════════════════════════════════════════════════════════════════════
 
+  /// SESSION-075: Clamp MIDI to visible keyboard range by shifting octaves.
+  /// YIN suffers from "period doubling" and often detects 1-2 octaves too low.
+  /// This function shifts the detected MIDI to the closest octave within the keyboard.
+  /// Ex: keyboard=48-84, YIN detects 37 (C#2) → shift to 61 (C#4)
+  int _clampMidiToKeyboard(int midi) {
+    // Already in keyboard range
+    if (midi >= _displayFirstKey && midi <= _displayLastKey) {
+      return midi;
+    }
+
+    // Shift up by octaves until in range
+    int clamped = midi;
+    while (clamped < _displayFirstKey) {
+      clamped += 12;
+    }
+
+    // If now above range, shift down
+    while (clamped > _displayLastKey) {
+      clamped -= 12;
+    }
+
+    // Final check: if still out of range (keyboard < 1 octave), pick closest edge
+    if (clamped < _displayFirstKey) {
+      clamped = _displayFirstKey + (midi % 12);
+      if (clamped > _displayLastKey) clamped -= 12;
+    }
+
+    return clamped;
+  }
+
   /// Calcule la position Y d'une note - IDENTIQUE au painter (_FallingNotesPainter)
   /// [noteTimeSec] = note.start ou note.end selon ce qu'on calcule
   /// [elapsedSec] = temps écoulé actuel
@@ -159,9 +189,30 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
       //   - NO_FLASH si rapport_detection vide
       // ═══════════════════════════════════════════════════════════════════════
       if (_uiFeedbackEngine != null) {
+        // SESSION-075: Sync keyboard range to UIFeedbackEngine for ROUGE clamping
+        _uiFeedbackEngine!.setKeyboardRange(_displayFirstKey, _displayLastKey);
+
         // Rapport de détection (déjà best-guess par MicEngine)
-        final rawMidiForUi = _micEngine!.getRawMidiForUi(elapsed);
+        var rawMidiForUi = _micEngine!.getRawMidiForUi(elapsed);
         final rawConfForUi = _micEngine!.getRawConfForUi(elapsed) ?? 0.0;
+
+        // ═══════════════════════════════════════════════════════════════════
+        // SESSION-075: CLAMP MIDI TO VISIBLE KEYBOARD
+        // ═══════════════════════════════════════════════════════════════════
+        // YIN souffre de "period doubling" et détecte souvent 1-2 octaves trop bas.
+        // Solution: ramener le midi détecté à l'octave la plus proche dans le clavier.
+        // Ex: clavier=48-84, YIN détecte 37 (C#2) → ramener à 61 (C#4)
+        // ═══════════════════════════════════════════════════════════════════
+        if (rawMidiForUi != null) {
+          final originalMidi = rawMidiForUi;
+          rawMidiForUi = _clampMidiToKeyboard(rawMidiForUi);
+          if (kDebugMode && rawMidiForUi != originalMidi) {
+            debugPrint(
+              'MIDI_CLAMP_TO_KEYBOARD original=$originalMidi clamped=$rawMidiForUi '
+              'keyboard=[$_displayFirstKey..$_displayLastKey]',
+            );
+          }
+        }
 
         // Notes attendues actives (partition)
         final expectedMidis = _computeImpactNotes(elapsedSec: elapsed);
@@ -245,9 +296,11 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
               }
             } else {
               // V2: INCORRECT → FLASH_ROUGE
+              // SESSION-076: Pass expectedMidis for octave clamping
               _uiFeedbackEngine!.judgeFlashRouge(
                 midi: noteEstimee,
                 nowMs: elapsedMs.round(),
+                expectedMidis: expectedMidis,
               );
 
               if (kDebugMode) {

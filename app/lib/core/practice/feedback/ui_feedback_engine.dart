@@ -154,6 +154,85 @@ class UIFeedbackEngine {
   UIFeedbackState _state = UIFeedbackState.empty;
   UIFeedbackState get state => _state;
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // SESSION-075: KEYBOARD RANGE FOR CLAMP
+  // ══════════════════════════════════════════════════════════════════════════
+  // All ROUGE midis are clamped to this range to fix octave detection errors.
+  // YIN often detects 1-2 octaves too low/high due to "period doubling".
+  // ══════════════════════════════════════════════════════════════════════════
+  int _keyboardFirstKey = 21; // A0 (lowest piano key)
+  int _keyboardLastKey = 108; // C8 (highest piano key)
+
+  /// Configure the visible keyboard range for ROUGE clamping.
+  /// Call this when the keyboard layout is determined.
+  void setKeyboardRange(int firstKey, int lastKey) {
+    // Only log if values changed (avoid spam)
+    final changed = _keyboardFirstKey != firstKey || _keyboardLastKey != lastKey;
+    _keyboardFirstKey = firstKey;
+    _keyboardLastKey = lastKey;
+    if (kDebugMode && changed) {
+      debugPrint('UI_FEEDBACK_KEYBOARD_RANGE set to [$firstKey..$lastKey]');
+    }
+  }
+
+  /// Clamp a MIDI note to the visible keyboard range by shifting octaves.
+  int _clampMidiToKeyboard(int midi) {
+    if (midi >= _keyboardFirstKey && midi <= _keyboardLastKey) {
+      return midi;
+    }
+    int clamped = midi;
+    while (clamped < _keyboardFirstKey) {
+      clamped += 12;
+    }
+    while (clamped > _keyboardLastKey) {
+      clamped -= 12;
+    }
+    // Final safety check
+    if (clamped < _keyboardFirstKey || clamped > _keyboardLastKey) {
+      return midi; // Fallback to original if clamp failed
+    }
+    return clamped;
+  }
+
+  /// SESSION-076: Clamp a MIDI note to the octave of an expected note.
+  /// ONLY if detected MIDI has SAME pitch class (% 12) as an expected note.
+  /// This fixes YIN octave errors where E5 is detected as E6 (88 instead of 76).
+  /// SESSION-076b: REMOVED octave shift for different pitch classes - that created
+  /// phantom reds on notes the user never played (e.g., G5→G4 when F4 expected).
+  int _clampToExpectedOctave(int detectedMidi, Set<int> expectedMidis) {
+    if (expectedMidis.isEmpty) {
+      return detectedMidi; // No expected → keep as-is
+    }
+
+    final detectedPitchClass = detectedMidi % 12;
+
+    // Find expected note with same pitch class
+    for (final expected in expectedMidis) {
+      if (expected % 12 == detectedPitchClass) {
+        // Same pitch class! Snap to expected octave
+        // This fixes: YIN detects E6 (88) when user played E5 (76) and E5 was expected
+        if (kDebugMode && detectedMidi != expected) {
+          debugPrint(
+            'ROUGE_SNAP_TO_EXPECTED detected=$detectedMidi → expected=$expected '
+            '(same pitch class ${_pitchClassName(detectedPitchClass)})',
+          );
+        }
+        return expected;
+      }
+    }
+
+    // No pitch class match → KEEP ORIGINAL
+    // If user played G5 (79) when F4 (65) was expected, show red on G5 (79)
+    // NOT on G4 (67) which is a phantom note the user never touched!
+    return detectedMidi;
+  }
+
+  /// Helper: pitch class name for debug
+  String _pitchClassName(int pc) {
+    const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    return names[pc % 12];
+  }
+
   /// Dernière note BLEU avec son timestamp (pour debounce)
   int? _lastBlueMidi;
   int _lastBlueTimestampMs = 0;
@@ -678,23 +757,45 @@ class UIFeedbackEngine {
   /// Le JUGE a déjà décidé - cette méthode exécute sans logique supplémentaire
   /// SESSION-065: Met à jour _redMidiLastActiveMs pour le système de tolérance
   /// SESSION-066: MERGE au lieu de REMPLACER - garder les rouges récents (octave jumps)
-  void judgeFlashRouge({required int midi, required int nowMs}) {
+  /// SESSION-075: CLAMP all rouges to keyboard range (fixes octave detection errors)
+  /// SESSION-076: CLAMP to expected octave FIRST (fixes YIN harmonics: 88→76)
+  void judgeFlashRouge({
+    required int midi,
+    required int nowMs,
+    Set<int> expectedMidis = const {},
+  }) {
+    // SESSION-076: FIRST try to snap to expected octave (fixes harmonics)
+    // This handles YIN detecting E6 (88) when E5 (76) was played and expected
+    int clampedMidi = _clampToExpectedOctave(midi, expectedMidis);
+
+    // SESSION-075: THEN clamp to keyboard range as fallback
+    clampedMidi = _clampMidiToKeyboard(clampedMidi);
+
+    if (kDebugMode && clampedMidi != midi) {
+      debugPrint(
+        'ROUGE_CLAMP original=$midi → final=$clampedMidi '
+        'expected=$expectedMidis keyboard=[$_keyboardFirstKey..$_keyboardLastKey]',
+      );
+    }
+
     // SESSION-066: MERGE avec rouges récents au lieu de REMPLACER
-    // Problème: YIN saute entre octaves (61→73→62), le rouge disparaissait trop vite
-    // Solution: Garder tous les rouges encore dans la fenêtre de tolérance
+    // SESSION-076: Also clamp old reds to expected octave
     final recentReds = <int>{};
     for (final entry in _redMidiLastActiveMs.entries) {
       final elapsed = nowMs - entry.value;
       if (elapsed <= toleranceMicroCoupuresMs) {
-        recentReds.add(entry.key);
+        // SESSION-076: Clamp old reds to expected octave too
+        int clampedOld = _clampToExpectedOctave(entry.key, expectedMidis);
+        clampedOld = _clampMidiToKeyboard(clampedOld);
+        recentReds.add(clampedOld);
       }
     }
-    // Ajouter le nouveau rouge
-    recentReds.add(midi);
+    // Ajouter le nouveau rouge (déjà clampé)
+    recentReds.add(clampedMidi);
 
     // SESSION-066: Limiter à max 3 rouges pour éviter pollution visuelle
     final newRedMidis = recentReds.length > 3
-        ? {midi} // Fallback: si trop de rouges, garder seulement le nouveau
+        ? {clampedMidi} // Fallback: si trop de rouges, garder seulement le nouveau
         : recentReds;
 
     final newState = _state.copyWith(
@@ -705,13 +806,17 @@ class UIFeedbackEngine {
     _currentRedMidis = Set.from(newRedMidis);
 
     // SESSION-065: CRUCIAL - tracker le timestamp pour la tolérance
-    // Sans ça, le rouge serait effacé immédiatement par update(null)
-    _redMidiLastActiveMs[midi] = nowMs;
+    // SESSION-076: Track with CLAMPED midi
+    _redMidiLastActiveMs[clampedMidi] = nowMs;
+    // Clean up old unclamped entry if different
+    if (clampedMidi != midi) {
+      _redMidiLastActiveMs.remove(midi);
+    }
 
     onStateChanged?.call(_state);
 
     if (kDebugMode) {
-      debugPrint('JUDGE_FLASH_ROUGE midi=$midi nowMs=$nowMs redSet=$newRedMidis recentMerged=${recentReds.length}');
+      debugPrint('JUDGE_FLASH_ROUGE midi=$clampedMidi nowMs=$nowMs redSet=$newRedMidis recentMerged=${recentReds.length}');
     }
   }
 
