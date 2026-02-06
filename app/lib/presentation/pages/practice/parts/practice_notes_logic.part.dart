@@ -318,19 +318,39 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
                 );
               }
             } else {
-              // V2: INCORRECT → FLASH_ROUGE
-              // SESSION-076: Pass expectedMidis for octave clamping
-              _uiFeedbackEngine!.judgeFlashRouge(
-                midi: noteEstimee,
-                nowMs: elapsedMs.round(),
-                expectedMidis: expectedMidis,
-              );
-
-              if (kDebugMode) {
-                debugPrint(
-                  'JUDGE_OUT ts=${elapsedMs.round()} note_estimee=$noteEstimee '
-                  'verdict=INCORRECT flash=ROUGE touche=$noteEstimee',
+              // SESSION-079: LOW CONFIDENCE GATE FOR ROUGE
+              // At low confidence (e.g., 0.24), YIN detects noise/harmonics as notes
+              // Don't emit ROUGE if confidence is too low - treat as NO_VERDICT instead
+              if (rawConfForUi < _minConfidenceForRouge) {
+                // Confidence too low → skip ROUGE, show BLUE only
+                _uiFeedbackEngine!.update(
+                  detectedMidi: noteEstimee,
+                  confidence: rawConfForUi,
+                  expectedMidis: expectedMidis,
+                  nowMs: elapsedMs.round(),
                 );
+                if (kDebugMode) {
+                  debugPrint(
+                    'JUDGE_SKIP_ROUGE ts=${elapsedMs.round()} midi=$noteEstimee '
+                    'reason=low_confidence conf=${rawConfForUi.toStringAsFixed(2)} '
+                    'threshold=$_minConfidenceForRouge',
+                  );
+                }
+              } else {
+                // V2: INCORRECT → FLASH_ROUGE
+                // SESSION-076: Pass expectedMidis for octave clamping
+                _uiFeedbackEngine!.judgeFlashRouge(
+                  midi: noteEstimee,
+                  nowMs: elapsedMs.round(),
+                  expectedMidis: expectedMidis,
+                );
+
+                if (kDebugMode) {
+                  debugPrint(
+                    'JUDGE_OUT ts=${elapsedMs.round()} note_estimee=$noteEstimee '
+                    'verdict=INCORRECT flash=ROUGE touche=$noteEstimee conf=${rawConfForUi.toStringAsFixed(2)}',
+                  );
+                }
               }
             }
           }

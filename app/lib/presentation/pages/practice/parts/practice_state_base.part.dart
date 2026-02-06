@@ -145,6 +145,12 @@ abstract class _PracticePageStateBase extends ConsumerState<PracticePage>
   int _lastJudgeGreenTimestampMs = 0;
   final int _greenProtectionWindowMs = 500; // 500ms immunity after VERT (was 300ms)
 
+  // SESSION-079: Minimum confidence pour émettre ROUGE
+  // Problème: À faible confidence (0.24), YIN détecte du bruit/harmoniques comme notes
+  // Solution: Ne pas émettre ROUGE si confidence < seuil (traiter comme NO_VERDICT)
+  // 0.5 = seuil conservateur, évite les faux positifs sur bruit ambiant
+  final double _minConfidenceForRouge = 0.5;
+
   // Constantes gating audio
   // FIX BUG SESSION-005: Augmenter sensibilité micro (0.0020 → 0.0010)
   // Piano acoustique à 50cm dans pièce silencieuse = notes bien captées
