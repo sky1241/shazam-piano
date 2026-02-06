@@ -250,17 +250,39 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
           final noteEstimee = rawMidiForUi;
 
           // ═══════════════════════════════════════════════════════════════
-          // PHASE 2: Association frappe-note
-          // A1/A2: Chercher si note_estimée ∈ expectedMidis
+          // SESSION-077: NO VERDICT IF NO EXPECTED NOTES
+          // Si expectedMidis est vide, l'utilisateur joue entre les notes
+          // ou avant/après - ce n'est PAS une erreur, juste pas de verdict.
+          // On affiche en BLEU pour montrer la détection sans jugement.
           // ═══════════════════════════════════════════════════════════════
-          final hasMatch = expectedMidis.contains(noteEstimee);
+          if (expectedMidis.isEmpty) {
+            // Pas de note attendue → afficher BLEU (détection sans verdict)
+            _uiFeedbackEngine!.update(
+              detectedMidi: noteEstimee,
+              confidence: rawConfForUi,
+              expectedMidis: expectedMidis,
+              nowMs: elapsedMs.round(),
+            );
+            if (kDebugMode) {
+              debugPrint(
+                'JUDGE_NO_VERDICT ts=${elapsedMs.round()} midi=$noteEstimee '
+                'reason=no_expected_notes (playing between/before notes)',
+              );
+            }
+            // Continue to judgeUpdateCyan below (no verdict emitted)
+          } else {
+            // ═══════════════════════════════════════════════════════════════
+            // PHASE 2: Association frappe-note (ONLY when expectedMidis non-empty)
+            // A1/A2: Chercher si note_estimée ∈ expectedMidis
+            // ═══════════════════════════════════════════════════════════════
+            final hasMatch = expectedMidis.contains(noteEstimee);
 
-          // ═══════════════════════════════════════════════════════════════
-          // PHASE 3: Verdict et Flash
-          // V1: Si match → CORRECT → FLASH_VERT
-          // V2: Si no match → INCORRECT → FLASH_ROUGE
-          // ═══════════════════════════════════════════════════════════════
-          if (hasMatch) {
+            // ═══════════════════════════════════════════════════════════════
+            // PHASE 3: Verdict et Flash
+            // V1: Si match → CORRECT → FLASH_VERT
+            // V2: Si no match → INCORRECT → FLASH_ROUGE
+            // ═══════════════════════════════════════════════════════════════
+            if (hasMatch) {
             // V1: CORRECT → FLASH_VERT
             _uiFeedbackEngine!.judgeFlashVert(
               midi: noteEstimee,
@@ -278,9 +300,10 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
               );
             }
           } else {
-            // SESSION-066: GREEN PROTECTION WINDOW
-            // If this note was just VERT within the last 300ms, skip ROUGE
-            // This prevents "held note becomes wrong" visual flicker
+            // SESSION-066: GREEN PROTECTION WINDOW (Grace period for key release)
+            // SESSION-078: Increased 300→500ms for more forgiving release timing
+            // If this note was just VERT within _greenProtectionWindowMs, skip ROUGE
+            // This prevents "held note becomes wrong" - user still holding after window ends
             final timeSinceGreen = elapsedMs.round() - _lastJudgeGreenTimestampMs;
             final isProtected = _lastJudgeGreenMidi == noteEstimee &&
                 timeSinceGreen < _greenProtectionWindowMs;
@@ -311,6 +334,7 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
               }
             }
           }
+          } // End of else (expectedMidis non-empty)
 
           // Mettre à jour uniquement les cyan (notes attendues) sans écraser le verdict
           _uiFeedbackEngine!.judgeUpdateCyan(

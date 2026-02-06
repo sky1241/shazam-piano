@@ -728,10 +728,18 @@ class UIFeedbackEngine {
   /// Exécute un flash VERT ordonné par le JUGE (verdict CORRECT)
   /// Le JUGE a déjà décidé - cette méthode exécute sans logique supplémentaire
   /// SESSION-066: Clear _currentRedMidis pour éviter réapparition du rouge
+  /// SESSION-077: Set _previousGreenState et _validationActive pour protéger le vert
   void judgeFlashVert({required int midi, required int nowMs}) {
     _lastGreenMidi = midi;
     _lastGreenTimestampMs = nowMs;
     _greenCount++;
+
+    // SESSION-077: CRUCIAL - Protéger le vert contre effacement par update()
+    // Sans ça, le prochain update() avec tenueState=inconnue efface le vert!
+    // Ces flags permettent à P4 (NOOP) de maintenir le vert.
+    _previousGreenState = true;
+    _validationActive = true;
+    _validationLatchMidi = midi;
 
     // Mettre à jour l'état avec le flash vert
     final newState = _state.copyWith(

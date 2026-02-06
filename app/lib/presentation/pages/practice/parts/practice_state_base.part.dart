@@ -135,12 +135,15 @@ abstract class _PracticePageStateBase extends ConsumerState<PracticePage>
   int? _lastWrongMidi;
   DateTime? _lastWrongAt;
 
-  // SESSION-066: GREEN PROTECTION WINDOW
-  // Prevent ROUGE for a note that was just VERT (held note becomes wrong bug)
-  // If midi was green within this window, skip ROUGE to avoid visual flicker
+  // SESSION-066: GREEN PROTECTION WINDOW (Grace period for key release)
+  // SESSION-078: Increased 300→500ms for more forgiving release timing
+  // Problem: User plays note correctly, note window ends, user still holding key
+  //          → Without protection, system would flash ROUGE (held note becomes wrong)
+  // Solution: After VERT, skip ROUGE on same note for _greenProtectionWindowMs
+  // This allows natural key release without penalizing slightly late releases
   int? _lastJudgeGreenMidi;
   int _lastJudgeGreenTimestampMs = 0;
-  final int _greenProtectionWindowMs = 300; // 300ms immunity after VERT
+  final int _greenProtectionWindowMs = 500; // 500ms immunity after VERT (was 300ms)
 
   // Constantes gating audio
   // FIX BUG SESSION-005: Augmenter sensibilité micro (0.0020 → 0.0010)
