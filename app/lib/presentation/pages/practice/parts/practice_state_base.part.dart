@@ -151,6 +151,16 @@ abstract class _PracticePageStateBase extends ConsumerState<PracticePage>
   // 0.5 = seuil conservateur, évite les faux positifs sur bruit ambiant
   final double _minConfidenceForRouge = 0.5;
 
+  // SESSION-083: Extended sustain protection for all validated pitch classes
+  // Problem: User plays D# correctly (note 2), then plays wrong note for note 4.
+  //          The sustain of D# (still ringing) gets detected and judged as INCORRECT
+  //          because the expected note is now C, not D#. This causes a false ROUGE.
+  // Solution: Track ALL pitch classes that were validated as VERT (not just the last one)
+  //           and skip ROUGE if the detected pitch class matches a recent VERT.
+  // 3000ms timeout = typical piano sustain duration for medium-loud notes
+  final Map<int, int> _recentlyValidatedPitchClasses = {};
+  final int _sustainProtectionWindowMs = 3000;
+
   // Constantes gating audio
   // FIX BUG SESSION-005: Augmenter sensibilité micro (0.0020 → 0.0010)
   // Piano acoustique à 50cm dans pièce silencieuse = notes bien captées

@@ -299,6 +299,9 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
             _lastJudgeGreenMidi = noteEstimee;
             _lastJudgeGreenTimestampMs = elapsedMs.round();
 
+            // SESSION-083: Track pitch class for extended sustain protection
+            _recentlyValidatedPitchClasses[detectedPitchClass] = elapsedMs.round();
+
             if (kDebugMode) {
               debugPrint(
                 'JUDGE_OUT ts=${elapsedMs.round()} note_estimee=$noteEstimee '
@@ -314,6 +317,14 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
             final isProtected = _lastJudgeGreenMidi == noteEstimee &&
                 timeSinceGreen < _greenProtectionWindowMs;
 
+            // SESSION-083: Extended sustain protection for ANY recently validated pitch class
+            // Problem: D# validated at t=5532, sustain detected at t=8659 (3127ms later)
+            //          Expected note is now C, so D# sustain causes false ROUGE
+            // Solution: Check if pitch class was recently validated (within 3000ms)
+            final lastValidatedTime = _recentlyValidatedPitchClasses[detectedPitchClass];
+            final isSustainProtected = lastValidatedTime != null &&
+                (elapsedMs.round() - lastValidatedTime) < _sustainProtectionWindowMs;
+
             if (isProtected) {
               // Skip ROUGE - note is in green immunity window
               if (kDebugMode) {
@@ -321,6 +332,15 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
                   'JUDGE_SKIP_ROUGE ts=${elapsedMs.round()} midi=$noteEstimee '
                   'reason=green_protection timeSinceGreen=${timeSinceGreen}ms '
                   'window=${_greenProtectionWindowMs}ms',
+                );
+              }
+            } else if (isSustainProtected) {
+              // SESSION-083: Skip ROUGE - this is sustain of a previously correct note
+              if (kDebugMode) {
+                debugPrint(
+                  'JUDGE_SKIP_ROUGE ts=${elapsedMs.round()} midi=$noteEstimee pc=$detectedPitchClass '
+                  'reason=sustain_protection timeSinceValidated=${elapsedMs.round() - lastValidatedTime}ms '
+                  'window=${_sustainProtectionWindowMs}ms',
                 );
               }
             } else {
