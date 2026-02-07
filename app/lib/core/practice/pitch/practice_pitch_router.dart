@@ -349,8 +349,27 @@ class PracticePitchRouter {
     final yinMidi = yinResults.first.midi;
     final goertzelMidi = goertzelResults.first.midi;
 
-    // YIN confirms Goertzel (same note or within 1 semitone) → Goertzel wins
-    if ((yinMidi - goertzelMidi).abs() <= 1) {
+    // ══════════════════════════════════════════════════════════════════════════
+    // SESSION-081: Compare PITCH CLASS instead of absolute MIDI
+    // YIN often has octave errors (+1 to +2 octaves) even after disambiguateOctave.
+    // If YIN and Goertzel agree on pitch class (C, C#, D, etc.), they agree on the note.
+    // Example: Goertzel=C5(60), YIN=C6(72) → same pitch class (0), YIN confirms Goertzel.
+    // ══════════════════════════════════════════════════════════════════════════
+    final yinPitchClass = yinMidi % 12;
+    final goertzelPitchClass = goertzelMidi % 12;
+    final pitchClassDistance = (yinPitchClass - goertzelPitchClass).abs();
+    // Handle wrap-around (e.g., B=11 vs C=0 → distance should be 1, not 11)
+    final pitchClassDistanceWrapped =
+        pitchClassDistance > 6 ? 12 - pitchClassDistance : pitchClassDistance;
+
+    // YIN confirms Goertzel (same pitch class or within 1 semitone) → Goertzel wins
+    if (pitchClassDistanceWrapped <= 1) {
+      if (kDebugMode && yinMidi != goertzelMidi) {
+        debugPrint(
+          'ROUTER_OCTAVE_AGREE goertzelMidi=$goertzelMidi yinMidi=$yinMidi '
+          'pitchClass=$goertzelPitchClass → Goertzel wins (same pitch class, YIN octave error)',
+        );
+      }
       return goertzelResults;
     }
 

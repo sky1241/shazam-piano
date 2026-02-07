@@ -233,6 +233,18 @@ class UIFeedbackEngine {
     return names[pc % 12];
   }
 
+  /// SESSION-082: Check if midi matches any expected note by pitch class
+  /// Tolerates YIN octave errors: C5(60) matches C6(72) because both are pitch class 0
+  bool _matchesPitchClass(int midi, Set<int> expectedMidis) {
+    final detectedPitchClass = midi % 12;
+    for (final expected in expectedMidis) {
+      if (expected % 12 == detectedPitchClass) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// Dernière note BLEU avec son timestamp (pour debounce)
   int? _lastBlueMidi;
   int _lastBlueTimestampMs = 0;
@@ -570,17 +582,20 @@ class UIFeedbackEngine {
           );
         }
       }
-      // P4: Note correcte (match strict)
-      else if (expectedActif && effectiveExpectedMidis.contains(midi)) {
+      // P4: Note correcte (match by pitch class to tolerate YIN octave errors)
+      // SESSION-082: Compare PITCH CLASS instead of absolute MIDI
+      // YIN often has octave errors (+1 to +2 octaves). If the detected
+      // pitch class matches an expected pitch class, it's the correct note.
+      else if (expectedActif && _matchesPitchClass(midi, effectiveExpectedMidis)) {
         if (kDebugMode) {
-          debugPrint('RED_DECISION midi=$midi isMatch=true → CLEAR');
+          debugPrint('RED_DECISION midi=$midi isMatch=true (pitch class) → CLEAR');
         }
         // Ne pas ajouter au redMidis, nettoyer timestamp
         _redMidiLastActiveMs.remove(midi);
       }
       // P5: Mauvaise note tenue + expected actif
       else if (expectedActif &&
-          !effectiveExpectedMidis.contains(midi) &&
+          !_matchesPitchClass(midi, effectiveExpectedMidis) &&
           tenueState == TenueState.tenueConfirmee) {
         // SESSION-066: PRESERVE recent reds when pitch jumps octaves
         // Problem: YIN jumps 72→73→62, old reds were lost

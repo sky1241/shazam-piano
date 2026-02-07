@@ -275,7 +275,13 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
             // PHASE 2: Association frappe-note (ONLY when expectedMidis non-empty)
             // A1/A2: Chercher si note_estimée ∈ expectedMidis
             // ═══════════════════════════════════════════════════════════════
-            final hasMatch = expectedMidis.contains(noteEstimee);
+            // SESSION-082: Compare PITCH CLASS instead of absolute MIDI
+            // YIN often has octave errors (+1 to +2 octaves). If the detected
+            // pitch class matches an expected pitch class, it's the correct note.
+            // Example: expected=C5(60), detected=C6(72) → same pitch class (0) → MATCH
+            final expectedPitchClasses = expectedMidis.map((m) => m % 12).toSet();
+            final detectedPitchClass = noteEstimee % 12;
+            final hasMatch = expectedPitchClasses.contains(detectedPitchClass);
 
             // ═══════════════════════════════════════════════════════════════
             // PHASE 3: Verdict et Flash

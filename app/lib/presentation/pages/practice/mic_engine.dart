@@ -1631,7 +1631,17 @@ class MicEngine {
             _lastOnsetTriggerMsByPc[pitchClass] = elapsedMs;
           }
 
-          if (!isTriggerEvent && stabilityFrames < kPitchStabilityMinFrames) {
+          // SESSION-080: Also bypass stability filter for high-confidence Goertzel detections
+          // CAUSE: session-078 ONSET_PROBE + stabilityFrames=1 caused midi=70 conf=1.00 to be skipped
+          // PREUVE: HIT_DECISION result=REJECT reason=no_events_in_buffer (buffer was empty)
+          // FIX: Goertzel is already note-specific (only detects expected notes), so high conf means
+          //      the target note is definitely playing. No need for multi-frame stability.
+          final bool isHighConfGoertzel =
+              _router.lastMode == DetectionMode.goertzel && re.conf >= 0.75;
+
+          if (!isTriggerEvent &&
+              !isHighConfGoertzel &&
+              stabilityFrames < kPitchStabilityMinFrames) {
             if (kDebugMode && verboseDebug) {
               debugPrint(
                 'PITCH_STABILITY_SKIP midi=${re.midi} pc=$pitchClass '
@@ -1650,6 +1660,17 @@ class MicEngine {
               'STABILITY_BYPASS_TRIGGER midi=${re.midi} pc=$pitchClass '
               'frames=$stabilityFrames required=$kPitchStabilityMinFrames '
               't=${elapsedMs.toStringAsFixed(0)}ms reason=onset_trigger_gate',
+            );
+          }
+
+          // SESSION-080: Log when stability bypass is applied for high-confidence Goertzel
+          if (kDebugMode &&
+              isHighConfGoertzel &&
+              stabilityFrames < kPitchStabilityMinFrames) {
+            debugPrint(
+              'STABILITY_BYPASS_GOERTZEL midi=${re.midi} pc=$pitchClass '
+              'frames=$stabilityFrames conf=${re.conf.toStringAsFixed(2)} '
+              't=${elapsedMs.toStringAsFixed(0)}ms reason=high_conf_goertzel',
             );
           }
 
