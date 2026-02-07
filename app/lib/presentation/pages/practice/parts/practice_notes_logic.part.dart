@@ -289,14 +289,22 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
             // V2: Si no match → INCORRECT → FLASH_ROUGE
             // ═══════════════════════════════════════════════════════════════
             if (hasMatch) {
-            // V1: CORRECT → FLASH_VERT
+            // SESSION-084: Find the expected MIDI with matching pitch class
+            // Display VERT on the EXPECTED key, not the detected octave
+            // Bug: YIN detects A#6 (82) when expected is A#5 (70) - same pitch class
+            // Fix: Show green on 70 (expected), not 82 (detected)
+            final matchingExpectedMidi = expectedMidis.firstWhere(
+              (m) => m % 12 == detectedPitchClass,
+            );
+
+            // V1: CORRECT → FLASH_VERT on expected MIDI
             _uiFeedbackEngine!.judgeFlashVert(
-              midi: noteEstimee,
+              midi: matchingExpectedMidi,
               nowMs: elapsedMs.round(),
             );
 
-            // SESSION-066: Track green for protection window
-            _lastJudgeGreenMidi = noteEstimee;
+            // SESSION-066: Track green for protection window (use expected MIDI)
+            _lastJudgeGreenMidi = matchingExpectedMidi;
             _lastJudgeGreenTimestampMs = elapsedMs.round();
 
             // SESSION-083: Track pitch class for extended sustain protection
@@ -305,7 +313,8 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
             if (kDebugMode) {
               debugPrint(
                 'JUDGE_OUT ts=${elapsedMs.round()} note_estimee=$noteEstimee '
-                'verdict=CORRECT flash=VERT touche=$noteEstimee',
+                'verdict=CORRECT flash=VERT touche=$matchingExpectedMidi '
+                '(detected=$noteEstimee pc=$detectedPitchClass)',
               );
             }
           } else {
@@ -435,6 +444,18 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
                 hitMidi: decision.expectedMidi!,
                 nowMs: elapsedMs.round(),
               );
+
+              // SESSION-084: Update sustain protection map from HIT decisions path
+              // The JUDGE path might not have seen this detection (different timing/values)
+              // so we must also protect the validated pitch class here
+              final hitPitchClass = decision.expectedMidi! % 12;
+              _recentlyValidatedPitchClasses[hitPitchClass] = elapsedMs.round();
+              if (kDebugMode) {
+                debugPrint(
+                  'HIT_SUSTAIN_PROTECT ts=${elapsedMs.round()} midi=${decision.expectedMidi} '
+                  'pc=$hitPitchClass window=${_sustainProtectionWindowMs}ms',
+                );
+              }
 
               setState(() {}); // Rebuild HUD
             }
