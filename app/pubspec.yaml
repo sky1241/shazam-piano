@@ -84,6 +84,9 @@ dependencies:
   # Pitch Detection (YIN algorithm)
   pitch_detector_dart: ^0.0.7
 
+  # Device Info (for auto-detection)
+  device_info_plus: ^10.1.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

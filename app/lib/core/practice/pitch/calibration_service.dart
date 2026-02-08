@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import '../detection/room_detector.dart';
+import 'mic_tuning.dart';
 import 'pitch_services.dart';
 
 /// Result of a single calibration note measurement.
@@ -79,6 +81,8 @@ class CalibrationResult {
     required this.minRmsThreshold,
     required this.successRate,
     required this.recommendedAlgorithm,
+    this.reverbProfile,
+    this.roomDetectionConfidence,
   });
 
   /// Individual note measurements.
@@ -101,6 +105,12 @@ class CalibrationResult {
 
   /// Recommended pitch algorithm based on calibration.
   final PitchAlgorithm recommendedAlgorithm;
+
+  /// Detected room reverb profile (null if room detection was skipped).
+  final ReverbProfile? reverbProfile;
+
+  /// Confidence of the room detection (0.0-1.0, null if skipped).
+  final double? roomDetectionConfidence;
 
   /// Is calibration usable? (>50% success rate).
   bool get isUsable => successRate >= 0.5;
@@ -156,10 +166,17 @@ typedef CalibrationProgressCallback =
 /// - Determine optimal RMS threshold
 /// - Recommend MPM vs YIN based on results
 class CalibrationService {
-  CalibrationService({PitchDetectionService? pitchService})
-    : _pitchService = pitchService ?? PitchServiceFactory.createDefault();
+  CalibrationService({
+    PitchDetectionService? pitchService,
+    RoomDetector? roomDetector,
+  }) : _pitchService = pitchService ?? PitchServiceFactory.createDefault(),
+       _roomDetector = roomDetector ?? RoomDetector();
 
   final PitchDetectionService _pitchService;
+  final RoomDetector _roomDetector;
+
+  /// Detected room profile (cached from room detection phase).
+  RoomDetectionResult? _roomResult;
 
   // Calibration notes (9 notes across 3 octaves)
   static const List<int> calibrationNotes = [
@@ -196,18 +213,55 @@ class CalibrationService {
   ///
   /// [onProgress] is called with state updates.
   /// [audioStreamProvider] should yield audio chunks during listening.
+  /// [sampleRate] is required for room detection (default: 44100).
+  /// [detectRoom] if true, performs room acoustics detection using first note decay.
   ///
   /// Returns the calibration result when complete.
   Future<CalibrationResult> calibrate({
     required CalibrationProgressCallback onProgress,
     required Stream<Float32List> audioStream,
+    double sampleRate = 44100.0,
+    bool detectRoom = true,
   }) async {
     _progressCallback = onProgress;
     _measurements.clear();
     _currentNoteIndex = 0;
+    _roomResult = null;
 
     _setState(CalibrationState.preparing);
     await Future.delayed(const Duration(milliseconds: 500));
+
+    // SESSION-CALIBRATION: Room detection phase (using first note decay)
+    if (detectRoom) {
+      _setState(
+        CalibrationState.waitingForNote,
+        message: 'Jouez une note forte pour détecter l\'acoustique...',
+      );
+
+      try {
+        _roomResult = await _roomDetector.detectFromNoteDecay(
+          audioStream: audioStream,
+          sampleRate: sampleRate,
+          maxDuration: const Duration(seconds: 5),
+        );
+
+        _setState(
+          CalibrationState.processing,
+          message: 'Acoustique: ${_roomResult!.profile.name} '
+              '(decay: ${_roomResult!.decayTimeMs.toStringAsFixed(0)}ms)',
+        );
+        await Future.delayed(const Duration(milliseconds: 800));
+      } catch (e) {
+        // Fallback to medium if room detection fails
+        _roomResult = RoomDetectionResult(
+          profile: ReverbProfile.medium,
+          decayTimeMs: 500.0,
+          ambientNoiseRms: 0.0,
+          confidence: 0.3,
+          detectionMethod: 'fallback',
+        );
+      }
+    }
 
     // Process each calibration note
     for (int i = 0; i < calibrationNotes.length; i++) {
@@ -368,6 +422,8 @@ class CalibrationService {
         minRmsThreshold: 0.001,
         successRate: 0.0,
         recommendedAlgorithm: PitchAlgorithm.mpm,
+        reverbProfile: _roomResult?.profile,
+        roomDetectionConfidence: _roomResult?.confidence,
       );
     }
 
@@ -417,6 +473,8 @@ class CalibrationService {
       minRmsThreshold: minRmsThreshold,
       successRate: successRate,
       recommendedAlgorithm: recommendedAlgorithm,
+      reverbProfile: _roomResult?.profile,
+      roomDetectionConfidence: _roomResult?.confidence,
     );
   }
 

@@ -36,6 +36,10 @@ import 'controller/practice_controller.dart';
 import 'pitch_detector.dart';
 import 'mic_engine.dart' as mic;
 import '../../../core/practice/feedback/ui_feedback_engine.dart';
+import '../../../core/practice/persistence/calibration_storage.dart';
+import '../../../core/practice/detection/device_detector.dart';
+import '../../../core/practice/learning/session_analyzer.dart';
+import '../../../core/practice/learning/adaptive_parameters.dart';
 
 part 'parts/falling_notes_painter.part.dart';
 part 'parts/practice_models.part.dart';
@@ -1641,7 +1645,7 @@ class _PracticePageState extends _PracticePageStateBase
             ? (_micRmsSum / _micSampleCount).toStringAsFixed(4)
             : null,
         'sampleCount': _micSampleCount,
-        'absMinRms': _absMinRms.toStringAsFixed(4),
+        'absMinRms': _effectiveAbsMinRms.toStringAsFixed(4),
         'latencyCompSec': _micLatencyCompSec.toStringAsFixed(3),
         'scoringOffsetSec': _micScoringOffsetSec.toStringAsFixed(3),
       },

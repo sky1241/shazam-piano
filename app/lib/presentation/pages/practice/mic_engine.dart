@@ -617,6 +617,9 @@ class MicEngine {
 
   double? get lastFreqHz => _lastFreqHz;
   double? get lastRms => _lastRms;
+
+  /// SESSION-CALIBRATION: Expose arbiter stats for adaptive learning.
+  ArbiterStats get arbiterStats => _arbiter.stats;
   double? get lastConfidence => _lastConfidence;
   int? get lastMidi => _lastMidi;
 

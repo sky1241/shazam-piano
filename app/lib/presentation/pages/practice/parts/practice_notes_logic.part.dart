@@ -439,6 +439,14 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
               // SUSTAIN SCORING: Accumulate sustain ratio for precision calculation
               _cumulativeSustainRatio += decision.sustainRatio;
 
+              // SESSION-CALIBRATION: Collect HIT data for adaptive learning
+              if (decision.dtSec != null) {
+                _sessionHitTimingDtMs.add(decision.dtSec! * 1000.0);
+              }
+              if (decision.confidence != null) {
+                _sessionConfidences.add(decision.confidence!);
+              }
+
               // SESSION-057: Notify UIFeedbackEngine of HIT_VALIDÉ for green flash
               _uiFeedbackEngine?.notifyHit(
                 hitMidi: decision.expectedMidi!,

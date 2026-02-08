@@ -67,7 +67,78 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
       _initVideo();
       _loadNoteEvents(sessionId: _practiceSessionId);
       _loadSavedLatency();
+      _initCalibrationServices(); // SESSION-CALIBRATION: Initialize persistence
       _maybeShowPracticeInterstitial();
+    }
+  }
+
+  /// SESSION-CALIBRATION: Initialize calibration persistence and adaptive services.
+  Future<void> _initCalibrationServices() async {
+    if (_calibrationStorageInitialized) return;
+
+    try {
+      // Initialize storage
+      _calibrationStorage = CalibrationStorage();
+      await _calibrationStorage!.init();
+      _calibrationStorageInitialized = true;
+
+      // Initialize device detector
+      _deviceDetector = DeviceDetector();
+
+      // Detect device tier if not already saved
+      if (!_calibrationStorage!.hasDeviceTier()) {
+        final result = await _deviceDetector!.detect();
+        await _calibrationStorage!.saveDeviceTier(result.tier);
+        if (kDebugMode) {
+          debugPrint('SESSION-CALIBRATION: Device tier detected: ${result.tier.name}');
+        }
+      }
+
+      // Initialize adaptive parameter service
+      _adaptiveService = AdaptiveParameterService(storage: _calibrationStorage!);
+
+      if (kDebugMode) {
+        final tier = _calibrationStorage!.loadDeviceTier();
+        final hasCalibration = _calibrationStorage!.loadCalibrationResult() != null;
+        final adaptiveParams = await _adaptiveService!.loadParameters();
+        debugPrint(
+          'SESSION-CALIBRATION: Initialized - tier=${tier.name}, '
+          'hasCalibration=$hasCalibration, '
+          'adaptiveSessions=${adaptiveParams.sessionCount}',
+        );
+      }
+    } catch (e) {
+      debugPrint('SESSION-CALIBRATION: Init failed: $e');
+      // Fallback gracieux - l'app continue sans persistence
+      _calibrationStorageInitialized = false;
+    }
+  }
+
+  /// SESSION-CALIBRATION: Apply adaptive parameters before MicEngine creation.
+  Future<void> _applyAdaptiveParameters() async {
+    // Reset to base value
+    _effectiveAbsMinRms = _absMinRmsBase;
+
+    if (_adaptiveService == null) {
+      return; // Services not initialized, use base values
+    }
+
+    try {
+      final params = await _adaptiveService!.loadParameters();
+
+      // Apply RMS multiplier
+      _effectiveAbsMinRms = _absMinRmsBase * params.rmsMultiplier;
+
+      if (kDebugMode && params.rmsMultiplier != 1.0) {
+        debugPrint(
+          'SESSION-CALIBRATION: Applied adaptive params - '
+          'rmsBase=${_absMinRmsBase.toStringAsFixed(5)} × ${params.rmsMultiplier.toStringAsFixed(2)} '
+          '= ${_effectiveAbsMinRms.toStringAsFixed(5)}',
+        );
+      }
+    } catch (e) {
+      debugPrint('SESSION-CALIBRATION: Failed to apply adaptive params: $e');
+      // Fallback to base value (already set)
     }
   }
 
@@ -176,6 +247,9 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
     // LOI V3: Reset JUGE state for new session
     _judgeState = JudgeSessionState.active;
     _lastNoteEndSec = 0.0;
+    // SESSION-CALIBRATION: Reset learning collectors for new session
+    _sessionHitTimingDtMs.clear();
+    _sessionConfidences.clear();
     if (_videoController != null && _videoController!.value.isInitialized) {
       await _videoController!.pause();
       await _videoController!.seekTo(Duration.zero);
@@ -363,6 +437,9 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
     _lastWrongMidi = null;
     _lastWrongAt = null;
 
+    // SESSION-CALIBRATION: Apply adaptive parameters before creating MicEngine
+    await _applyAdaptiveParameters();
+
     // Initialize MicEngine NOW (after notes loaded, hitNotes synced)
     // Previously MicEngine was created before _hitNotes was populated, causing
     // SCORING_DESYNC ABORT and no hits / no key highlights.
@@ -385,9 +462,9 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
       },
       headWindowSec: _targetWindowHeadSec,
       tailWindowSec: _targetWindowTailSec,
-      // FIX BUG #10 (CASCADE): Use _absMinRms variable instead of hardcoded 0.0020
-      // Ensures single source of truth for RMS threshold (declared line 343)
-      absMinRms: _absMinRms,
+      // FIX BUG #10 (CASCADE): Use _effectiveAbsMinRms (includes adaptive adjustments)
+      // Ensures single source of truth for RMS threshold (declared in practice_state_base)
+      absMinRms: _effectiveAbsMinRms,
     );
     _micEngine!.reset('$sessionId');
 
@@ -673,8 +750,50 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
       }
     }
 
+    // SESSION-CALIBRATION: Apply adaptive learning from session stats
+    await _applySessionLearning();
+
     // FIX BUG 4: Mark video end time to prevent instant replay
     _lastVideoEndAt = DateTime.now();
+  }
+
+  /// SESSION-CALIBRATION: Collect session stats and apply adaptive learning.
+  Future<void> _applySessionLearning() async {
+    if (_adaptiveService == null || _micEngine == null) {
+      return; // Services not initialized
+    }
+
+    try {
+      // Get arbiter stats from MicEngine
+      final arbiterStats = _micEngine!.arbiterStats;
+
+      // Calculate session duration
+      final sessionDuration = _startTime != null
+          ? DateTime.now().difference(_startTime!)
+          : Duration.zero;
+
+      // Analyze session
+      final stats = _sessionAnalyzer.analyzeSession(
+        arbiterStats: arbiterStats,
+        sessionDuration: sessionDuration,
+        hitTimingDtMs: _sessionHitTimingDtMs.isNotEmpty
+            ? _sessionHitTimingDtMs
+            : null,
+        confidences: _sessionConfidences.isNotEmpty
+            ? _sessionConfidences
+            : null,
+      );
+
+      if (kDebugMode) {
+        debugPrint('SESSION-CALIBRATION: Session stats: $stats');
+      }
+
+      // Apply learning (adjustments are computed and saved internally)
+      await _adaptiveService!.applySessionLearning(stats: stats);
+    } catch (e) {
+      debugPrint('SESSION-CALIBRATION: Learning failed: $e');
+      // Fail silently - learning is optional
+    }
   }
 
   Future<void> _sendPracticeSession({

@@ -165,7 +165,9 @@ abstract class _PracticePageStateBase extends ConsumerState<PracticePage>
   // FIX BUG SESSION-005: Augmenter sensibilité micro (0.0020 → 0.0010)
   // Piano acoustique à 50cm dans pièce silencieuse = notes bien captées
   // 0.0010 permet de capter notes plus douces sans trop de faux positifs
-  final double _absMinRms = 0.0010;
+  final double _absMinRmsBase = 0.0010;
+  // SESSION-CALIBRATION: Effective RMS threshold (base × adaptive multiplier)
+  double _effectiveAbsMinRms = 0.0010;
   // ══════════════════════════════════════════════════════════════════════
 
   // Timebase continuity variables removed (clock-based simplified)
@@ -257,4 +259,28 @@ abstract class _PracticePageStateBase extends ConsumerState<PracticePage>
 
   int _displayFirstKey = _defaultFirstKey;
   int _displayLastKey = _defaultLastKey;
+
+  // ══════════════════════════════════════════════════════════════════════
+  // CALIBRATION PERSISTENCE & ADAPTIVE LEARNING (SESSION-CALIBRATION)
+  // ══════════════════════════════════════════════════════════════════════
+  /// Service de persistance de la calibration
+  CalibrationStorage? _calibrationStorage;
+
+  /// Service de détection du device tier
+  DeviceDetector? _deviceDetector;
+
+  /// Service de gestion des paramètres adaptatifs
+  AdaptiveParameterService? _adaptiveService;
+
+  /// Analyseur de session pour l'apprentissage
+  final SessionAnalyzer _sessionAnalyzer = const SessionAnalyzer();
+
+  /// Flag: calibration storage initialisé
+  bool _calibrationStorageInitialized = false;
+
+  /// Collecte des timing dt pour l'apprentissage (reset chaque session)
+  final List<double> _sessionHitTimingDtMs = [];
+
+  /// Collecte des confidences pour l'apprentissage (reset chaque session)
+  final List<double> _sessionConfidences = [];
 }
