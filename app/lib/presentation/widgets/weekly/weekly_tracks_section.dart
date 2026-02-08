@@ -37,10 +37,7 @@ class WeeklyTracksSection extends ConsumerWidget {
             children: [
               const Text('🎵', style: TextStyle(fontSize: 20)),
               const SizedBox(width: AppConstants.spacing8),
-              Text(
-                'Musiques de la semaine',
-                style: AppTextStyles.title,
-              ),
+              Text('Musiques de la semaine', style: AppTextStyles.title),
               const Spacer(),
               // Timer rotation
               Container(
@@ -95,10 +92,7 @@ class _TrackCard extends StatelessWidget {
   final FreeTrack track;
   final VoidCallback? onTap;
 
-  const _TrackCard({
-    required this.track,
-    this.onTap,
-  });
+  const _TrackCard({required this.track, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -106,16 +100,11 @@ class _TrackCard extends StatelessWidget {
       onTap: onTap,
       child: Container(
         width: 130,
-        margin: const EdgeInsets.symmetric(
-          horizontal: AppConstants.spacing4,
-        ),
+        margin: const EdgeInsets.symmetric(horizontal: AppConstants.spacing4),
         decoration: BoxDecoration(
           color: AppColors.card,
           borderRadius: BorderRadius.circular(AppConstants.radiusCard),
-          border: Border.all(
-            color: AppColors.divider,
-            width: 1,
-          ),
+          border: Border.all(color: AppColors.divider, width: 1),
         ),
         child: Padding(
           padding: const EdgeInsets.all(AppConstants.spacing12),

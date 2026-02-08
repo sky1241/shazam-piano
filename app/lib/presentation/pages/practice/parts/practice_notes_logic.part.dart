@@ -279,7 +279,9 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
             // YIN often has octave errors (+1 to +2 octaves). If the detected
             // pitch class matches an expected pitch class, it's the correct note.
             // Example: expected=C5(60), detected=C6(72) → same pitch class (0) → MATCH
-            final expectedPitchClasses = expectedMidis.map((m) => m % 12).toSet();
+            final expectedPitchClasses = expectedMidis
+                .map((m) => m % 12)
+                .toSet();
             final detectedPitchClass = noteEstimee % 12;
             final hasMatch = expectedPitchClasses.contains(detectedPitchClass);
 
@@ -289,106 +291,112 @@ mixin _PracticeNotesLogicMixin on _PracticePageStateBase {
             // V2: Si no match → INCORRECT → FLASH_ROUGE
             // ═══════════════════════════════════════════════════════════════
             if (hasMatch) {
-            // SESSION-084: Find the expected MIDI with matching pitch class
-            // Display VERT on the EXPECTED key, not the detected octave
-            // Bug: YIN detects A#6 (82) when expected is A#5 (70) - same pitch class
-            // Fix: Show green on 70 (expected), not 82 (detected)
-            final matchingExpectedMidi = expectedMidis.firstWhere(
-              (m) => m % 12 == detectedPitchClass,
-            );
-
-            // V1: CORRECT → FLASH_VERT on expected MIDI
-            _uiFeedbackEngine!.judgeFlashVert(
-              midi: matchingExpectedMidi,
-              nowMs: elapsedMs.round(),
-            );
-
-            // SESSION-066: Track green for protection window (use expected MIDI)
-            _lastJudgeGreenMidi = matchingExpectedMidi;
-            _lastJudgeGreenTimestampMs = elapsedMs.round();
-
-            // SESSION-083: Track pitch class for extended sustain protection
-            _recentlyValidatedPitchClasses[detectedPitchClass] = elapsedMs.round();
-
-            if (kDebugMode) {
-              debugPrint(
-                'JUDGE_OUT ts=${elapsedMs.round()} note_estimee=$noteEstimee '
-                'verdict=CORRECT flash=VERT touche=$matchingExpectedMidi '
-                '(detected=$noteEstimee pc=$detectedPitchClass)',
+              // SESSION-084: Find the expected MIDI with matching pitch class
+              // Display VERT on the EXPECTED key, not the detected octave
+              // Bug: YIN detects A#6 (82) when expected is A#5 (70) - same pitch class
+              // Fix: Show green on 70 (expected), not 82 (detected)
+              final matchingExpectedMidi = expectedMidis.firstWhere(
+                (m) => m % 12 == detectedPitchClass,
               );
-            }
-          } else {
-            // SESSION-066: GREEN PROTECTION WINDOW (Grace period for key release)
-            // SESSION-078: Increased 300→500ms for more forgiving release timing
-            // If this note was just VERT within _greenProtectionWindowMs, skip ROUGE
-            // This prevents "held note becomes wrong" - user still holding after window ends
-            final timeSinceGreen = elapsedMs.round() - _lastJudgeGreenTimestampMs;
-            final isProtected = _lastJudgeGreenMidi == noteEstimee &&
-                timeSinceGreen < _greenProtectionWindowMs;
 
-            // SESSION-083: Extended sustain protection for ANY recently validated pitch class
-            // Problem: D# validated at t=5532, sustain detected at t=8659 (3127ms later)
-            //          Expected note is now C, so D# sustain causes false ROUGE
-            // Solution: Check if pitch class was recently validated (within 3000ms)
-            final lastValidatedTime = _recentlyValidatedPitchClasses[detectedPitchClass];
-            final isSustainProtected = lastValidatedTime != null &&
-                (elapsedMs.round() - lastValidatedTime) < _sustainProtectionWindowMs;
+              // V1: CORRECT → FLASH_VERT on expected MIDI
+              _uiFeedbackEngine!.judgeFlashVert(
+                midi: matchingExpectedMidi,
+                nowMs: elapsedMs.round(),
+              );
 
-            if (isProtected) {
-              // Skip ROUGE - note is in green immunity window
+              // SESSION-066: Track green for protection window (use expected MIDI)
+              _lastJudgeGreenMidi = matchingExpectedMidi;
+              _lastJudgeGreenTimestampMs = elapsedMs.round();
+
+              // SESSION-083: Track pitch class for extended sustain protection
+              _recentlyValidatedPitchClasses[detectedPitchClass] = elapsedMs
+                  .round();
+
               if (kDebugMode) {
                 debugPrint(
-                  'JUDGE_SKIP_ROUGE ts=${elapsedMs.round()} midi=$noteEstimee '
-                  'reason=green_protection timeSinceGreen=${timeSinceGreen}ms '
-                  'window=${_greenProtectionWindowMs}ms',
-                );
-              }
-            } else if (isSustainProtected) {
-              // SESSION-083: Skip ROUGE - this is sustain of a previously correct note
-              if (kDebugMode) {
-                debugPrint(
-                  'JUDGE_SKIP_ROUGE ts=${elapsedMs.round()} midi=$noteEstimee pc=$detectedPitchClass '
-                  'reason=sustain_protection timeSinceValidated=${elapsedMs.round() - lastValidatedTime}ms '
-                  'window=${_sustainProtectionWindowMs}ms',
+                  'JUDGE_OUT ts=${elapsedMs.round()} note_estimee=$noteEstimee '
+                  'verdict=CORRECT flash=VERT touche=$matchingExpectedMidi '
+                  '(detected=$noteEstimee pc=$detectedPitchClass)',
                 );
               }
             } else {
-              // SESSION-079: LOW CONFIDENCE GATE FOR ROUGE
-              // At low confidence (e.g., 0.24), YIN detects noise/harmonics as notes
-              // Don't emit ROUGE if confidence is too low - treat as NO_VERDICT instead
-              if (rawConfForUi < _minConfidenceForRouge) {
-                // Confidence too low → skip ROUGE, show BLUE only
-                _uiFeedbackEngine!.update(
-                  detectedMidi: noteEstimee,
-                  confidence: rawConfForUi,
-                  expectedMidis: expectedMidis,
-                  nowMs: elapsedMs.round(),
-                );
+              // SESSION-066: GREEN PROTECTION WINDOW (Grace period for key release)
+              // SESSION-078: Increased 300→500ms for more forgiving release timing
+              // If this note was just VERT within _greenProtectionWindowMs, skip ROUGE
+              // This prevents "held note becomes wrong" - user still holding after window ends
+              final timeSinceGreen =
+                  elapsedMs.round() - _lastJudgeGreenTimestampMs;
+              final isProtected =
+                  _lastJudgeGreenMidi == noteEstimee &&
+                  timeSinceGreen < _greenProtectionWindowMs;
+
+              // SESSION-083: Extended sustain protection for ANY recently validated pitch class
+              // Problem: D# validated at t=5532, sustain detected at t=8659 (3127ms later)
+              //          Expected note is now C, so D# sustain causes false ROUGE
+              // Solution: Check if pitch class was recently validated (within 3000ms)
+              final lastValidatedTime =
+                  _recentlyValidatedPitchClasses[detectedPitchClass];
+              final isSustainProtected =
+                  lastValidatedTime != null &&
+                  (elapsedMs.round() - lastValidatedTime) <
+                      _sustainProtectionWindowMs;
+
+              if (isProtected) {
+                // Skip ROUGE - note is in green immunity window
                 if (kDebugMode) {
                   debugPrint(
                     'JUDGE_SKIP_ROUGE ts=${elapsedMs.round()} midi=$noteEstimee '
-                    'reason=low_confidence conf=${rawConfForUi.toStringAsFixed(2)} '
-                    'threshold=$_minConfidenceForRouge',
+                    'reason=green_protection timeSinceGreen=${timeSinceGreen}ms '
+                    'window=${_greenProtectionWindowMs}ms',
+                  );
+                }
+              } else if (isSustainProtected) {
+                // SESSION-083: Skip ROUGE - this is sustain of a previously correct note
+                if (kDebugMode) {
+                  debugPrint(
+                    'JUDGE_SKIP_ROUGE ts=${elapsedMs.round()} midi=$noteEstimee pc=$detectedPitchClass '
+                    'reason=sustain_protection timeSinceValidated=${elapsedMs.round() - lastValidatedTime}ms '
+                    'window=${_sustainProtectionWindowMs}ms',
                   );
                 }
               } else {
-                // V2: INCORRECT → FLASH_ROUGE
-                // SESSION-076: Pass expectedMidis for octave clamping
-                _uiFeedbackEngine!.judgeFlashRouge(
-                  midi: noteEstimee,
-                  nowMs: elapsedMs.round(),
-                  expectedMidis: expectedMidis,
-                );
-
-                if (kDebugMode) {
-                  debugPrint(
-                    'JUDGE_OUT ts=${elapsedMs.round()} note_estimee=$noteEstimee '
-                    'verdict=INCORRECT flash=ROUGE touche=$noteEstimee conf=${rawConfForUi.toStringAsFixed(2)}',
+                // SESSION-079: LOW CONFIDENCE GATE FOR ROUGE
+                // At low confidence (e.g., 0.24), YIN detects noise/harmonics as notes
+                // Don't emit ROUGE if confidence is too low - treat as NO_VERDICT instead
+                if (rawConfForUi < _minConfidenceForRouge) {
+                  // Confidence too low → skip ROUGE, show BLUE only
+                  _uiFeedbackEngine!.update(
+                    detectedMidi: noteEstimee,
+                    confidence: rawConfForUi,
+                    expectedMidis: expectedMidis,
+                    nowMs: elapsedMs.round(),
                   );
+                  if (kDebugMode) {
+                    debugPrint(
+                      'JUDGE_SKIP_ROUGE ts=${elapsedMs.round()} midi=$noteEstimee '
+                      'reason=low_confidence conf=${rawConfForUi.toStringAsFixed(2)} '
+                      'threshold=$_minConfidenceForRouge',
+                    );
+                  }
+                } else {
+                  // V2: INCORRECT → FLASH_ROUGE
+                  // SESSION-076: Pass expectedMidis for octave clamping
+                  _uiFeedbackEngine!.judgeFlashRouge(
+                    midi: noteEstimee,
+                    nowMs: elapsedMs.round(),
+                    expectedMidis: expectedMidis,
+                  );
+
+                  if (kDebugMode) {
+                    debugPrint(
+                      'JUDGE_OUT ts=${elapsedMs.round()} note_estimee=$noteEstimee '
+                      'verdict=INCORRECT flash=ROUGE touche=$noteEstimee conf=${rawConfForUi.toStringAsFixed(2)}',
+                    );
+                  }
                 }
               }
             }
-          }
           } // End of else (expectedMidis non-empty)
 
           // Mettre à jour uniquement les cyan (notes attendues) sans écraser le verdict

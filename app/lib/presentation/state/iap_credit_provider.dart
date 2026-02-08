@@ -82,8 +82,8 @@ class IAPCreditState {
 
 final iapCreditProvider =
     StateNotifierProvider<IAPCreditNotifier, IAPCreditState>((ref) {
-  return IAPCreditNotifier(ref);
-});
+      return IAPCreditNotifier(ref);
+    });
 
 class IAPCreditNotifier extends StateNotifier<IAPCreditState> {
   final Ref _ref;
@@ -121,10 +121,7 @@ class IAPCreditNotifier extends StateNotifier<IAPCreditState> {
         isInitialized: true,
       );
     } catch (e) {
-      state = state.copyWith(
-        isInitialized: true,
-        error: 'Init error: $e',
-      );
+      state = state.copyWith(isInitialized: true, error: 'Init error: $e');
     }
   }
 
@@ -170,10 +167,7 @@ class IAPCreditNotifier extends StateNotifier<IAPCreditState> {
       final purchaseParam = PurchaseParam(productDetails: product);
       await _iap.buyConsumable(purchaseParam: purchaseParam);
     } catch (e) {
-      state = state.copyWith(
-        isPurchasing: false,
-        error: 'Erreur achat: $e',
-      );
+      state = state.copyWith(isPurchasing: false, error: 'Erreur achat: $e');
     }
   }
 

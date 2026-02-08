@@ -155,9 +155,11 @@ class PracticeCalibration {
       sustainFilterMs:
           600.0, // SESSION-009: NEW - ignore previous note for 600ms
       // SESSION-065: 60ms allows trills up to 15 notes/s (research: 50-60ms optimal)
-      eventDebounceSec: 0.06, // 60ms debounce (was 0.08, research recommends 50-60ms)
+      eventDebounceSec:
+          0.06, // 60ms debounce (was 0.08, research recommends 50-60ms)
       // SESSION-065: 150ms more responsive (research: 100-150ms optimal)
-      wrongFlashCooldownSec: 0.15, // 150ms cooldown (was 0.25, research recommends 100-150ms)
+      wrongFlashCooldownSec:
+          0.15, // 150ms cooldown (was 0.25, research recommends 100-150ms)
       // Stability: prioritize reliability over speed
       minStabilityFrames: 1, // Keep at 1 (piano needs fast response)
       pitchWindowSize: 2048, // Standard buffer

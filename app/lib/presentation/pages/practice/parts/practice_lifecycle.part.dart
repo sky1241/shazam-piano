@@ -90,16 +90,21 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
         final result = await _deviceDetector!.detect();
         await _calibrationStorage!.saveDeviceTier(result.tier);
         if (kDebugMode) {
-          debugPrint('SESSION-CALIBRATION: Device tier detected: ${result.tier.name}');
+          debugPrint(
+            'SESSION-CALIBRATION: Device tier detected: ${result.tier.name}',
+          );
         }
       }
 
       // Initialize adaptive parameter service
-      _adaptiveService = AdaptiveParameterService(storage: _calibrationStorage!);
+      _adaptiveService = AdaptiveParameterService(
+        storage: _calibrationStorage!,
+      );
 
       if (kDebugMode) {
         final tier = _calibrationStorage!.loadDeviceTier();
-        final hasCalibration = _calibrationStorage!.loadCalibrationResult() != null;
+        final hasCalibration =
+            _calibrationStorage!.loadCalibrationResult() != null;
         final adaptiveParams = await _adaptiveService!.loadParameters();
         debugPrint(
           'SESSION-CALIBRATION: Initialized - tier=${tier.name}, '

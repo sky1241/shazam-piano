@@ -167,7 +167,8 @@ class UIFeedbackEngine {
   /// Call this when the keyboard layout is determined.
   void setKeyboardRange(int firstKey, int lastKey) {
     // Only log if values changed (avoid spam)
-    final changed = _keyboardFirstKey != firstKey || _keyboardLastKey != lastKey;
+    final changed =
+        _keyboardFirstKey != firstKey || _keyboardLastKey != lastKey;
     _keyboardFirstKey = firstKey;
     _keyboardLastKey = lastKey;
     if (kDebugMode && changed) {
@@ -229,7 +230,20 @@ class UIFeedbackEngine {
 
   /// Helper: pitch class name for debug
   String _pitchClassName(int pc) {
-    const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    const names = [
+      'C',
+      'C#',
+      'D',
+      'D#',
+      'E',
+      'F',
+      'F#',
+      'G',
+      'G#',
+      'A',
+      'A#',
+      'B',
+    ];
     return names[pc % 12];
   }
 
@@ -586,9 +600,12 @@ class UIFeedbackEngine {
       // SESSION-082: Compare PITCH CLASS instead of absolute MIDI
       // YIN often has octave errors (+1 to +2 octaves). If the detected
       // pitch class matches an expected pitch class, it's the correct note.
-      else if (expectedActif && _matchesPitchClass(midi, effectiveExpectedMidis)) {
+      else if (expectedActif &&
+          _matchesPitchClass(midi, effectiveExpectedMidis)) {
         if (kDebugMode) {
-          debugPrint('RED_DECISION midi=$midi isMatch=true (pitch class) → CLEAR');
+          debugPrint(
+            'RED_DECISION midi=$midi isMatch=true (pitch class) → CLEAR',
+          );
         }
         // Ne pas ajouter au redMidis, nettoyer timestamp
         _redMidiLastActiveMs.remove(midi);
@@ -613,8 +630,11 @@ class UIFeedbackEngine {
         if (redMidis.length > 3) {
           // Keep only the most recent 3
           final sorted = redMidis.toList()
-            ..sort((a, b) =>
-                (_redMidiLastActiveMs[b] ?? 0) - (_redMidiLastActiveMs[a] ?? 0));
+            ..sort(
+              (a, b) =>
+                  (_redMidiLastActiveMs[b] ?? 0) -
+                  (_redMidiLastActiveMs[a] ?? 0),
+            );
           redMidis.clear();
           redMidis.addAll(sorted.take(3));
         }
@@ -641,14 +661,19 @@ class UIFeedbackEngine {
         // SESSION-066: Limit to max 3 reds
         if (redMidis.length > 3) {
           final sorted = redMidis.toList()
-            ..sort((a, b) =>
-                (_redMidiLastActiveMs[b] ?? 0) - (_redMidiLastActiveMs[a] ?? 0));
+            ..sort(
+              (a, b) =>
+                  (_redMidiLastActiveMs[b] ?? 0) -
+                  (_redMidiLastActiveMs[a] ?? 0),
+            );
           redMidis.clear();
           redMidis.addAll(sorted.take(3));
         }
 
         if (kDebugMode) {
-          debugPrint('RED_GENERIC midi=$midi reason=no_expected_active redSet=$redMidis');
+          debugPrint(
+            'RED_GENERIC midi=$midi reason=no_expected_active redSet=$redMidis',
+          );
         }
       }
     }
@@ -818,13 +843,12 @@ class UIFeedbackEngine {
 
     // SESSION-066: Limiter à max 3 rouges pour éviter pollution visuelle
     final newRedMidis = recentReds.length > 3
-        ? {clampedMidi} // Fallback: si trop de rouges, garder seulement le nouveau
+        ? {
+            clampedMidi,
+          } // Fallback: si trop de rouges, garder seulement le nouveau
         : recentReds;
 
-    final newState = _state.copyWith(
-      redMidis: newRedMidis,
-      timestampMs: nowMs,
-    );
+    final newState = _state.copyWith(redMidis: newRedMidis, timestampMs: nowMs);
     _state = newState;
     _currentRedMidis = Set.from(newRedMidis);
 
@@ -839,16 +863,15 @@ class UIFeedbackEngine {
     onStateChanged?.call(_state);
 
     if (kDebugMode) {
-      debugPrint('JUDGE_FLASH_ROUGE midi=$clampedMidi nowMs=$nowMs redSet=$newRedMidis recentMerged=${recentReds.length}');
+      debugPrint(
+        'JUDGE_FLASH_ROUGE midi=$clampedMidi nowMs=$nowMs redSet=$newRedMidis recentMerged=${recentReds.length}',
+      );
     }
   }
 
   /// Met à jour uniquement les cyan (notes attendues) sans toucher vert/rouge
   /// Utilisé après judgeFlashVert/judgeFlashRouge pour maintenir l'affichage cyan
-  void judgeUpdateCyan({
-    required Set<int> expectedMidis,
-    required int nowMs,
-  }) {
+  void judgeUpdateCyan({required Set<int> expectedMidis, required int nowMs}) {
     final newState = _state.copyWith(
       cyanMidis: expectedMidis,
       timestampMs: nowMs,

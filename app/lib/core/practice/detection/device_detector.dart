@@ -48,7 +48,7 @@ class DeviceDetectionResult {
 /// et classifier automatiquement en lowEnd/midRange/highEnd.
 class DeviceDetector {
   DeviceDetector({DeviceInfoPlugin? deviceInfo})
-      : _deviceInfo = deviceInfo ?? DeviceInfoPlugin();
+    : _deviceInfo = deviceInfo ?? DeviceInfoPlugin();
 
   final DeviceInfoPlugin _deviceInfo;
 
@@ -255,8 +255,14 @@ class DeviceDetector {
     // Older → 2-3GB
 
     final brandLower = brand.toLowerCase();
-    final isBudgetBrand = ['xiaomi', 'redmi', 'realme', 'poco', 'oppo', 'vivo']
-        .contains(brandLower);
+    final isBudgetBrand = [
+      'xiaomi',
+      'redmi',
+      'realme',
+      'poco',
+      'oppo',
+      'vivo',
+    ].contains(brandLower);
 
     if (sdkInt >= 34) {
       return isBudgetBrand ? 4096 : 6144;

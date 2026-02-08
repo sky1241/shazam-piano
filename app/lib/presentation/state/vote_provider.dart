@@ -65,8 +65,7 @@ class VoteState {
 // Provider
 // ─────────────────────────────────────────────────────────
 
-final voteProvider =
-    StateNotifierProvider<VoteNotifier, VoteState>((ref) {
+final voteProvider = StateNotifierProvider<VoteNotifier, VoteState>((ref) {
   return VoteNotifier();
 });
 
@@ -98,14 +97,16 @@ class VoteNotifier extends StateNotifier<VoteState> {
       final selected = shuffled.take(8).toList();
 
       final candidates = selected
-          .map((t) => VoteCandidate(
-                trackId: t.id,
-                title: t.title,
-                composer: t.composer,
-                difficulty: t.difficulty,
-                voteCount: 0,
-                hasVoted: false,
-              ))
+          .map(
+            (t) => VoteCandidate(
+              trackId: t.id,
+              title: t.title,
+              composer: t.composer,
+              difficulty: t.difficulty,
+              voteCount: 0,
+              hasVoted: false,
+            ),
+          )
           .toList();
 
       // TODO: Charger les votes réels depuis Firestore
@@ -126,8 +127,9 @@ class VoteNotifier extends StateNotifier<VoteState> {
       // ... déterminer userVotesRemaining et hasVoted
 
       // Fin du vote = vendredi 18h (laisse le weekend pour la génération)
-      final votingEnds = rotation.startsAt
-          .add(const Duration(days: 4, hours: 18));
+      final votingEnds = rotation.startsAt.add(
+        const Duration(days: 4, hours: 18),
+      );
 
       state = state.copyWith(
         currentVote: WeeklyVote(
@@ -173,10 +175,7 @@ class VoteNotifier extends StateNotifier<VoteState> {
       if (state.currentVote != null) {
         final updatedCandidates = state.currentVote!.candidates.map((c) {
           if (c.trackId == trackId) {
-            return c.copyWith(
-              voteCount: c.voteCount + 1,
-              hasVoted: true,
-            );
+            return c.copyWith(voteCount: c.voteCount + 1, hasVoted: true);
           }
           return c;
         }).toList();
@@ -194,10 +193,7 @@ class VoteNotifier extends StateNotifier<VoteState> {
         );
       }
     } catch (e) {
-      state = state.copyWith(
-        isVoting: false,
-        error: 'Erreur vote: $e',
-      );
+      state = state.copyWith(isVoting: false, error: 'Erreur vote: $e');
     }
   }
 
@@ -207,10 +203,7 @@ class VoteNotifier extends StateNotifier<VoteState> {
     if (state.currentVote != null) {
       final updatedCandidates = state.currentVote!.candidates.map((c) {
         if (c.trackId == trackId && c.hasVoted) {
-          return c.copyWith(
-            voteCount: c.voteCount - 1,
-            hasVoted: false,
-          );
+          return c.copyWith(voteCount: c.voteCount - 1, hasVoted: false);
         }
         return c;
       }).toList();

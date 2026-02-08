@@ -73,8 +73,8 @@ class LeaderboardState {
 
 final leaderboardProvider =
     StateNotifierProvider<LeaderboardNotifier, LeaderboardState>((ref) {
-  return LeaderboardNotifier();
-});
+      return LeaderboardNotifier();
+    });
 
 class LeaderboardNotifier extends StateNotifier<LeaderboardState> {
   LeaderboardNotifier() : super(const LeaderboardState());
@@ -165,10 +165,7 @@ class LeaderboardNotifier extends StateNotifier<LeaderboardState> {
       //     .doc(uid)
       //     .set(entry.toFirestore(), SetOptions(merge: true));
 
-      state = state.copyWith(
-        isSubmitting: false,
-        userEntry: entry,
-      );
+      state = state.copyWith(isSubmitting: false, userEntry: entry);
 
       // Recharger le leaderboard pour avoir le rang à jour
       await loadLeaderboard(trackId);

@@ -13,7 +13,8 @@ abstract class _StorageKeys {
   static const String deviceTier = 'device_tier_v1';
   static const String reverbProfile = 'reverb_profile_v1';
   static const String adaptiveParams = 'adaptive_params_v1';
-  static const String lastCalibrationTimestamp = 'last_calibration_timestamp_v1';
+  static const String lastCalibrationTimestamp =
+      'last_calibration_timestamp_v1';
 }
 
 /// DTO for serializing [CalibrationNoteMeasurement].
@@ -161,8 +162,11 @@ class CalibrationResultDto {
   factory CalibrationResultDto.fromJson(Map<String, dynamic> json) {
     return CalibrationResultDto(
       measurements: (json['measurements'] as List<dynamic>)
-          .map((m) =>
-              CalibrationNoteMeasurementDto.fromJson(m as Map<String, dynamic>))
+          .map(
+            (m) => CalibrationNoteMeasurementDto.fromJson(
+              m as Map<String, dynamic>,
+            ),
+          )
           .toList(),
       avgLatencyMs: (json['avgLatencyMs'] as num).toDouble(),
       latencyStdDev: (json['latencyStdDev'] as num).toDouble(),
@@ -171,7 +175,8 @@ class CalibrationResultDto {
       successRate: (json['successRate'] as num).toDouble(),
       recommendedAlgorithm: json['recommendedAlgorithm'] as String,
       reverbProfile: json['reverbProfile'] as String?,
-      roomDetectionConfidence: (json['roomDetectionConfidence'] as num?)?.toDouble(),
+      roomDetectionConfidence: (json['roomDetectionConfidence'] as num?)
+          ?.toDouble(),
     );
   }
 
@@ -336,8 +341,9 @@ class CalibrationStorage {
   bool isCalibrationStale({Duration maxAge = const Duration(days: 30)}) {
     _ensureInitialized();
     try {
-      final timestampStr =
-          _prefs!.getString(_StorageKeys.lastCalibrationTimestamp);
+      final timestampStr = _prefs!.getString(
+        _StorageKeys.lastCalibrationTimestamp,
+      );
       if (timestampStr == null) return true;
       final timestamp = DateTime.parse(timestampStr);
       return DateTime.now().difference(timestamp) > maxAge;

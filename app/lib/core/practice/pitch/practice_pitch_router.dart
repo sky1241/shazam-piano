@@ -234,7 +234,9 @@ class PracticePitchRouter {
       _lastYinTimeSec = tSec;
 
       // Utiliser C4 (60) comme référence si pas de notes attendues
-      final refMidi = activeExpectedMidis.isNotEmpty ? activeExpectedMidis.first : 60;
+      final refMidi = activeExpectedMidis.isNotEmpty
+          ? activeExpectedMidis.first
+          : 60;
 
       yinResults = _detectWithYin(
         samples: samples,
@@ -359,8 +361,9 @@ class PracticePitchRouter {
     final goertzelPitchClass = goertzelMidi % 12;
     final pitchClassDistance = (yinPitchClass - goertzelPitchClass).abs();
     // Handle wrap-around (e.g., B=11 vs C=0 → distance should be 1, not 11)
-    final pitchClassDistanceWrapped =
-        pitchClassDistance > 6 ? 12 - pitchClassDistance : pitchClassDistance;
+    final pitchClassDistanceWrapped = pitchClassDistance > 6
+        ? 12 - pitchClassDistance
+        : pitchClassDistance;
 
     // YIN confirms Goertzel (same pitch class or within 1 semitone) → Goertzel wins
     if (pitchClassDistanceWrapped <= 1) {
@@ -633,11 +636,13 @@ class PracticePitchRouter {
     // Debug log (grep-friendly GOERTZEL_CALLED format)
     // SESSION-067: Show which detections are from adjacent octaves
     if (kDebugMode) {
-      final presentList = topNotes.map((e) {
-        final isAdjacent = !originalMidiSet.contains(e.key);
-        final tag = isAdjacent ? '*ADJ*' : '';
-        return '(${e.key}$tag,${e.value.toStringAsFixed(2)})';
-      }).join(',');
+      final presentList = topNotes
+          .map((e) {
+            final isAdjacent = !originalMidiSet.contains(e.key);
+            final tag = isAdjacent ? '*ADJ*' : '';
+            return '(${e.key}$tag,${e.value.toStringAsFixed(2)})';
+          })
+          .join(',');
       debugPrint(
         'GOERTZEL_CALLED targets=$activeExpectedMidis '
         'expanded=${expandedMidis.toList()} present=[$presentList]',

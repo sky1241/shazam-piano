@@ -79,9 +79,13 @@ class AdaptiveParameters {
     final adjustedLatency = base.latencyCompensationMs + latencyDeltaMs;
 
     // Appliquer le delta de clarté
-    final adjustedClarity = (base.clarityThreshold + clarityDelta).clamp(0.5, 0.95);
+    final adjustedClarity = (base.clarityThreshold + clarityDelta).clamp(
+      0.5,
+      0.95,
+    );
 
-    if (kDebugMode && (rmsMultiplier != 1.0 || latencyDeltaMs != 0 || clarityDelta != 0)) {
+    if (kDebugMode &&
+        (rmsMultiplier != 1.0 || latencyDeltaMs != 0 || clarityDelta != 0)) {
       debugPrint(
         'AdaptiveParameters.apply: rms ${base.absMinRms.toStringAsFixed(5)} '
         '-> ${adjustedRms.toStringAsFixed(5)} (×${rmsMultiplier.toStringAsFixed(2)}), '
@@ -297,7 +301,9 @@ class AdaptiveParameterService {
     await _saveParameters(newParams);
 
     if (kDebugMode) {
-      debugPrint('AdaptiveParameterService: Applied $adjustments -> $newParams');
+      debugPrint(
+        'AdaptiveParameterService: Applied $adjustments -> $newParams',
+      );
     }
   }
 

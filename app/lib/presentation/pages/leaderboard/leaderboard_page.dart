@@ -63,28 +63,24 @@ class _LeaderboardPageState extends ConsumerState<LeaderboardPage> {
           // Timer rotation
           Padding(
             padding: const EdgeInsets.only(right: AppConstants.spacing16),
-            child: Center(
-              child: _RotationTimer(),
-            ),
+            child: Center(child: _RotationTimer()),
           ),
         ],
       ),
       body: state.isLoading
           ? const Center(
-              child: CircularProgressIndicator(color: AppColors.primary))
+              child: CircularProgressIndicator(color: AppColors.primary),
+            )
           : state.error != null
-              ? _ErrorView(
-                  error: state.error!,
-                  onRetry: () => ref
-                      .read(leaderboardProvider.notifier)
-                      .loadLeaderboard(widget.trackId),
-                )
-              : state.hasEntries
-                  ? _LeaderboardList(
-                      entries: state.entries,
-                      userEntry: state.userEntry,
-                    )
-                  : _EmptyLeaderboard(),
+          ? _ErrorView(
+              error: state.error!,
+              onRetry: () => ref
+                  .read(leaderboardProvider.notifier)
+                  .loadLeaderboard(widget.trackId),
+            )
+          : state.hasEntries
+          ? _LeaderboardList(entries: state.entries, userEntry: state.userEntry)
+          : _EmptyLeaderboard(),
     );
   }
 }
@@ -128,10 +124,7 @@ class _LeaderboardList extends StatelessWidget {
   final List<LeaderboardEntry> entries;
   final LeaderboardEntry? userEntry;
 
-  const _LeaderboardList({
-    required this.entries,
-    this.userEntry,
-  });
+  const _LeaderboardList({required this.entries, this.userEntry});
 
   @override
   Widget build(BuildContext context) {
@@ -141,8 +134,7 @@ class _LeaderboardList extends StatelessWidget {
         if (entries.length >= 3) _Podium(top3: entries.take(3).toList()),
 
         // User rank highlight
-        if (userEntry != null)
-          _UserRankCard(entry: userEntry!),
+        if (userEntry != null) _UserRankCard(entry: userEntry!),
 
         // Reste du classement
         Expanded(
@@ -422,24 +414,16 @@ class _UserRankCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Text(
-            '🏆',
-            style: const TextStyle(fontSize: 24),
-          ),
+          Text('🏆', style: const TextStyle(fontSize: 24)),
           const SizedBox(width: AppConstants.spacing12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Votre classement',
-                  style: AppTextStyles.caption,
-                ),
+                Text('Votre classement', style: AppTextStyles.caption),
                 Text(
                   '#${entry.rank} — ${entry.scoreFormatted} pts',
-                  style: AppTextStyles.title.copyWith(
-                    color: AppColors.primary,
-                  ),
+                  style: AppTextStyles.title.copyWith(color: AppColors.primary),
                 ),
               ],
             ),
@@ -447,9 +431,10 @@ class _UserRankCard extends StatelessWidget {
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text(entry.comboText,
-                  style: AppTextStyles.caption
-                      .copyWith(color: AppColors.warning)),
+              Text(
+                entry.comboText,
+                style: AppTextStyles.caption.copyWith(color: AppColors.warning),
+              ),
               Text(entry.accuracyText, style: AppTextStyles.caption),
             ],
           ),
@@ -480,7 +465,9 @@ class _EmptyLeaderboard extends StatelessWidget {
             const SizedBox(height: AppConstants.spacing8),
             Text(
               'Soyez le premier à jouer et\nà apparaître au classement !',
-              style: AppTextStyles.body.copyWith(color: AppColors.textSecondary),
+              style: AppTextStyles.body.copyWith(
+                color: AppColors.textSecondary,
+              ),
               textAlign: TextAlign.center,
             ),
           ],
@@ -510,10 +497,7 @@ class _ErrorView extends StatelessWidget {
             const SizedBox(height: AppConstants.spacing16),
             Text(error, style: AppTextStyles.body, textAlign: TextAlign.center),
             const SizedBox(height: AppConstants.spacing16),
-            ElevatedButton(
-              onPressed: onRetry,
-              child: const Text('Réessayer'),
-            ),
+            ElevatedButton(onPressed: onRetry, child: const Text('Réessayer')),
           ],
         ),
       ),

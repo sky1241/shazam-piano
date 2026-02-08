@@ -44,15 +44,18 @@ class OnsetDetector {
   // SESSION-068: probeRmsRatio: 0.5→0.3 (more sensitive probe threshold)
   OnsetDetector({
     this.emaAlpha = 0.15,
-    this.onsetMinRms = 0.005, // SESSION-065: was 0.008, lowered for weak signals
+    this.onsetMinRms =
+        0.005, // SESSION-065: was 0.008, lowered for weak signals
     this.onsetDeltaAbsMin = 0.004,
     this.onsetDeltaRatioMin = 1.5, // SESSION-065: was 1.8, more sensitive
     this.onsetCooldownMs = 120, // SESSION-065: was 180, allows faster passages
     this.attackBurstMs = 200,
     this.maxEvalsPerBurst = 3,
-    this.probeIntervalMs = 100, // SESSION-068: was 200, 10 probes/s for fast sequences
+    this.probeIntervalMs =
+        100, // SESSION-068: was 200, 10 probes/s for fast sequences
     this.probeEnabled = true,
-    this.probeRmsRatio = 0.3, // SESSION-068: was 0.5 (implicit), lower threshold
+    this.probeRmsRatio =
+        0.3, // SESSION-068: was 0.5 (implicit), lower threshold
   });
 
   /// SESSION-016: Create OnsetDetector from MicTuning preset.
@@ -139,7 +142,8 @@ class OnsetDetector {
   // SESSION-068: Track last detected pitch for pitch-change re-trigger
   int? _lastDetectedMidi;
   double _lastPitchChangeMs = -10000.0;
-  static const double _pitchChangeCooldownMs = 80.0; // Min time between pitch-change triggers
+  static const double _pitchChangeCooldownMs =
+      80.0; // Min time between pitch-change triggers
   static const int _pitchChangeMinSemitones = 2; // Min semitone diff to trigger
 
   // SESSION-068: Force probes during warmup period even if no expected notes
@@ -315,7 +319,8 @@ class OnsetDetector {
     if (probeEnabled && hasExpectedNotes) {
       final msSinceProbe = nowMs - _lastProbeMs;
       // SESSION-068: Use configurable probeRmsRatio instead of hardcoded 0.5
-      if (msSinceProbe >= probeIntervalMs && rmsNow >= onsetMinRms * probeRmsRatio) {
+      if (msSinceProbe >= probeIntervalMs &&
+          rmsNow >= onsetMinRms * probeRmsRatio) {
         // Probe allowed - but very limited
         _lastProbeMs = nowMs;
 

@@ -70,23 +70,24 @@ class _VotePageState extends ConsumerState<VotePage> {
       ),
       body: state.isLoading
           ? const Center(
-              child: CircularProgressIndicator(color: AppColors.primary))
+              child: CircularProgressIndicator(color: AppColors.primary),
+            )
           : state.error != null
-              ? Center(child: Text(state.error!, style: AppTextStyles.body))
-              : state.currentVote == null
-                  ? const Center(child: Text('Pas de vote en cours'))
-                  : _VoteList(
-                      candidates: state.sortedCandidates,
-                      canVote: state.canVote,
-                      isVoting: state.isVoting,
-                      isVotingOpen: state.isVotingOpen,
-                      onVote: (trackId) {
-                        ref.read(voteProvider.notifier).vote(trackId);
-                      },
-                      onUnvote: (trackId) {
-                        ref.read(voteProvider.notifier).unvote(trackId);
-                      },
-                    ),
+          ? Center(child: Text(state.error!, style: AppTextStyles.body))
+          : state.currentVote == null
+          ? const Center(child: Text('Pas de vote en cours'))
+          : _VoteList(
+              candidates: state.sortedCandidates,
+              canVote: state.canVote,
+              isVoting: state.isVoting,
+              isVotingOpen: state.isVotingOpen,
+              onVote: (trackId) {
+                ref.read(voteProvider.notifier).vote(trackId);
+              },
+              onUnvote: (trackId) {
+                ref.read(voteProvider.notifier).unvote(trackId);
+              },
+            ),
     );
   }
 }
@@ -225,10 +226,7 @@ class _VoteCard extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                Text(
-                  candidate.composer,
-                  style: AppTextStyles.caption,
-                ),
+                Text(candidate.composer, style: AppTextStyles.caption),
               ],
             ),
           ),
@@ -257,10 +255,7 @@ class _VoteCard extends StatelessWidget {
           if (candidate.hasVoted && canUnvote)
             IconButton(
               onPressed: isVoting ? null : onUnvote,
-              icon: const Icon(
-                Icons.check_circle,
-                color: AppColors.primary,
-              ),
+              icon: const Icon(Icons.check_circle, color: AppColors.primary),
               tooltip: 'Annuler le vote',
             )
           else if (canVote)

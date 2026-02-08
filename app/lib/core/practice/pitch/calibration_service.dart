@@ -247,7 +247,8 @@ class CalibrationService {
 
         _setState(
           CalibrationState.processing,
-          message: 'Acoustique: ${_roomResult!.profile.name} '
+          message:
+              'Acoustique: ${_roomResult!.profile.name} '
               '(decay: ${_roomResult!.decayTimeMs.toStringAsFixed(0)}ms)',
         );
         await Future.delayed(const Duration(milliseconds: 800));

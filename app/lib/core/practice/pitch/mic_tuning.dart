@@ -323,8 +323,10 @@ class MicTuning {
           attackBurstMs: 250.0, // Longer burst (was 200)
           maxEvalsPerBurst: 4, // More evals to find stable pitch
           probeEnabled: true,
-          probeIntervalMs: 150.0, // SESSION-068: was 400, still slower than medium but faster
-          probeRmsRatio: 0.4, // SESSION-068: slightly higher for reverberant spaces
+          probeIntervalMs:
+              150.0, // SESSION-068: was 400, still slower than medium but faster
+          probeRmsRatio:
+              0.4, // SESSION-068: slightly higher for reverberant spaces
           // Cooldown / anti-tail - MORE CONSERVATIVE
           // SESSION-054: 220→100ms even for high reverb (need feedback)
           pitchClassCooldownMs: 100.0, // (was 160→220→100)

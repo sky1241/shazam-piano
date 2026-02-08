@@ -305,8 +305,8 @@ class SessionAnalyzer {
     }
 
     // Règle 3: Si beaucoup de gates sustain → indicateur mais pas d'ajustement auto
-    final sustainGateRatio = stats.gateBreakdown.sustain /
-        math.max(1, stats.gateBreakdown.total);
+    final sustainGateRatio =
+        stats.gateBreakdown.sustain / math.max(1, stats.gateBreakdown.total);
     if (sustainGateRatio > 0.3) {
       reasons.add(AdjustmentReason.highSustainGates);
       if (kDebugMode) {

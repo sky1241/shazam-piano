@@ -143,7 +143,8 @@ abstract class _PracticePageStateBase extends ConsumerState<PracticePage>
   // This allows natural key release without penalizing slightly late releases
   int? _lastJudgeGreenMidi;
   int _lastJudgeGreenTimestampMs = 0;
-  final int _greenProtectionWindowMs = 500; // 500ms immunity after VERT (was 300ms)
+  final int _greenProtectionWindowMs =
+      500; // 500ms immunity after VERT (was 300ms)
 
   // SESSION-079: Minimum confidence pour émettre ROUGE
   // Problème: À faible confidence (0.24), YIN détecte du bruit/harmoniques comme notes

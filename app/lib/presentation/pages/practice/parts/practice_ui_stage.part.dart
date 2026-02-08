@@ -86,7 +86,8 @@ mixin _PracticeUiStageMixin on _PracticePageStateBase {
 
     // SESSION-075: DEBUG log pour comparer avec S56_KEYBOARD
     // Ce log doit TOUJOURS matcher S56_KEYBOARD car ils lisent le même état
-    if (kDebugMode && (blueMidi != null || greenMidi != null || redMidis.isNotEmpty)) {
+    if (kDebugMode &&
+        (blueMidi != null || greenMidi != null || redMidis.isNotEmpty)) {
       debugPrint(
         'S56_OVERLAY blue=$blueMidi green=$greenMidi red=$redMidis '
         'cyan=$cyanMidis conf=${conf.toStringAsFixed(2)} '

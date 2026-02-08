@@ -103,8 +103,7 @@ class RoomDetector {
         return;
       }
 
-      final nowMs =
-          DateTime.now().difference(startTime).inMilliseconds;
+      final nowMs = DateTime.now().difference(startTime).inMilliseconds;
       final rms = _calculateRms(samples);
 
       rmsHistory.add(_RmsSample(timeMs: nowMs, rms: rms));
@@ -115,7 +114,8 @@ class RoomDetector {
           if (rms < _RoomThresholds.noteMinRms * 0.5) {
             noiseAccumulator.add(rms);
             if (noiseAccumulator.length >= 10) {
-              ambientNoiseRms = noiseAccumulator.reduce((a, b) => a + b) /
+              ambientNoiseRms =
+                  noiseAccumulator.reduce((a, b) => a + b) /
                   noiseAccumulator.length;
             }
           }
@@ -253,7 +253,8 @@ class RoomDetector {
       }
     }
 
-    final interval = sampleIntervalMs ?? 23.0; // ~44100 samples / 1024 = 43Hz ≈ 23ms
+    final interval =
+        sampleIntervalMs ?? 23.0; // ~44100 samples / 1024 = 43Hz ≈ 23ms
     return (decayIndex - peakIndex) * interval;
   }
 
@@ -314,11 +315,7 @@ class RoomDetector {
 }
 
 /// État interne de la détection.
-enum _DetectionState {
-  waitingForNote,
-  trackingPeak,
-  measuringDecay,
-}
+enum _DetectionState { waitingForNote, trackingPeak, measuringDecay }
 
 /// Sample RMS avec timestamp.
 class _RmsSample {

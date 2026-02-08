@@ -219,10 +219,7 @@ class VoteCandidate {
     this.hasVoted = false,
   });
 
-  VoteCandidate copyWith({
-    int? voteCount,
-    bool? hasVoted,
-  }) {
+  VoteCandidate copyWith({int? voteCount, bool? hasVoted}) {
     return VoteCandidate(
       trackId: trackId,
       title: title,

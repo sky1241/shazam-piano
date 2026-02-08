@@ -3371,7 +3371,8 @@ class MicEngine {
       // as WRONG_FREEPLAY and flash the detected key."
       // The outlier filter only applies when there ARE expected notes to compare against.
       // When empty, we let the event through (silenceGateOk will filter later).
-      if (activeExpectedMidis.isNotEmpty && minDeltaToExpected > maxSemitoneDeltaForWrong) {
+      if (activeExpectedMidis.isNotEmpty &&
+          minDeltaToExpected > maxSemitoneDeltaForWrong) {
         if (kDebugMode) {
           debugPrint(
             'WRONG_FLASH_DROP reason=outlier midi=${event.midi} '
@@ -3507,12 +3508,11 @@ class MicEngine {
         event: arbiterEvent,
         nowMs: now.millisecondsSinceEpoch.toDouble(),
         wrongFlashMinConf: wrongFlashMinConf,
-        lastWrongFlashAtMs:
-            _lastWrongFlashAt?.millisecondsSinceEpoch.toDouble(),
-        lastWrongFlashForMidiMs:
-            _lastWrongFlashByMidi[bestWrongEvent.midi]
-                ?.millisecondsSinceEpoch
-                .toDouble(),
+        lastWrongFlashAtMs: _lastWrongFlashAt?.millisecondsSinceEpoch
+            .toDouble(),
+        lastWrongFlashForMidiMs: _lastWrongFlashByMidi[bestWrongEvent.midi]
+            ?.millisecondsSinceEpoch
+            .toDouble(),
         wrongFlashEmittedThisTick: _wrongFlashEmittedThisTick,
       );
 

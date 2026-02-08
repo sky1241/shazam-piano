@@ -352,8 +352,9 @@ class GoertzelDetector {
     }
 
     // Apply Hann window if requested
-    final processedSamples =
-        applyHannWindow ? _applyHannWindow(samples) : samples;
+    final processedSamples = applyHannWindow
+        ? _applyHannWindow(samples)
+        : samples;
 
     // Candidate octaves to test
     // MIDI range for piano: 21 (A0) to 108 (C8)
@@ -403,7 +404,8 @@ class GoertzelDetector {
 
       // SESSION-069: Only consider correction if alternative has
       // significantly more power than the original (dominance check)
-      final isDominant = entry.value >= originalScore * octaveCorrectionDominance;
+      final isDominant =
+          entry.value >= originalScore * octaveCorrectionDominance;
 
       if (entry.value > bestScore && isDominant) {
         bestScore = entry.value;
@@ -412,8 +414,10 @@ class GoertzelDetector {
     }
 
     // Compute confidence (normalized score)
-    final confidence = (bestScore / (energy + 1e-12) * normalizationGain)
-        .clamp(0.0, 1.0);
+    final confidence = (bestScore / (energy + 1e-12) * normalizationGain).clamp(
+      0.0,
+      1.0,
+    );
 
     // Determine if correction occurred
     final wasCorrected = bestMidi != detectedMidi;

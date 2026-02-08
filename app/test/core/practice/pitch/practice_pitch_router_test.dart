@@ -104,23 +104,29 @@ void main() {
       // SESSION-076: Tests updated - YIN now runs first (SESSION-075) for rawMidiForUi
       // lastMode reflects the MERGE behavior, not which detector "won"
       // With chords, Goertzel results are used but YIN still runs for rawMidiForUi
-      test('two expected notes => detects chord (YIN runs for rawMidiForUi)', () {
-        final samples = _generateChord([261.63, 329.63], 2048, 44100);
+      test(
+        'two expected notes => detects chord (YIN runs for rawMidiForUi)',
+        () {
+          final samples = _generateChord([261.63, 329.63], 2048, 44100);
 
-        final events = router.decide(
-          samples: samples,
-          sampleRate: 44100,
-          activeExpectedMidis: [60, 64], // C4, E4
-          rms: 0.1,
-          tSec: 1.0,
-        );
+          final events = router.decide(
+            samples: samples,
+            sampleRate: 44100,
+            activeExpectedMidis: [60, 64], // C4, E4
+            rms: 0.1,
+            tSec: 1.0,
+          );
 
-        // SESSION-075: YIN runs first for rawMidiForUi, so lastMode is YIN
-        // But chord detection still works via Goertzel internally
-        expect(router.lastMode, isIn([DetectionMode.yin, DetectionMode.goertzel]));
-        // Detection should produce events for chord notes
-        expect(events, isNotEmpty);
-      });
+          // SESSION-075: YIN runs first for rawMidiForUi, so lastMode is YIN
+          // But chord detection still works via Goertzel internally
+          expect(
+            router.lastMode,
+            isIn([DetectionMode.yin, DetectionMode.goertzel]),
+          );
+          // Detection should produce events for chord notes
+          expect(events, isNotEmpty);
+        },
+      );
 
       test('three expected notes => detects chord', () {
         final samples = _generateChord([261.63, 329.63, 392.00], 2048, 44100);
@@ -134,7 +140,10 @@ void main() {
         );
 
         // SESSION-075: YIN runs first, lastMode may be YIN
-        expect(router.lastMode, isIn([DetectionMode.yin, DetectionMode.goertzel]));
+        expect(
+          router.lastMode,
+          isIn([DetectionMode.yin, DetectionMode.goertzel]),
+        );
         expect(events, isNotEmpty);
       });
     });
@@ -205,7 +214,10 @@ void main() {
 
         // SESSION-075: YIN runs first always, lastMode reflects merge behavior
         // The actual detection result matters more than lastMode
-        expect(routerHighYinConf.lastMode, isIn([DetectionMode.yin, DetectionMode.goertzel]));
+        expect(
+          routerHighYinConf.lastMode,
+          isIn([DetectionMode.yin, DetectionMode.goertzel]),
+        );
         // Goertzel still detected the note, so we have results
         if (events.isNotEmpty) {
           expect(events.first.midi, 69);
@@ -229,7 +241,10 @@ void main() {
 
         // SESSION-075: YIN runs first for rawMidiForUi, lastMode may be YIN
         // Chord detection still works via Goertzel internally
-        expect(router.lastMode, isIn([DetectionMode.yin, DetectionMode.goertzel]));
+        expect(
+          router.lastMode,
+          isIn([DetectionMode.yin, DetectionMode.goertzel]),
+        );
         // Should detect at least some of the chord notes
         expect(events.length, greaterThanOrEqualTo(1));
 
@@ -268,7 +283,10 @@ void main() {
         );
 
         // SESSION-075: YIN runs first, lastMode may be YIN
-        expect(router.lastMode, isIn([DetectionMode.yin, DetectionMode.goertzel]));
+        expect(
+          router.lastMode,
+          isIn([DetectionMode.yin, DetectionMode.goertzel]),
+        );
         expect(events, isEmpty);
       });
 
@@ -482,7 +500,10 @@ void main() {
         );
 
         // SESSION-075: YIN runs first for rawMidiForUi
-        expect(router.lastMode, isIn([DetectionMode.yin, DetectionMode.goertzel]));
+        expect(
+          router.lastMode,
+          isIn([DetectionMode.yin, DetectionMode.goertzel]),
+        );
       });
 
       test('lastMode persists between calls', () {
@@ -511,7 +532,10 @@ void main() {
           tSec: 2.0,
         );
         // SESSION-075: YIN runs first for rawMidiForUi
-        expect(router.lastMode, isIn([DetectionMode.yin, DetectionMode.goertzel]));
+        expect(
+          router.lastMode,
+          isIn([DetectionMode.yin, DetectionMode.goertzel]),
+        );
 
         // Third call: empty
         router.decide(
@@ -608,7 +632,10 @@ void main() {
         );
 
         // SESSION-075: YIN runs first for rawMidiForUi, even with chords
-        expect(router.lastMode, isIn([DetectionMode.yin, DetectionMode.goertzel]));
+        expect(
+          router.lastMode,
+          isIn([DetectionMode.yin, DetectionMode.goertzel]),
+        );
       });
 
       test('configurable confidence threshold', () {

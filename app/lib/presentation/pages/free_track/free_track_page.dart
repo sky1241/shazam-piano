@@ -31,9 +31,7 @@ class _FreeTrackPageState extends ConsumerState<FreeTrackPage> {
   void initState() {
     super.initState();
     Future.microtask(() {
-      ref
-          .read(leaderboardProvider.notifier)
-          .loadLeaderboard(widget.track.id);
+      ref.read(leaderboardProvider.notifier).loadLeaderboard(widget.track.id);
     });
   }
 
@@ -89,8 +87,11 @@ class _FreeTrackPageState extends ConsumerState<FreeTrackPage> {
                             style: AppTextStyles.caption,
                           ),
                           const SizedBox(width: 12),
-                          const Icon(Icons.timer_outlined,
-                              size: 12, color: AppColors.textSecondary),
+                          const Icon(
+                            Icons.timer_outlined,
+                            size: 12,
+                            color: AppColors.textSecondary,
+                          ),
                           const SizedBox(width: 4),
                           Text(
                             widget.track.durationFormatted,
@@ -124,7 +125,9 @@ class _FreeTrackPageState extends ConsumerState<FreeTrackPage> {
 
                   // ─── Preview vidéo ─────────────────────────
                   _SectionHeader(
-                      title: 'Preview', icon: Icons.play_circle_outline),
+                    title: 'Preview',
+                    icon: Icons.play_circle_outline,
+                  ),
                   const SizedBox(height: AppConstants.spacing8),
                   _VideoPreviewPlaceholder(level: _selectedLevel),
                   const SizedBox(height: AppConstants.spacing24),
@@ -212,10 +215,7 @@ class _SectionHeader extends StatelessWidget {
         Icon(icon, size: 18, color: AppColors.primary),
         const SizedBox(width: AppConstants.spacing8),
         Text(title, style: AppTextStyles.title),
-        if (trailing != null) ...[
-          const Spacer(),
-          trailing!,
-        ],
+        if (trailing != null) ...[const Spacer(), trailing!],
       ],
     );
   }
@@ -254,9 +254,7 @@ class _LevelSelector extends StatelessWidget {
                     : AppColors.card,
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                  color: isSelected
-                      ? AppColors.primary
-                      : AppColors.divider,
+                  color: isSelected ? AppColors.primary : AppColors.divider,
                 ),
               ),
               child: Column(
@@ -265,8 +263,9 @@ class _LevelSelector extends StatelessWidget {
                     '$level',
                     style: AppTextStyles.body.copyWith(
                       fontWeight: FontWeight.bold,
-                      color:
-                          isSelected ? AppColors.primary : AppColors.textPrimary,
+                      color: isSelected
+                          ? AppColors.primary
+                          : AppColors.textPrimary,
                     ),
                   ),
                   Text(
@@ -319,10 +318,7 @@ class _VideoPreviewPlaceholder extends StatelessWidget {
               ),
             ),
             const SizedBox(height: AppConstants.spacing8),
-            Text(
-              'Preview Niveau $level',
-              style: AppTextStyles.body,
-            ),
+            Text('Preview Niveau $level', style: AppTextStyles.body),
             Text(
               '${AppConstants.previewDurationSec}s • Gratuit',
               style: AppTextStyles.caption,
@@ -399,18 +395,14 @@ class _LeaderboardPreview extends StatelessWidget {
                       bottom: BorderSide(color: AppColors.divider, width: 0.5),
                     )
                   : null,
-              color: isUser
-                  ? AppColors.primary.withValues(alpha: 0.1)
-                  : null,
+              color: isUser ? AppColors.primary.withValues(alpha: 0.1) : null,
             ),
             child: Row(
               children: [
                 SizedBox(
                   width: 24,
                   child: Text(
-                    rank <= 3
-                        ? ['🥇', '🥈', '🥉'][rank - 1]
-                        : '#$rank',
+                    rank <= 3 ? ['🥇', '🥈', '🥉'][rank - 1] : '#$rank',
                     style: AppTextStyles.caption.copyWith(fontSize: 11),
                   ),
                 ),
@@ -457,9 +449,7 @@ class _BottomBar extends StatelessWidget {
       padding: const EdgeInsets.all(AppConstants.spacing16),
       decoration: const BoxDecoration(
         color: AppColors.surface,
-        border: Border(
-          top: BorderSide(color: AppColors.divider),
-        ),
+        border: Border(top: BorderSide(color: AppColors.divider)),
       ),
       child: SafeArea(
         child: Row(
@@ -480,8 +470,9 @@ class _BottomBar extends StatelessWidget {
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
-                    borderRadius:
-                        BorderRadius.circular(AppConstants.radiusButton),
+                    borderRadius: BorderRadius.circular(
+                      AppConstants.radiusButton,
+                    ),
                   ),
                 ),
                 child: const Row(
