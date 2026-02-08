@@ -19,7 +19,10 @@ class WeeklyTracksSection extends ConsumerWidget {
   /// Callback quand l'utilisateur tape sur une musique
   final void Function(FreeTrack track)? onTrackTap;
 
-  const WeeklyTracksSection({super.key, this.onTrackTap});
+  /// Callback quand l'utilisateur tape sur le bouton vote
+  final VoidCallback? onVoteTap;
+
+  const WeeklyTracksSection({super.key, this.onTrackTap, this.onVoteTap});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -39,6 +42,30 @@ class WeeklyTracksSection extends ConsumerWidget {
               const SizedBox(width: AppConstants.spacing8),
               Text('Musiques de la semaine', style: AppTextStyles.title),
               const Spacer(),
+              // Vote button
+              if (onVoteTap != null)
+                GestureDetector(
+                  onTap: onVoteTap,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppConstants.spacing8,
+                      vertical: AppConstants.spacing4,
+                    ),
+                    margin: const EdgeInsets.only(right: AppConstants.spacing8),
+                    decoration: BoxDecoration(
+                      color: AppColors.warning.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      '🗳️ Voter',
+                      style: AppTextStyles.caption.copyWith(
+                        color: AppColors.warning,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
               // Timer rotation
               Container(
                 padding: const EdgeInsets.symmetric(

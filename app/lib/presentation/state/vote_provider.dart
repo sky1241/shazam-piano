@@ -2,13 +2,14 @@
 ///
 /// Gère le système de vote communautaire pour choisir les musiques
 /// de la semaine suivante.
-///
-/// NOT connected to existing code. Ready to be integrated.
 library;
 
 import 'dart:async';
 import 'dart:math';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/music/models.dart';
@@ -72,6 +73,15 @@ final voteProvider = StateNotifierProvider<VoteNotifier, VoteState>((ref) {
 class VoteNotifier extends StateNotifier<VoteState> {
   VoteNotifier() : super(const VoteState());
 
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  String? get _currentUserId => FirebaseAuth.instance.currentUser?.uid;
+
+  /// Generate document ID for vote: vote_{week}_{year}
+  String _voteDocId(int weekNumber, int year) {
+    return 'vote_${weekNumber}_$year';
+  }
+
   /// Charger le vote de la semaine courante
   ///
   /// Les candidats sont les musiques qui NE SONT PAS dans la rotation
@@ -96,7 +106,8 @@ class VoteNotifier extends StateNotifier<VoteState> {
       shuffled.shuffle(Random(seed));
       final selected = shuffled.take(8).toList();
 
-      final candidates = selected
+      // Build initial candidates list
+      var candidates = selected
           .map(
             (t) => VoteCandidate(
               trackId: t.id,
@@ -109,27 +120,53 @@ class VoteNotifier extends StateNotifier<VoteState> {
           )
           .toList();
 
-      // TODO: Charger les votes réels depuis Firestore
-      // final voteDocId = 'vote_${rotation.weekNumber}_${rotation.year}';
-      // final voteDoc = await FirebaseFirestore.instance
-      //     .collection('votes')
-      //     .doc(voteDocId)
-      //     .get();
-      // ... merger les voteCount réels avec les candidats
+      // Load vote counts from Firestore
+      final voteDocId = _voteDocId(rotation.weekNumber, rotation.year);
+      final voteDoc = await _firestore.collection('votes').doc(voteDocId).get();
 
-      // TODO: Charger les votes de l'utilisateur
-      // final userVotesDoc = await FirebaseFirestore.instance
-      //     .collection('votes')
-      //     .doc(voteDocId)
-      //     .collection('user_votes')
-      //     .doc(currentUserId)
-      //     .get();
-      // ... déterminer userVotesRemaining et hasVoted
+      if (voteDoc.exists) {
+        final voteData = voteDoc.data() ?? {};
+        candidates = candidates.map((c) {
+          final count = voteData[c.trackId] as int? ?? 0;
+          return c.copyWith(voteCount: count);
+        }).toList();
+      }
+
+      // Load user's votes
+      int userVotesRemaining = 3;
+      final userId = _currentUserId;
+      if (userId != null) {
+        final userVotesDoc = await _firestore
+            .collection('votes')
+            .doc(voteDocId)
+            .collection('user_votes')
+            .doc(userId)
+            .get();
+
+        if (userVotesDoc.exists) {
+          final userVoteData = userVotesDoc.data() ?? {};
+          final votedTrackIds = userVoteData.keys.toSet();
+          userVotesRemaining = 3 - votedTrackIds.length;
+
+          candidates = candidates.map((c) {
+            if (votedTrackIds.contains(c.trackId)) {
+              return c.copyWith(hasVoted: true);
+            }
+            return c;
+          }).toList();
+        }
+      }
 
       // Fin du vote = vendredi 18h (laisse le weekend pour la génération)
       final votingEnds = rotation.startsAt.add(
         const Duration(days: 4, hours: 18),
       );
+
+      if (kDebugMode) {
+        debugPrint(
+          'VOTE: Loaded ${candidates.length} candidates for $voteDocId',
+        );
+      }
 
       state = state.copyWith(
         currentVote: WeeklyVote(
@@ -140,9 +177,12 @@ class VoteNotifier extends StateNotifier<VoteState> {
           votingEndsAt: votingEnds,
         ),
         isLoading: false,
-        userVotesRemaining: 3,
+        userVotesRemaining: userVotesRemaining,
       );
     } catch (e) {
+      if (kDebugMode) {
+        debugPrint('VOTE: Load error: $e');
+      }
       state = state.copyWith(
         isLoading: false,
         error: 'Erreur chargement vote: $e',
@@ -154,22 +194,36 @@ class VoteNotifier extends StateNotifier<VoteState> {
   Future<void> vote(String trackId) async {
     if (!state.canVote) return;
 
+    final userId = _currentUserId;
+    if (userId == null) {
+      state = state.copyWith(error: 'Connectez-vous pour voter');
+      return;
+    }
+
     state = state.copyWith(isVoting: true, clearError: true);
 
     try {
-      // TODO: Écrire le vote dans Firestore
-      // final voteDocId = 'vote_${state.currentVote!.weekNumber}_${state.currentVote!.year}';
-      // await FirebaseFirestore.instance
-      //     .collection('votes')
-      //     .doc(voteDocId)
-      //     .update({'$trackId': FieldValue.increment(1)});
-      //
-      // await FirebaseFirestore.instance
-      //     .collection('votes')
-      //     .doc(voteDocId)
-      //     .collection('user_votes')
-      //     .doc(currentUserId)
-      //     .set({trackId: true}, SetOptions(merge: true));
+      final voteDocId = _voteDocId(
+        state.currentVote!.weekNumber,
+        state.currentVote!.year,
+      );
+
+      // Increment vote count atomically
+      await _firestore.collection('votes').doc(voteDocId).set({
+        trackId: FieldValue.increment(1),
+      }, SetOptions(merge: true));
+
+      // Record user's vote
+      await _firestore
+          .collection('votes')
+          .doc(voteDocId)
+          .collection('user_votes')
+          .doc(userId)
+          .set({trackId: true}, SetOptions(merge: true));
+
+      if (kDebugMode) {
+        debugPrint('VOTE: User $userId voted for $trackId');
+      }
 
       // Mettre à jour le state localement
       if (state.currentVote != null) {
@@ -193,31 +247,68 @@ class VoteNotifier extends StateNotifier<VoteState> {
         );
       }
     } catch (e) {
+      if (kDebugMode) {
+        debugPrint('VOTE: Vote error: $e');
+      }
       state = state.copyWith(isVoting: false, error: 'Erreur vote: $e');
     }
   }
 
   /// Annuler un vote
   Future<void> unvote(String trackId) async {
-    // TODO: Similaire à vote() mais en décrémentant
-    if (state.currentVote != null) {
-      final updatedCandidates = state.currentVote!.candidates.map((c) {
-        if (c.trackId == trackId && c.hasVoted) {
-          return c.copyWith(voteCount: c.voteCount - 1, hasVoted: false);
-        }
-        return c;
-      }).toList();
+    final userId = _currentUserId;
+    if (userId == null) return;
 
-      state = state.copyWith(
-        currentVote: WeeklyVote(
-          weekNumber: state.currentVote!.weekNumber,
-          year: state.currentVote!.year,
-          candidates: updatedCandidates,
-          maxVotes: state.currentVote!.maxVotes,
-          votingEndsAt: state.currentVote!.votingEndsAt,
-        ),
-        userVotesRemaining: state.userVotesRemaining + 1,
+    state = state.copyWith(isVoting: true, clearError: true);
+
+    try {
+      final voteDocId = _voteDocId(
+        state.currentVote!.weekNumber,
+        state.currentVote!.year,
       );
+
+      // Decrement vote count atomically
+      await _firestore.collection('votes').doc(voteDocId).set({
+        trackId: FieldValue.increment(-1),
+      }, SetOptions(merge: true));
+
+      // Remove user's vote
+      await _firestore
+          .collection('votes')
+          .doc(voteDocId)
+          .collection('user_votes')
+          .doc(userId)
+          .update({trackId: FieldValue.delete()});
+
+      if (kDebugMode) {
+        debugPrint('VOTE: User $userId unvoted $trackId');
+      }
+
+      if (state.currentVote != null) {
+        final updatedCandidates = state.currentVote!.candidates.map((c) {
+          if (c.trackId == trackId && c.hasVoted) {
+            return c.copyWith(voteCount: c.voteCount - 1, hasVoted: false);
+          }
+          return c;
+        }).toList();
+
+        state = state.copyWith(
+          currentVote: WeeklyVote(
+            weekNumber: state.currentVote!.weekNumber,
+            year: state.currentVote!.year,
+            candidates: updatedCandidates,
+            maxVotes: state.currentVote!.maxVotes,
+            votingEndsAt: state.currentVote!.votingEndsAt,
+          ),
+          isVoting: false,
+          userVotesRemaining: state.userVotesRemaining + 1,
+        );
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('VOTE: Unvote error: $e');
+      }
+      state = state.copyWith(isVoting: false, error: 'Erreur annulation: $e');
     }
   }
 }

@@ -2,12 +2,12 @@
 ///
 /// Gère le leaderboard global par musique par semaine.
 /// Utilise Firestore pour le stockage.
-///
-/// NOT connected to existing code. Ready to be integrated.
 library;
 
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/music/models.dart';
@@ -79,11 +79,13 @@ final leaderboardProvider =
 class LeaderboardNotifier extends StateNotifier<LeaderboardState> {
   LeaderboardNotifier() : super(const LeaderboardState());
 
-  // Note: _docId will be used when Firestore integration is complete.
-  // String _docId(String trackId) {
-  //   final rotation = RotationService.getCurrentRotation();
-  //   return '${trackId}_${rotation.weekNumber}_${rotation.year}';
-  // }
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  /// Generate document ID for leaderboard: {trackId}_{week}_{year}
+  String _docId(String trackId) {
+    final rotation = RotationService.getCurrentRotation();
+    return '${trackId}_${rotation.weekNumber}_${rotation.year}';
+  }
 
   /// Charger le top 50 pour une musique
   Future<void> loadLeaderboard(String trackId) async {
@@ -91,27 +93,27 @@ class LeaderboardNotifier extends StateNotifier<LeaderboardState> {
 
     try {
       final rotation = RotationService.getCurrentRotation();
+      final docId = _docId(trackId);
 
-      // TODO: Remplacer par l'appel Firestore réel
-      // final docId = _docId(trackId);
-      // final snapshot = await FirebaseFirestore.instance
-      //     .collection('leaderboards')
-      //     .doc(docId)
-      //     .collection('scores')
-      //     .orderBy('score', descending: true)
-      //     .limit(50)
-      //     .get();
-      //
-      // final entries = snapshot.docs.asMap().entries.map((e) {
-      //   return LeaderboardEntry.fromFirestore(
-      //     e.value.id,
-      //     e.value.data(),
-      //     e.key + 1, // rank
-      //   );
-      // }).toList();
+      final snapshot = await _firestore
+          .collection('leaderboards')
+          .doc(docId)
+          .collection('scores')
+          .orderBy('score', descending: true)
+          .limit(50)
+          .get();
 
-      // Placeholder : liste vide en attendant l'intégration Firestore
-      final List<LeaderboardEntry> entries = [];
+      final entries = snapshot.docs.asMap().entries.map((e) {
+        return LeaderboardEntry.fromFirestore(
+          e.value.id,
+          e.value.data(),
+          e.key + 1, // rank (1-indexed)
+        );
+      }).toList();
+
+      if (kDebugMode) {
+        debugPrint('LEADERBOARD: Loaded ${entries.length} entries for $docId');
+      }
 
       state = state.copyWith(
         entries: entries,
@@ -120,6 +122,9 @@ class LeaderboardNotifier extends StateNotifier<LeaderboardState> {
         year: rotation.year,
       );
     } catch (e) {
+      if (kDebugMode) {
+        debugPrint('LEADERBOARD: Load error: $e');
+      }
       state = state.copyWith(
         isLoading: false,
         error: 'Erreur chargement leaderboard: $e',
@@ -156,20 +161,45 @@ class LeaderboardNotifier extends StateNotifier<LeaderboardState> {
         timestamp: DateTime.now(),
       );
 
-      // TODO: Remplacer par l'appel Firestore réel
-      // final docId = _docId(trackId);
-      // await FirebaseFirestore.instance
-      //     .collection('leaderboards')
-      //     .doc(docId)
-      //     .collection('scores')
-      //     .doc(uid)
-      //     .set(entry.toFirestore(), SetOptions(merge: true));
+      final docId = _docId(trackId);
+
+      // Only update if new score is higher than existing
+      final existingDoc = await _firestore
+          .collection('leaderboards')
+          .doc(docId)
+          .collection('scores')
+          .doc(uid)
+          .get();
+
+      final shouldUpdate =
+          !existingDoc.exists ||
+          (existingDoc.data()?['score'] as int? ?? 0) < score;
+
+      if (shouldUpdate) {
+        await _firestore
+            .collection('leaderboards')
+            .doc(docId)
+            .collection('scores')
+            .doc(uid)
+            .set(entry.toFirestore(), SetOptions(merge: true));
+
+        if (kDebugMode) {
+          debugPrint('LEADERBOARD: Score submitted - $docId/$uid score=$score');
+        }
+      } else if (kDebugMode) {
+        debugPrint(
+          'LEADERBOARD: Score not updated (existing is higher) - $docId/$uid',
+        );
+      }
 
       state = state.copyWith(isSubmitting: false, userEntry: entry);
 
       // Recharger le leaderboard pour avoir le rang à jour
       await loadLeaderboard(trackId);
     } catch (e) {
+      if (kDebugMode) {
+        debugPrint('LEADERBOARD: Submit error: $e');
+      }
       state = state.copyWith(
         isSubmitting: false,
         error: 'Erreur soumission score: $e',
@@ -180,31 +210,37 @@ class LeaderboardNotifier extends StateNotifier<LeaderboardState> {
   /// Charger le rang de l'utilisateur
   Future<void> loadUserRank(String trackId, String uid) async {
     try {
-      // TODO: Remplacer par l'appel Firestore réel
-      // final docId = _docId(trackId);
-      // final userDoc = await FirebaseFirestore.instance
-      //     .collection('leaderboards')
-      //     .doc(docId)
-      //     .collection('scores')
-      //     .doc(uid)
-      //     .get();
-      //
-      // if (userDoc.exists) {
-      //   final userScore = userDoc.data()!['score'] as int;
-      //   // Compter les scores supérieurs pour le rang
-      //   final higherScores = await FirebaseFirestore.instance
-      //       .collection('leaderboards')
-      //       .doc(docId)
-      //       .collection('scores')
-      //       .where('score', isGreaterThan: userScore)
-      //       .count()
-      //       .get();
-      //   final rank = higherScores.count + 1;
-      //   state = state.copyWith(
-      //     userEntry: LeaderboardEntry.fromFirestore(uid, userDoc.data()!, rank),
-      //   );
-      // }
+      final docId = _docId(trackId);
+      final userDoc = await _firestore
+          .collection('leaderboards')
+          .doc(docId)
+          .collection('scores')
+          .doc(uid)
+          .get();
+
+      if (userDoc.exists) {
+        final userScore = userDoc.data()!['score'] as int;
+        // Compter les scores supérieurs pour le rang
+        final higherScoresQuery = await _firestore
+            .collection('leaderboards')
+            .doc(docId)
+            .collection('scores')
+            .where('score', isGreaterThan: userScore)
+            .count()
+            .get();
+        final rank = (higherScoresQuery.count ?? 0) + 1;
+        state = state.copyWith(
+          userEntry: LeaderboardEntry.fromFirestore(uid, userDoc.data()!, rank),
+        );
+
+        if (kDebugMode) {
+          debugPrint('LEADERBOARD: User rank loaded - $uid rank=$rank');
+        }
+      }
     } catch (e) {
+      if (kDebugMode) {
+        debugPrint('LEADERBOARD: loadUserRank error: $e');
+      }
       // Silently fail - le rang est optionnel
     }
   }

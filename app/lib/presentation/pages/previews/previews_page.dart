@@ -10,6 +10,7 @@ import '../../../domain/entities/level_result.dart';
 import '../../widgets/video_tile.dart';
 import '../../widgets/paywall_modal.dart';
 import '../../state/iap_provider.dart';
+import '../../state/iap_credit_provider.dart';
 import '../../state/library_provider.dart';
 import '../player/player_page.dart';
 
@@ -53,7 +54,7 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
       );
     }
 
-    if (ref.read(iapProvider).isUnlocked) {
+    if (_isUnlocked()) {
       unawaited(_maybeStartFullDownload());
     }
 
@@ -63,6 +64,28 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
         unawaited(_maybeStartFullDownload());
       }
     });
+
+    // Also listen to credit provider for per-job unlocks
+    ref.listenManual(iapCreditProvider, (prev, next) {
+      if (_jobId != null) {
+        final wasUnlocked = prev?.isJobUnlocked(_jobId!) ?? false;
+        if (!wasUnlocked && next.isJobUnlocked(_jobId!)) {
+          unawaited(_maybeStartFullDownload());
+        }
+      }
+    });
+  }
+
+  /// Check if content is unlocked via lifetime OR per-job credit
+  bool _isUnlocked() {
+    final legacyIap = ref.read(iapProvider);
+    if (legacyIap.isUnlocked) return true;
+
+    if (_jobId != null) {
+      final creditIap = ref.read(iapCreditProvider);
+      return creditIap.isJobUnlocked(_jobId!);
+    }
+    return false;
   }
 
   @override
@@ -73,7 +96,12 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final isUnlocked = ref.watch(iapProvider).isUnlocked;
+    // Check both legacy lifetime AND per-job credit system
+    final legacyIap = ref.watch(iapProvider);
+    final creditIap = ref.watch(iapCreditProvider);
+    final isUnlocked =
+        legacyIap.isUnlocked ||
+        (_jobId != null && creditIap.isJobUnlocked(_jobId!));
     final libraryState = ref.watch(libraryProvider);
     final isActiveJob = _jobId != null && libraryState.activeJobId == _jobId;
     final showDownload = isActiveJob && libraryState.isDownloading;
@@ -274,7 +302,12 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
       return;
     }
 
-    final isUnlocked = ref.read(iapProvider).isUnlocked;
+    // Check both legacy lifetime AND per-job credit system
+    final legacyIap = ref.read(iapProvider);
+    final creditIap = ref.read(iapCreditProvider);
+    final isUnlocked =
+        legacyIap.isUnlocked ||
+        (_jobId != null && creditIap.isJobUnlocked(_jobId!));
     final item = _findLibraryItem();
     final localPreview = item?.previewPaths[level.level];
     final localFull = item?.fullPaths[level.level];
@@ -392,8 +425,8 @@ class _PreviewsPageState extends ConsumerState<PreviewsPage> {
     if (_jobId == null) {
       return;
     }
-    final iapState = ref.read(iapProvider);
-    if (!iapState.isUnlocked) {
+    // Check both legacy lifetime AND per-job credit system
+    if (!_isUnlocked()) {
       return;
     }
     await ref

@@ -18,6 +18,9 @@ import '../previews/previews_page.dart';
 import '../settings/settings_page.dart';
 import '../history/history_page.dart';
 import '../results/result_bottom_sheet.dart';
+import '../free_track/free_track_page.dart';
+import '../vote/vote_page.dart';
+import '../../widgets/weekly/weekly_tracks_section.dart';
 
 class HomePage extends ConsumerStatefulWidget {
   const HomePage({super.key});
@@ -163,6 +166,24 @@ class _HomePageState extends ConsumerState<HomePage>
                         ),
                       ],
                     ),
+                  ),
+
+                  // Weekly free tracks section
+                  WeeklyTracksSection(
+                    onTrackTap: (track) {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => FreeTrackPage(track: track),
+                        ),
+                      );
+                    },
+                    onVoteTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const VotePage()),
+                      );
+                    },
                   ),
 
                   // Main content: Big record button

@@ -12,8 +12,10 @@ import '../../../core/music/models.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../domain/entities/level_result.dart';
 import '../../state/leaderboard_provider.dart';
 import '../leaderboard/leaderboard_page.dart';
+import '../practice/practice_page.dart';
 
 class FreeTrackPage extends ConsumerStatefulWidget {
   final FreeTrack track;
@@ -170,16 +172,32 @@ class _FreeTrackPageState extends ConsumerState<FreeTrackPage> {
   }
 
   void _startPractice() {
-    // TODO: Naviguer vers PracticePage avec les expected notes
-    // de cette musique gratuite et le niveau sélectionné.
-    //
-    // Navigator.push(context, MaterialPageRoute(
-    //   builder: (_) => PracticePage(
-    //     trackId: widget.track.id,
-    //     level: _selectedLevel,
-    //     expectedNotesUrl: widget.track.expectedNotesUrl,
-    //   ),
-    // ));
+    final track = widget.track;
+
+    // Build URLs for the selected level
+    final previewUrl = track.previewUrls[_selectedLevel] ?? '';
+    final videoUrl = track.fullVideoUrls[_selectedLevel] ?? '';
+    final midiUrl = track.midiUrl ?? '';
+
+    // Create a LevelResult from the FreeTrack
+    final levelResult = LevelResult(
+      level: _selectedLevel,
+      name: track.title,
+      previewUrl: previewUrl,
+      videoUrl: videoUrl,
+      midiUrl: midiUrl,
+      durationSec: track.durationSec.toDouble(),
+    );
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PracticePage(
+          level: levelResult,
+          freeTrackId: track.id, // Enables leaderboard submission
+        ),
+      ),
+    );
   }
 
   void _openFullLeaderboard(BuildContext context) {

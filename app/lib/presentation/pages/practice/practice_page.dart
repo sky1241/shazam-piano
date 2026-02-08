@@ -40,6 +40,7 @@ import '../../../core/practice/persistence/calibration_storage.dart';
 import '../../../core/practice/detection/device_detector.dart';
 import '../../../core/practice/learning/session_analyzer.dart';
 import '../../../core/practice/learning/adaptive_parameters.dart';
+import '../../state/leaderboard_provider.dart';
 
 part 'parts/falling_notes_painter.part.dart';
 part 'parts/practice_models.part.dart';
@@ -250,11 +251,16 @@ class PracticePage extends ConsumerStatefulWidget {
   final bool forcePreview;
   final bool isTest;
 
+  /// Optional: ID of the free track for leaderboard submission.
+  /// If set, score will be submitted to the weekly leaderboard after session ends.
+  final String? freeTrackId;
+
   const PracticePage({
     super.key,
     required this.level,
     this.forcePreview = false,
     this.isTest = false,
+    this.freeTrackId,
   });
 
   @override

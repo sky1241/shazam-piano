@@ -758,8 +758,69 @@ mixin _PracticeLifecycleMixin on _PracticePageStateBase {
     // SESSION-CALIBRATION: Apply adaptive learning from session stats
     await _applySessionLearning();
 
+    // Submit score to leaderboard if this is a free track
+    await _maybeSubmitToLeaderboard(
+      score: newState.totalScore,
+      maxCombo: newState.maxCombo,
+      perfectCount: newState.perfectCount,
+      goodCount: newState.goodCount,
+      okCount: newState.okCount,
+      missCount: newState.missCount,
+      accuracy: accuracy / 100.0, // Convert from percentage to 0-1
+    );
+
     // FIX BUG 4: Mark video end time to prevent instant replay
     _lastVideoEndAt = DateTime.now();
+  }
+
+  /// Submit score to leaderboard if this practice session is for a free track.
+  Future<void> _maybeSubmitToLeaderboard({
+    required int score,
+    required int maxCombo,
+    required int perfectCount,
+    required int goodCount,
+    required int okCount,
+    required int missCount,
+    required double accuracy,
+  }) async {
+    final trackId = widget.freeTrackId;
+    if (trackId == null) return; // Not a free track, skip
+
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        if (kDebugMode) {
+          debugPrint('LEADERBOARD: Skip submission - user not logged in');
+        }
+        return;
+      }
+
+      await ref
+          .read(leaderboardProvider.notifier)
+          .submitScore(
+            trackId: trackId,
+            uid: user.uid,
+            displayName: user.displayName ?? 'Anonymous',
+            score: score,
+            maxCombo: maxCombo,
+            perfectCount: perfectCount,
+            goodCount: goodCount,
+            okCount: okCount,
+            missCount: missCount,
+            accuracy: accuracy,
+          );
+
+      if (kDebugMode) {
+        debugPrint(
+          'LEADERBOARD: Score submitted for track=$trackId score=$score',
+        );
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('LEADERBOARD: Submit failed: $e');
+      }
+      // Fail silently - leaderboard is optional
+    }
   }
 
   /// SESSION-CALIBRATION: Collect session stats and apply adaptive learning.
