@@ -5,6 +5,8 @@
 ///
 /// NOT connected to existing code. Ready to be integrated.
 /// NE REMPLACE PAS iap_provider.dart — fonctionne EN PLUS.
+library;
+
 import 'dart:async';
 import 'dart:convert';
 

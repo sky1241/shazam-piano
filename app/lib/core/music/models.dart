@@ -1,6 +1,8 @@
 /// ShazaPiano - Music models for weekly rotation & leaderboard
 ///
 /// NOT connected to existing code. Ready to be integrated.
+library;
+
 import 'package:flutter/foundation.dart';
 
 // ─────────────────────────────────────────────────────────

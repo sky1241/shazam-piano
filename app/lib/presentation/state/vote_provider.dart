@@ -4,6 +4,8 @@
 /// de la semaine suivante.
 ///
 /// NOT connected to existing code. Ready to be integrated.
+library;
+
 import 'dart:async';
 import 'dart:math';
 

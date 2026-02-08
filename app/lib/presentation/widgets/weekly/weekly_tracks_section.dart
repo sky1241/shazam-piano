@@ -4,6 +4,8 @@
 ///
 /// NOT connected to existing code. Ready to be integrated.
 /// Pour intégrer : ajouter WeeklyTracksSection() dans le body de HomePage.
+library;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 

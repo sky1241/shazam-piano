@@ -4,6 +4,8 @@
 /// Utilise Firestore pour le stockage.
 ///
 /// NOT connected to existing code. Ready to be integrated.
+library;
+
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -77,11 +79,11 @@ final leaderboardProvider =
 class LeaderboardNotifier extends StateNotifier<LeaderboardState> {
   LeaderboardNotifier() : super(const LeaderboardState());
 
-  // ── Firestore document ID pour la semaine courante ──
-  String _docId(String trackId) {
-    final rotation = RotationService.getCurrentRotation();
-    return '${trackId}_${rotation.weekNumber}_${rotation.year}';
-  }
+  // Note: _docId will be used when Firestore integration is complete.
+  // String _docId(String trackId) {
+  //   final rotation = RotationService.getCurrentRotation();
+  //   return '${trackId}_${rotation.weekNumber}_${rotation.year}';
+  // }
 
   /// Charger le top 50 pour une musique
   Future<void> loadLeaderboard(String trackId) async {

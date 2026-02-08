@@ -3,6 +3,8 @@
 /// Permet aux utilisateurs de voter pour les musiques de la semaine prochaine.
 ///
 /// NOT connected to existing code. Ready to be integrated.
+library;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 

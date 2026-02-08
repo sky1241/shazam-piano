@@ -4,6 +4,8 @@
 /// Même résultat sur tous les devices pour la même semaine.
 ///
 /// NOT connected to existing code. Ready to be integrated.
+library;
+
 import 'dart:math';
 
 import 'models.dart';

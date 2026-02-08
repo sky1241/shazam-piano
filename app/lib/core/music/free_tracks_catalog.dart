@@ -4,14 +4,14 @@
 /// Les fichiers MIDI et vidéos sont pré-générés et hébergés sur Firebase Storage.
 ///
 /// NOT connected to existing code. Ready to be integrated.
+library;
+
 import 'models.dart';
 
 class FreeTracksCatalog {
-  /// Pool complet des musiques disponibles pour la rotation.
-  /// Les URLs sont des placeholders - à remplacer par les vrais liens
-  /// Firebase Storage une fois les vidéos pré-générées.
-  static const String _storageBase =
-      'https://firebasestorage.googleapis.com/v0/b/shazapiano.appspot.com/o';
+  // Note: Storage base URL to be used when Firebase integration is complete.
+  // static const String _storageBase =
+  //     'https://firebasestorage.googleapis.com/v0/b/shazapiano.appspot.com/o';
 
   static List<FreeTrack> get allTracks => [
         // ─── FACILE (easy) ───────────────────────────────
