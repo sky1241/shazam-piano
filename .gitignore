@@ -97,6 +97,7 @@ ntuser.*
 /**/Downloads/
 /**/Favorites/
 /**/Music/
+!app/lib/core/music/
 /**/Pictures/
 /**/Videos/
 /**/Contacts/
