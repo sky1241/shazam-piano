@@ -206,8 +206,7 @@ class _HomePageState extends ConsumerState<HomePage>
                         for (int i = 1; i <= 4; i++) ...[
                           ModeChip(
                             level: i,
-                            status:
-                                levelStatuses[i] ?? ModeChipStatus.queued,
+                            status: levelStatuses[i] ?? ModeChipStatus.queued,
                           ),
                           if (i < 4)
                             const SizedBox(width: AppConstants.spacing8),
@@ -589,8 +588,7 @@ class _RecordHeroState extends State<_RecordHero>
   Widget build(BuildContext context) {
     final buttonSize = widget.isCompact ? 160.0 : 180.0;
     final reduceMotion = MediaQuery.of(context).disableAnimations;
-    final isRecording =
-        widget.buttonState == RecordButtonState.recording;
+    final isRecording = widget.buttonState == RecordButtonState.recording;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -664,9 +662,7 @@ class _RecordHeroState extends State<_RecordHero>
         // ── CTA text ──
         Text(
           widget.mainText,
-          style: AppTextStyles.title.copyWith(
-            fontWeight: FontWeight.w700,
-          ),
+          style: AppTextStyles.title.copyWith(fontWeight: FontWeight.w700),
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: AppConstants.spacing4),
@@ -691,8 +687,7 @@ class _RecordHeroState extends State<_RecordHero>
     if (!reduceMotion) {
       final phase = phaseIndex * (2 * pi / 3);
       final amplitude = isRecording ? 0.035 : 0.02;
-      scale = 1.0 +
-          sin(_ringController.value * 2 * pi + phase) * amplitude;
+      scale = 1.0 + sin(_ringController.value * 2 * pi + phase) * amplitude;
     }
 
     // Inner rings (higher phaseIndex) = more visible

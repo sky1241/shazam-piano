@@ -38,15 +38,13 @@ class RotationService {
     final rng = Random(seed);
 
     // Séparer par difficulté et shuffle chaque groupe
-    final easy = List<FreeTrack>.from(
-      pool.where((t) => t.difficulty == 'easy'),
-    )..shuffle(rng);
+    final easy = List<FreeTrack>.from(pool.where((t) => t.difficulty == 'easy'))
+      ..shuffle(rng);
     final medium = List<FreeTrack>.from(
       pool.where((t) => t.difficulty == 'medium'),
     )..shuffle(rng);
-    final hard = List<FreeTrack>.from(
-      pool.where((t) => t.difficulty == 'hard'),
-    )..shuffle(rng);
+    final hard = List<FreeTrack>.from(pool.where((t) => t.difficulty == 'hard'))
+      ..shuffle(rng);
 
     // Prendre 2 de chaque
     final pick2Easy = easy.take(2).toList();
@@ -55,11 +53,8 @@ class RotationService {
 
     // Page 1 : 1 facile + 1 difficile (les extrêmes)
     // Pages 2-3 : les 4 restants mélangés
-    final remaining = <FreeTrack>[
-      pick2Easy[1],
-      ...pick2Medium,
-      pick2Hard[1],
-    ]..shuffle(rng);
+    final remaining = <FreeTrack>[pick2Easy[1], ...pick2Medium, pick2Hard[1]]
+      ..shuffle(rng);
 
     final selected = <FreeTrack>[
       pick2Easy[0], // Page 1 : facile

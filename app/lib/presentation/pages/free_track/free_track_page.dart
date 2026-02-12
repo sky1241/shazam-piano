@@ -281,7 +281,9 @@ class _LevelSelector extends StatelessWidget {
                     vertical: AppConstants.spacing8,
                   ),
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(AppConstants.radiusSmall),
+                    borderRadius: BorderRadius.circular(
+                      AppConstants.radiusSmall,
+                    ),
                     border: Border.all(
                       color: isSelected ? AppColors.primary : AppColors.divider,
                     ),

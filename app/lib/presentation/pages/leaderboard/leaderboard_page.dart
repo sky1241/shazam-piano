@@ -53,10 +53,7 @@ class _LeaderboardPageState extends ConsumerState<LeaderboardPage> {
               '🏆 Leaderboard',
               style: AppTextStyles.title.copyWith(fontSize: 16),
             ),
-            Text(
-              widget.trackTitle,
-              style: AppTextStyles.caption,
-            ),
+            Text(widget.trackTitle, style: AppTextStyles.caption),
           ],
         ),
         actions: [
@@ -368,10 +365,7 @@ class _LeaderboardRow extends StatelessWidget {
           ),
           const SizedBox(width: AppConstants.spacing12),
           // Accuracy
-          Text(
-            entry.accuracyText,
-            style: AppTextStyles.caption,
-          ),
+          Text(entry.accuracyText, style: AppTextStyles.caption),
           const SizedBox(width: AppConstants.spacing12),
           // Score
           Text(

@@ -152,10 +152,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   void _handleUnlock() {
     HapticFeedback.mediumImpact();
-    showDialog(
-      context: context,
-      builder: (context) => const PaywallModal(),
-    );
+    showDialog(context: context, builder: (context) => const PaywallModal());
   }
 
   void _handleRestore() async {
@@ -213,9 +210,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         content: Text(
           'Cette action est irreversible. Toutes vos generations '
           'et votre statut premium seront perdus.',
-          style: AppTextStyles.body.copyWith(
-            color: AppColors.textSecondary,
-          ),
+          style: AppTextStyles.body.copyWith(color: AppColors.textSecondary),
           textAlign: TextAlign.center,
         ),
         actionsAlignment: MainAxisAlignment.center,
@@ -230,9 +225,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   vertical: AppConstants.spacing12,
                 ),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(
-                    AppConstants.radiusSmall,
-                  ),
+                  borderRadius: BorderRadius.circular(AppConstants.radiusSmall),
                 ),
               ),
               child: Text(
@@ -264,9 +257,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   vertical: AppConstants.spacing12,
                 ),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(
-                    AppConstants.radiusSmall,
-                  ),
+                  borderRadius: BorderRadius.circular(AppConstants.radiusSmall),
                 ),
               ),
               child: const Text(
@@ -297,17 +288,12 @@ class _PremiumCard extends StatelessWidget {
   final bool isUnlocked;
   final VoidCallback onUnlockTap;
 
-  const _PremiumCard({
-    required this.isUnlocked,
-    required this.onUnlockTap,
-  });
+  const _PremiumCard({required this.isUnlocked, required this.onUnlockTap});
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppConstants.spacing16,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: AppConstants.spacing16),
       child: Container(
         padding: const EdgeInsets.all(AppConstants.spacing20),
         decoration: BoxDecoration(
@@ -321,10 +307,7 @@ class _PremiumCard extends StatelessWidget {
                   end: Alignment.bottomRight,
                 )
               : LinearGradient(
-                  colors: [
-                    AppColors.card,
-                    AppColors.surface,
-                  ],
+                  colors: [AppColors.card, AppColors.surface],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
@@ -459,9 +442,7 @@ class _SettingsCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.symmetric(
-        horizontal: AppConstants.spacing16,
-      ),
+      margin: const EdgeInsets.symmetric(horizontal: AppConstants.spacing16),
       decoration: BoxDecoration(
         color: AppColors.card,
         borderRadius: BorderRadius.circular(AppConstants.radiusCard),
@@ -518,9 +499,7 @@ class _SettingsTile extends StatelessWidget {
                 height: 36,
                 decoration: BoxDecoration(
                   color: iconColor.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(
-                    AppConstants.radiusSmall,
-                  ),
+                  borderRadius: BorderRadius.circular(AppConstants.radiusSmall),
                 ),
                 child: Icon(icon, color: iconColor, size: 20),
               ),
@@ -541,7 +520,8 @@ class _SettingsTile extends StatelessWidget {
                       Text(
                         subtitle!,
                         style: AppTextStyles.caption.copyWith(
-                          color: titleColor?.withValues(alpha: 0.7) ??
+                          color:
+                              titleColor?.withValues(alpha: 0.7) ??
                               AppColors.textSecondary,
                         ),
                       ),
@@ -575,10 +555,7 @@ class _TileDivider extends StatelessWidget {
       padding: EdgeInsets.only(
         left: AppConstants.spacing16 + 36 + AppConstants.spacing12,
       ),
-      child: Divider(
-        height: 1,
-        color: AppColors.divider,
-      ),
+      child: Divider(height: 1, color: AppColors.divider),
     );
   }
 }

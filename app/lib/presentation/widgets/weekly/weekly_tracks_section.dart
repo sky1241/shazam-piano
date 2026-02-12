@@ -150,8 +150,7 @@ class _WeeklyTracksSectionState extends ConsumerState<WeeklyTracksSection> {
                       Expanded(
                         child: _TrackCard(
                           track: pageTracks[i],
-                          onTap: () =>
-                              widget.onTrackTap?.call(pageTracks[i]),
+                          onTap: () => widget.onTrackTap?.call(pageTracks[i]),
                         ),
                       ),
                       if (i < pageTracks.length - 1)

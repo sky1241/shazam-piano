@@ -40,10 +40,7 @@ class _BigRecordButtonState extends State<BigRecordButton>
       duration: const Duration(milliseconds: 1500),
     );
     _recordPulseAnimation = Tween<double>(begin: 1.0, end: 1.1).animate(
-      CurvedAnimation(
-        parent: _recordPulseController,
-        curve: Curves.easeInOut,
-      ),
+      CurvedAnimation(parent: _recordPulseController, curve: Curves.easeInOut),
     );
     _recordPulseController.repeat(reverse: true);
 
@@ -53,10 +50,7 @@ class _BigRecordButtonState extends State<BigRecordButton>
       duration: const Duration(milliseconds: 3000),
     );
     _idleBreatheAnimation = Tween<double>(begin: 1.0, end: 1.04).animate(
-      CurvedAnimation(
-        parent: _idleBreatheController,
-        curve: Curves.easeInOut,
-      ),
+      CurvedAnimation(parent: _idleBreatheController, curve: Curves.easeInOut),
     );
     _idleBreatheController.repeat(reverse: true);
   }
