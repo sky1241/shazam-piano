@@ -58,69 +58,78 @@ class _WeeklyTracksSectionState extends ConsumerState<WeeklyTracksSection> {
           padding: const EdgeInsets.symmetric(
             horizontal: AppConstants.spacing16,
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // Row 1: Titre + Timer
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Text('Cette semaine', style: AppTextStyles.title),
-                  const Spacer(),
-                  Icon(
-                    Icons.schedule,
-                    size: 14,
-                    color: AppColors.textSecondary.withValues(alpha: 0.7),
-                  ),
-                  const SizedBox(width: AppConstants.spacing4),
-                  Text(
-                    rotation.timeRemainingText,
-                    style: AppTextStyles.caption.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ],
+              // Title
+              Text(
+                'Cette semaine',
+                style: AppTextStyles.title.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
               ),
-              // Row 2: Vote action link
+              const Spacer(),
+              // Timer pill
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppConstants.spacing8,
+                  vertical: AppConstants.spacing4,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(
+                    AppConstants.radiusButton,
+                  ),
+                  border: Border.all(color: AppColors.divider),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.timer_outlined,
+                      size: 14,
+                      color: AppColors.primary,
+                    ),
+                    const SizedBox(width: AppConstants.spacing4),
+                    Text(
+                      rotation.timeRemainingText,
+                      style: AppTextStyles.caption.copyWith(
+                        color: AppColors.textSecondary,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Vote button
               if (widget.onVoteTap != null) ...[
-                const SizedBox(height: AppConstants.spacing8),
+                const SizedBox(width: AppConstants.spacing8),
                 Material(
-                  color: Colors.transparent,
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(
+                    AppConstants.radiusMedium,
+                  ),
                   child: InkWell(
                     borderRadius: BorderRadius.circular(
-                      AppConstants.radiusSmall,
+                      AppConstants.radiusMedium,
                     ),
                     onTap: () {
                       HapticFeedback.selectionClick();
                       widget.onVoteTap?.call();
                     },
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        vertical: AppConstants.spacing8,
+                    child: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(
+                          AppConstants.radiusMedium,
+                        ),
+                        border: Border.all(color: AppColors.divider),
                       ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.how_to_vote_rounded,
-                            size: 16,
-                            color: AppColors.warning,
-                          ),
-                          const SizedBox(width: AppConstants.spacing8),
-                          Text(
-                            'Voter pour la prochaine rotation',
-                            style: AppTextStyles.caption.copyWith(
-                              color: AppColors.warning,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(width: AppConstants.spacing4),
-                          Icon(
-                            Icons.chevron_right,
-                            size: 16,
-                            color: AppColors.warning.withValues(alpha: 0.6),
-                          ),
-                        ],
+                      child: Icon(
+                        Icons.how_to_vote_rounded,
+                        size: 20,
+                        color: AppColors.warning,
                       ),
                     ),
                   ),

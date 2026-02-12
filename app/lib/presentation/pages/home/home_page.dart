@@ -141,23 +141,24 @@ class _HomePageState extends ConsumerState<HomePage>
                   : AppConstants.spacing24;
               return Column(
                 children: [
-                  // App bar
+                  // App bar — styled icon containers
                   Padding(
-                    padding: const EdgeInsets.all(AppConstants.spacing16),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppConstants.spacing16,
+                      vertical: AppConstants.spacing8,
+                    ),
                     child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        IconButton(
-                          icon: Icon(Icons.menu, color: AppColors.textPrimary),
-                          onPressed: _openSettings,
+                        _AppBarButton(
+                          icon: Icons.menu_rounded,
+                          onTap: _openSettings,
                         ),
-                        const AppLogo(width: 120, height: 40),
-                        IconButton(
-                          icon: Icon(
-                            Icons.history,
-                            color: AppColors.textPrimary,
-                          ),
-                          onPressed: _openHistory,
+                        const Spacer(),
+                        const AppLogo(width: 110, height: 36),
+                        const Spacer(),
+                        _AppBarButton(
+                          icon: Icons.history_rounded,
+                          onTap: _openHistory,
                         ),
                       ],
                     ),
@@ -529,6 +530,36 @@ class _HomePageState extends ConsumerState<HomePage>
     Navigator.of(
       context,
     ).push(MaterialPageRoute(builder: (context) => const HistoryPage()));
+  }
+}
+
+// ─── App bar icon button ──────────────────────────────────────────
+
+class _AppBarButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback? onTap;
+
+  const _AppBarButton({required this.icon, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.surface,
+      borderRadius: BorderRadius.circular(AppConstants.radiusMedium),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppConstants.radiusMedium),
+        onTap: onTap,
+        child: Container(
+          width: AppConstants.touchTargetMin,
+          height: AppConstants.touchTargetMin,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppConstants.radiusMedium),
+            border: Border.all(color: AppColors.divider),
+          ),
+          child: Icon(icon, color: AppColors.textPrimary, size: 22),
+        ),
+      ),
+    );
   }
 }
 
