@@ -7,15 +7,17 @@ import '../../core/constants/app_constants.dart';
 /// States: idle, recording, processing
 ///
 /// UX rules applied: haptic feedback, reduced motion support,
-/// InkWell for Material feedback.
+/// idle breathe pulse, recording active pulse.
 class BigRecordButton extends StatefulWidget {
   final VoidCallback? onTap;
   final RecordButtonState state;
+  final double size;
 
   const BigRecordButton({
     super.key,
     this.onTap,
     this.state = RecordButtonState.idle,
+    this.size = AppConstants.recordButtonSize,
   });
 
   @override
@@ -23,57 +25,82 @@ class BigRecordButton extends StatefulWidget {
 }
 
 class _BigRecordButtonState extends State<BigRecordButton>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _pulseController;
-  late Animation<double> _pulseAnimation;
+    with TickerProviderStateMixin {
+  late AnimationController _recordPulseController;
+  late Animation<double> _recordPulseAnimation;
+  late AnimationController _idleBreatheController;
+  late Animation<double> _idleBreatheAnimation;
 
   @override
   void initState() {
     super.initState();
-    _pulseController = AnimationController(
+    // Recording pulse (bold)
+    _recordPulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     );
-
-    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.1).animate(
-      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    _recordPulseAnimation = Tween<double>(begin: 1.0, end: 1.1).animate(
+      CurvedAnimation(
+        parent: _recordPulseController,
+        curve: Curves.easeInOut,
+      ),
     );
+    _recordPulseController.repeat(reverse: true);
 
-    _pulseController.repeat(reverse: true);
+    // Idle breathe (subtle)
+    _idleBreatheController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 3000),
+    );
+    _idleBreatheAnimation = Tween<double>(begin: 1.0, end: 1.04).animate(
+      CurvedAnimation(
+        parent: _idleBreatheController,
+        curve: Curves.easeInOut,
+      ),
+    );
+    _idleBreatheController.repeat(reverse: true);
   }
 
   @override
   void dispose() {
-    _pulseController.dispose();
+    _recordPulseController.dispose();
+    _idleBreatheController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // Reduced motion support (MOBILE.md §61)
     final reduceMotion = MediaQuery.of(context).disableAnimations;
 
     return GestureDetector(
       onTap: widget.state != RecordButtonState.processing
           ? () {
-              // Haptic feedback (MOBILE.md §60)
               HapticFeedback.mediumImpact();
               widget.onTap?.call();
             }
           : null,
       child: AnimatedBuilder(
-        animation: _pulseAnimation,
+        animation: Listenable.merge([
+          _recordPulseAnimation,
+          _idleBreatheAnimation,
+        ]),
         builder: (context, child) {
-          final scale =
-              widget.state == RecordButtonState.recording && !reduceMotion
-                  ? _pulseAnimation.value
-                  : 1.0;
+          double scale = 1.0;
+          if (!reduceMotion) {
+            if (widget.state == RecordButtonState.recording) {
+              scale = _recordPulseAnimation.value;
+            } else if (widget.state == RecordButtonState.idle) {
+              scale = _idleBreatheAnimation.value;
+            }
+          }
+
+          final iconSize = widget.size * 0.36;
 
           return Transform.scale(
             scale: scale,
             child: Container(
-              width: AppConstants.recordButtonSize,
-              height: AppConstants.recordButtonSize,
+              width: widget.size,
+              height: widget.size,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 gradient: AppColors.buttonGradient,
@@ -85,7 +112,7 @@ class _BigRecordButtonState extends State<BigRecordButton>
                   ),
                 ],
               ),
-              child: Center(child: _buildIcon()),
+              child: Center(child: _buildIcon(iconSize)),
             ),
           );
         },
@@ -93,12 +120,12 @@ class _BigRecordButtonState extends State<BigRecordButton>
     );
   }
 
-  Widget _buildIcon() {
+  Widget _buildIcon(double iconSize) {
     switch (widget.state) {
       case RecordButtonState.idle:
-        return const Icon(Icons.mic, size: 80, color: Colors.white);
+        return Icon(Icons.mic, size: iconSize, color: Colors.white);
       case RecordButtonState.recording:
-        return const Icon(Icons.stop, size: 80, color: Colors.white);
+        return Icon(Icons.stop, size: iconSize, color: Colors.white);
       case RecordButtonState.processing:
         return const CircularProgressIndicator(
           color: Colors.white,

@@ -204,6 +204,7 @@ class _HomePageState extends ConsumerState<HomePage>
                                 children: [
                                   BigRecordButton(
                                     state: _buttonState,
+                                    size: isCompact ? 160 : 180,
                                     onTap: _handleRecordButtonTap,
                                   ),
                                   SizedBox(height: gapLg),
