@@ -2,11 +2,12 @@
 ///
 /// Affiche les 5 musiques en rotation avec timer et rang leaderboard.
 ///
-/// NOT connected to existing code. Ready to be integrated.
-/// Pour intégrer : ajouter WeeklyTracksSection() dans le body de HomePage.
+/// UX rules applied: touch targets 44px, min font 12px, InkWell feedback,
+/// haptic feedback, 4px grid spacing.
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/music/models.dart';
@@ -40,47 +41,66 @@ class WeeklyTracksSection extends ConsumerWidget {
             children: [
               const Text('🎵', style: TextStyle(fontSize: 20)),
               const SizedBox(width: AppConstants.spacing8),
-              Text('Musiques de la semaine', style: AppTextStyles.title),
-              const Spacer(),
-              // Vote button
+              Expanded(
+                child: Text(
+                  'Musiques de la semaine',
+                  style: AppTextStyles.title,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: AppConstants.spacing8),
+              // Vote button — 44px min touch target
               if (onVoteTap != null)
-                GestureDetector(
-                  onTap: onVoteTap,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: AppConstants.spacing8,
-                      vertical: AppConstants.spacing4,
-                    ),
-                    margin: const EdgeInsets.only(right: AppConstants.spacing8),
-                    decoration: BoxDecoration(
-                      color: AppColors.warning.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      '🗳️ Voter',
-                      style: AppTextStyles.caption.copyWith(
-                        color: AppColors.warning,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
+                Padding(
+                  padding: const EdgeInsets.only(right: AppConstants.spacing4),
+                  child: Material(
+                    color: AppColors.warning.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(AppConstants.radiusSmall),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(AppConstants.radiusSmall),
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        onVoteTap?.call();
+                      },
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          minHeight: AppConstants.touchTargetMin,
+                          minWidth: AppConstants.touchTargetMin,
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppConstants.spacing12,
+                            vertical: AppConstants.spacing8,
+                          ),
+                          child: Text(
+                            '🗳️ Voter',
+                            style: AppTextStyles.caption.copyWith(
+                              color: AppColors.warning,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                   ),
                 ),
               // Timer rotation
               Container(
+                constraints: const BoxConstraints(
+                  minHeight: AppConstants.touchTargetMin,
+                ),
                 padding: const EdgeInsets.symmetric(
-                  horizontal: AppConstants.spacing8,
-                  vertical: AppConstants.spacing4,
+                  horizontal: AppConstants.spacing12,
+                  vertical: AppConstants.spacing8,
                 ),
                 decoration: BoxDecoration(
                   color: AppColors.primary.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(AppConstants.radiusSmall),
                 ),
                 child: Text(
                   rotation.timeRemainingText,
                   style: AppTextStyles.caption.copyWith(
                     color: AppColors.primary,
-                    fontSize: 10,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -92,7 +112,7 @@ class WeeklyTracksSection extends ConsumerWidget {
 
         // Scroll horizontal des 5 musiques
         SizedBox(
-          height: 160,
+          height: 172,
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(
@@ -123,97 +143,103 @@ class _TrackCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 130,
-        margin: const EdgeInsets.symmetric(horizontal: AppConstants.spacing4),
-        decoration: BoxDecoration(
-          color: AppColors.card,
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: AppConstants.spacing4),
+      child: Material(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(AppConstants.radiusCard),
+        child: InkWell(
           borderRadius: BorderRadius.circular(AppConstants.radiusCard),
-          border: Border.all(color: AppColors.divider, width: 1),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(AppConstants.spacing12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Icône play + difficulté
-              Row(
+          onTap: () {
+            HapticFeedback.lightImpact();
+            onTap?.call();
+          },
+          child: Container(
+            width: 136,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(AppConstants.radiusCard),
+              border: Border.all(color: AppColors.divider, width: 1),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(AppConstants.spacing12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: AppColors.primary.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Icon(
-                      Icons.play_arrow_rounded,
-                      color: AppColors.primary,
-                      size: 20,
-                    ),
-                  ),
-                  const Spacer(),
-                  Text(
-                    track.difficultyEmoji,
-                    style: const TextStyle(fontSize: 14),
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppConstants.spacing8),
-
-              // Titre
-              Text(
-                track.title,
-                style: AppTextStyles.body.copyWith(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13,
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 2),
-
-              // Compositeur
-              Text(
-                track.composer,
-                style: AppTextStyles.caption.copyWith(fontSize: 10),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-
-              const Spacer(),
-
-              // Rang leaderboard + durée
-              Row(
-                children: [
-                  // TODO: Remplacer par le vrai rang de l'utilisateur
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.warning.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      '🏆 —',
-                      style: AppTextStyles.caption.copyWith(
-                        fontSize: 9,
-                        color: AppColors.warning,
+                  // Icone play + difficulte
+                  Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(AppConstants.radiusSmall),
+                        ),
+                        child: const Icon(
+                          Icons.play_arrow_rounded,
+                          color: AppColors.primary,
+                          size: 22,
+                        ),
                       ),
-                    ),
+                      const Spacer(),
+                      Text(
+                        track.difficultyEmoji,
+                        style: const TextStyle(fontSize: 16),
+                      ),
+                    ],
                   ),
-                  const Spacer(),
+                  const SizedBox(height: AppConstants.spacing8),
+
+                  // Titre
                   Text(
-                    track.durationFormatted,
-                    style: AppTextStyles.caption.copyWith(fontSize: 9),
+                    track.title,
+                    style: AppTextStyles.body.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: AppConstants.spacing4),
+
+                  // Compositeur — min 12px
+                  Text(
+                    track.composer,
+                    style: AppTextStyles.caption,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+
+                  const Spacer(),
+
+                  // Rang leaderboard + duree — min 12px
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppConstants.spacing8,
+                          vertical: AppConstants.spacing4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.warning.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(AppConstants.spacing4),
+                        ),
+                        child: Text(
+                          '🏆 —',
+                          style: AppTextStyles.caption.copyWith(
+                            color: AppColors.warning,
+                          ),
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        track.durationFormatted,
+                        style: AppTextStyles.caption,
+                      ),
+                    ],
                   ),
                 ],
               ),
-            ],
+            ),
           ),
         ),
       ),

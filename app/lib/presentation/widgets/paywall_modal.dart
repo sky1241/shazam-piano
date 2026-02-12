@@ -139,7 +139,7 @@ class _PaywallModalState extends ConsumerState<PaywallModal> {
 
   Widget _buildFeature(String text) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: AppConstants.spacing4),
       child: Row(
         children: [
           const Icon(Icons.check_circle, color: AppColors.success, size: 20),

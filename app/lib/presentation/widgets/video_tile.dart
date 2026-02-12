@@ -30,14 +30,15 @@ class VideoTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Card(
-        color: AppColors.card,
-        elevation: 0,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppConstants.radiusCard),
-        ),
+    return Card(
+      color: AppColors.card,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppConstants.radiusCard),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
         child: Stack(
           children: [
             // Content
@@ -86,7 +87,7 @@ class VideoTile extends StatelessWidget {
                                 size: 14,
                                 color: AppColors.textSecondary,
                               ),
-                              const SizedBox(width: 4),
+                              const SizedBox(width: AppConstants.spacing4),
                               Text(videoKey!, style: AppTextStyles.caption),
                               const SizedBox(width: AppConstants.spacing12),
                             ],
@@ -96,7 +97,7 @@ class VideoTile extends StatelessWidget {
                                 size: 14,
                                 color: AppColors.textSecondary,
                               ),
-                              const SizedBox(width: 4),
+                              const SizedBox(width: AppConstants.spacing4),
                               Text('$tempo BPM', style: AppTextStyles.caption),
                             ],
                           ],

@@ -24,29 +24,50 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
       appBar: AppBar(title: const Text('Historique')),
       body: history.isEmpty
           ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(
-                    Icons.history,
-                    size: 64,
-                    color: AppColors.textSecondary,
-                  ),
-                  const SizedBox(height: AppConstants.spacing16),
-                  Text(
-                    'Aucune generation recente',
-                    style: AppTextStyles.title.copyWith(
-                      color: AppColors.textSecondary,
+              child: Padding(
+                padding: const EdgeInsets.all(AppConstants.spacing32),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // Illustration (MOBILE.md §2 — Empty State)
+                    Container(
+                      width: 80,
+                      height: 80,
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.music_note_rounded,
+                        size: 40,
+                        color: AppColors.primary,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: AppConstants.spacing8),
-                  Text(
-                    'Vos creations apparaitront ici',
-                    style: AppTextStyles.caption.copyWith(
-                      color: AppColors.textSecondary,
+                    const SizedBox(height: AppConstants.spacing24),
+                    // Title
+                    Text(
+                      'Aucune creation recente',
+                      style: AppTextStyles.title,
+                      textAlign: TextAlign.center,
                     ),
-                  ),
-                ],
+                    const SizedBox(height: AppConstants.spacing8),
+                    // Explanation
+                    Text(
+                      'Enregistrez un morceau de piano\npour voir vos creations ici',
+                      style: AppTextStyles.body.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: AppConstants.spacing24),
+                    // CTA
+                    ElevatedButton.icon(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.mic),
+                      label: const Text('Enregistrer'),
+                    ),
+                  ],
+                ),
               ),
             )
           : ListView.separated(

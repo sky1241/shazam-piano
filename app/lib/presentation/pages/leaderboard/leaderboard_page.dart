@@ -55,7 +55,7 @@ class _LeaderboardPageState extends ConsumerState<LeaderboardPage> {
             ),
             Text(
               widget.trackTitle,
-              style: AppTextStyles.caption.copyWith(fontSize: 11),
+              style: AppTextStyles.caption,
             ),
           ],
         ),
@@ -103,8 +103,8 @@ class _RotationTimer extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.timer_outlined, size: 14, color: AppColors.primary),
-          const SizedBox(width: 4),
+          const Icon(Icons.timer_outlined, size: 16, color: AppColors.primary),
+          const SizedBox(width: AppConstants.spacing4),
           Text(
             '3j 14h', // TODO: dynamique via RotationService
             style: AppTextStyles.caption.copyWith(
@@ -236,7 +236,7 @@ class _PodiumItem extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(_medal, style: const TextStyle(fontSize: 24)),
-        const SizedBox(height: 4),
+        const SizedBox(height: AppConstants.spacing4),
         // Avatar circle
         CircleAvatar(
           radius: 20,
@@ -248,10 +248,10 @@ class _PodiumItem extends StatelessWidget {
             style: AppTextStyles.title.copyWith(color: _color),
           ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: AppConstants.spacing4),
         Text(
           entry.displayName,
-          style: AppTextStyles.caption.copyWith(fontSize: 11),
+          style: AppTextStyles.caption,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
@@ -343,7 +343,7 @@ class _LeaderboardRow extends StatelessWidget {
               entry.displayName.isNotEmpty
                   ? entry.displayName[0].toUpperCase()
                   : '?',
-              style: AppTextStyles.caption.copyWith(fontSize: 10),
+              style: AppTextStyles.caption,
             ),
           ),
           const SizedBox(width: AppConstants.spacing8),
@@ -363,14 +363,14 @@ class _LeaderboardRow extends StatelessWidget {
             entry.comboText,
             style: AppTextStyles.caption.copyWith(
               color: AppColors.warning,
-              fontSize: 11,
+              fontSize: AppConstants.fontSizeMin,
             ),
           ),
           const SizedBox(width: AppConstants.spacing12),
           // Accuracy
           Text(
             entry.accuracyText,
-            style: AppTextStyles.caption.copyWith(fontSize: 11),
+            style: AppTextStyles.caption,
           ),
           const SizedBox(width: AppConstants.spacing12),
           // Score

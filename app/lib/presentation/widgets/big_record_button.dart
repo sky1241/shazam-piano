@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/constants/app_constants.dart';
 
 /// Large circular record button (Shazam-style)
 /// States: idle, recording, processing
+///
+/// UX rules applied: haptic feedback, reduced motion support,
+/// InkWell for Material feedback.
 class BigRecordButton extends StatefulWidget {
   final VoidCallback? onTap;
   final RecordButtonState state;
@@ -46,14 +50,24 @@ class _BigRecordButtonState extends State<BigRecordButton>
 
   @override
   Widget build(BuildContext context) {
+    // Reduced motion support (MOBILE.md §61)
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+
     return GestureDetector(
-      onTap: widget.state != RecordButtonState.processing ? widget.onTap : null,
+      onTap: widget.state != RecordButtonState.processing
+          ? () {
+              // Haptic feedback (MOBILE.md §60)
+              HapticFeedback.mediumImpact();
+              widget.onTap?.call();
+            }
+          : null,
       child: AnimatedBuilder(
         animation: _pulseAnimation,
         builder: (context, child) {
-          final scale = widget.state == RecordButtonState.recording
-              ? _pulseAnimation.value
-              : 1.0;
+          final scale =
+              widget.state == RecordButtonState.recording && !reduceMotion
+                  ? _pulseAnimation.value
+                  : 1.0;
 
           return Transform.scale(
             scale: scale,

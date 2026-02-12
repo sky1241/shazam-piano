@@ -239,7 +239,7 @@ class _VoteCard extends StatelessWidget {
             ),
             decoration: BoxDecoration(
               color: AppColors.surface,
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(AppConstants.radiusSmall),
             ),
             child: Text(
               '${candidate.voteCount}',

@@ -6,6 +6,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/music/models.dart';
@@ -70,9 +71,9 @@ class _FreeTrackPageState extends ConsumerState<FreeTrackPage> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const SizedBox(height: 40),
+                      const SizedBox(height: AppConstants.spacing40),
                       const Text('🎹', style: TextStyle(fontSize: 48)),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: AppConstants.spacing8),
                       Text(
                         widget.track.composer,
                         style: AppTextStyles.body.copyWith(
@@ -83,18 +84,18 @@ class _FreeTrackPageState extends ConsumerState<FreeTrackPage> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(widget.track.difficultyEmoji),
-                          const SizedBox(width: 4),
+                          const SizedBox(width: AppConstants.spacing4),
                           Text(
                             widget.track.difficulty.toUpperCase(),
                             style: AppTextStyles.caption,
                           ),
-                          const SizedBox(width: 12),
+                          const SizedBox(width: AppConstants.spacing12),
                           const Icon(
                             Icons.timer_outlined,
-                            size: 12,
+                            size: 16,
                             color: AppColors.textSecondary,
                           ),
-                          const SizedBox(width: 4),
+                          const SizedBox(width: AppConstants.spacing4),
                           Text(
                             widget.track.durationFormatted,
                             style: AppTextStyles.caption,
@@ -257,42 +258,55 @@ class _LevelSelector extends StatelessWidget {
         final level = index + 1;
         final isSelected = level == selectedLevel;
         return Expanded(
-          child: GestureDetector(
-            onTap: () => onLevelChanged(level),
-            child: Container(
-              margin: EdgeInsets.only(
-                right: index < 3 ? AppConstants.spacing4 : 0,
-              ),
-              padding: const EdgeInsets.symmetric(
-                vertical: AppConstants.spacing8,
-              ),
-              decoration: BoxDecoration(
-                color: isSelected
-                    ? AppColors.primary.withValues(alpha: 0.2)
-                    : AppColors.card,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: isSelected ? AppColors.primary : AppColors.divider,
-                ),
-              ),
-              child: Column(
-                children: [
-                  Text(
-                    '$level',
-                    style: AppTextStyles.body.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: isSelected
-                          ? AppColors.primary
-                          : AppColors.textPrimary,
+          child: Padding(
+            padding: EdgeInsets.only(
+              right: index < 3 ? AppConstants.spacing4 : 0,
+            ),
+            child: Material(
+              color: isSelected
+                  ? AppColors.primary.withValues(alpha: 0.2)
+                  : AppColors.card,
+              borderRadius: BorderRadius.circular(AppConstants.radiusSmall),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(AppConstants.radiusSmall),
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  onLevelChanged(level);
+                },
+                child: Container(
+                  constraints: const BoxConstraints(
+                    minHeight: AppConstants.touchTargetMin,
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    vertical: AppConstants.spacing8,
+                  ),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(AppConstants.radiusSmall),
+                    border: Border.all(
+                      color: isSelected ? AppColors.primary : AppColors.divider,
                     ),
                   ),
-                  Text(
-                    AppConstants.levelNames[index],
-                    style: AppTextStyles.caption.copyWith(fontSize: 9),
-                    textAlign: TextAlign.center,
-                    maxLines: 1,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        '$level',
+                        style: AppTextStyles.body.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: isSelected
+                              ? AppColors.primary
+                              : AppColors.textPrimary,
+                        ),
+                      ),
+                      Text(
+                        AppConstants.levelNames[index],
+                        style: AppTextStyles.caption,
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
           ),
@@ -418,17 +432,17 @@ class _LeaderboardPreview extends StatelessWidget {
             child: Row(
               children: [
                 SizedBox(
-                  width: 24,
+                  width: 28,
                   child: Text(
                     rank <= 3 ? ['🥇', '🥈', '🥉'][rank - 1] : '#$rank',
-                    style: AppTextStyles.caption.copyWith(fontSize: 11),
+                    style: AppTextStyles.caption,
                   ),
                 ),
                 const SizedBox(width: AppConstants.spacing8),
                 Expanded(
                   child: Text(
                     entry.displayName,
-                    style: AppTextStyles.body.copyWith(fontSize: 13),
+                    style: AppTextStyles.body,
                     maxLines: 1,
                   ),
                 ),
@@ -436,7 +450,6 @@ class _LeaderboardPreview extends StatelessWidget {
                   entry.scoreFormatted,
                   style: AppTextStyles.body.copyWith(
                     fontWeight: FontWeight.bold,
-                    fontSize: 13,
                   ),
                 ),
               ],
@@ -497,7 +510,7 @@ class _BottomBar extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Icon(Icons.piano, size: 20),
-                    SizedBox(width: 8),
+                    SizedBox(width: AppConstants.spacing8),
                     Text(
                       'PRACTICE MODE',
                       style: TextStyle(
