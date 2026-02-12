@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' show sin, pi;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_colors.dart';
@@ -135,15 +136,9 @@ class _HomePageState extends ConsumerState<HomePage>
           child: LayoutBuilder(
             builder: (context, constraints) {
               final isCompact = constraints.maxHeight < 720;
-              final gapLg = isCompact
-                  ? AppConstants.spacing16
-                  : AppConstants.spacing32;
               final sectionPad = isCompact
                   ? AppConstants.spacing16
                   : AppConstants.spacing24;
-              final chipGap = isCompact
-                  ? AppConstants.spacing8
-                  : AppConstants.spacing12;
               return Column(
                 children: [
                   // App bar
@@ -186,76 +181,37 @@ class _HomePageState extends ConsumerState<HomePage>
                     },
                   ),
 
-                  // Main content: Big record button
+                  // ── Record Hero: button + rings + text ──
                   Expanded(
-                    child: LayoutBuilder(
-                      builder: (context, innerConstraints) {
-                        return Center(
-                          child: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            child: ConstrainedBox(
-                              constraints: BoxConstraints(
-                                maxWidth:
-                                    innerConstraints.maxWidth -
-                                    (AppConstants.spacing16 * 2),
-                              ),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  BigRecordButton(
-                                    state: _buttonState,
-                                    size: isCompact ? 160 : 180,
-                                    onTap: _handleRecordButtonTap,
-                                  ),
-                                  SizedBox(height: gapLg),
-                                  Text(
-                                    _getButtonText(),
-                                    style: AppTextStyles.display.copyWith(
-                                      fontSize: 20,
-                                    ),
-                                    textAlign: TextAlign.center,
-                                  ),
-                                  const SizedBox(height: AppConstants.spacing8),
-                                  Text(
-                                    _getSubtitleText(),
-                                    style: AppTextStyles.body.copyWith(
-                                      color: AppColors.textSecondary,
-                                    ),
-                                    textAlign: TextAlign.center,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        );
-                      },
+                    child: Center(
+                      child: _RecordHero(
+                        buttonState: _buttonState,
+                        onTap: _handleRecordButtonTap,
+                        isCompact: isCompact,
+                        mainText: _getButtonText(),
+                        subText: _getSubtitleText(),
+                      ),
                     ),
                   ),
 
-                  // Level status chips + ad placeholder
+                  // ── Level chips ──
                   Padding(
-                    padding: EdgeInsets.all(sectionPad),
-                    child: Column(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: sectionPad,
+                      vertical: AppConstants.spacing12,
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Text(
-                          'Progression des niveaux',
-                          style: AppTextStyles.caption,
-                        ),
-                        SizedBox(height: chipGap),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            for (int i = 1; i <= 4; i++) ...[
-                              ModeChip(
-                                level: i,
-                                status:
-                                    levelStatuses[i] ?? ModeChipStatus.queued,
-                              ),
-                              if (i < 4)
-                                const SizedBox(width: AppConstants.spacing8),
-                            ],
-                          ],
-                        ),
+                        for (int i = 1; i <= 4; i++) ...[
+                          ModeChip(
+                            level: i,
+                            status:
+                                levelStatuses[i] ?? ModeChipStatus.queued,
+                          ),
+                          if (i < 4)
+                            const SizedBox(width: AppConstants.spacing8),
+                        ],
                       ],
                     ),
                   ),
@@ -271,22 +227,22 @@ class _HomePageState extends ConsumerState<HomePage>
   String _getButtonText() {
     switch (_buttonState) {
       case RecordButtonState.idle:
-        return 'Appuie pour créer\ntes 4 vidéos piano';
+        return 'Joue et enregistre';
       case RecordButtonState.recording:
-        return 'Enregistrement...\n${AppConstants.recommendedRecordingDurationSec}s recommandés';
+        return 'Enregistrement...';
       case RecordButtonState.processing:
-        return 'Génération en cours...';
+        return 'Analyse en cours...';
     }
   }
 
   String _getSubtitleText() {
     switch (_buttonState) {
       case RecordButtonState.idle:
-        return 'Enregistre environ ${AppConstants.recommendedRecordingDurationSec} secondes de piano';
+        return '~${AppConstants.recommendedRecordingDurationSec}s de piano \u2192 4 niveaux';
       case RecordButtonState.recording:
         return 'Appuie pour arrêter';
       case RecordButtonState.processing:
-        return 'Création de tes 4 niveaux...';
+        return 'Création de tes 4 niveaux';
     }
   }
 
@@ -588,6 +544,182 @@ class _HomePageState extends ConsumerState<HomePage>
     ).push(MaterialPageRoute(builder: (context) => const HistoryPage()));
   }
 }
+
+// ─── Record Hero: button + concentric rings + ambient glow ─────────
+
+class _RecordHero extends StatefulWidget {
+  final RecordButtonState buttonState;
+  final VoidCallback? onTap;
+  final bool isCompact;
+  final String mainText;
+  final String subText;
+
+  const _RecordHero({
+    required this.buttonState,
+    required this.onTap,
+    required this.isCompact,
+    required this.mainText,
+    required this.subText,
+  });
+
+  @override
+  State<_RecordHero> createState() => _RecordHeroState();
+}
+
+class _RecordHeroState extends State<_RecordHero>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ringController;
+
+  @override
+  void initState() {
+    super.initState();
+    _ringController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 4000),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ringController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final buttonSize = widget.isCompact ? 160.0 : 180.0;
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+    final isRecording =
+        widget.buttonState == RecordButtonState.recording;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // ── Button + animated rings ──
+        AnimatedBuilder(
+          animation: _ringController,
+          builder: (context, child) {
+            return SizedBox(
+              width: buttonSize * 1.9,
+              height: buttonSize * 1.9,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  // Ambient radial glow
+                  Container(
+                    width: buttonSize * 1.5,
+                    height: buttonSize * 1.5,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [
+                          AppColors.primary.withValues(
+                            alpha: isRecording ? 0.15 : 0.07,
+                          ),
+                          AppColors.primary.withValues(alpha: 0.0),
+                        ],
+                      ),
+                    ),
+                  ),
+                  // Ring 3 — outermost
+                  _buildRing(
+                    size: buttonSize * 1.72,
+                    phaseIndex: 0,
+                    reduceMotion: reduceMotion,
+                    isRecording: isRecording,
+                  ),
+                  // Ring 2 — middle
+                  _buildRing(
+                    size: buttonSize * 1.44,
+                    phaseIndex: 1,
+                    reduceMotion: reduceMotion,
+                    isRecording: isRecording,
+                  ),
+                  // Ring 1 — closest to button
+                  _buildRing(
+                    size: buttonSize * 1.2,
+                    phaseIndex: 2,
+                    reduceMotion: reduceMotion,
+                    isRecording: isRecording,
+                  ),
+                  // The button itself
+                  child!,
+                ],
+              ),
+            );
+          },
+          child: BigRecordButton(
+            state: widget.buttonState,
+            size: buttonSize,
+            onTap: widget.onTap,
+          ),
+        ),
+
+        SizedBox(
+          height: widget.isCompact
+              ? AppConstants.spacing12
+              : AppConstants.spacing24,
+        ),
+
+        // ── CTA text ──
+        Text(
+          widget.mainText,
+          style: AppTextStyles.title.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: AppConstants.spacing4),
+        Text(
+          widget.subText,
+          style: AppTextStyles.caption.copyWith(
+            color: AppColors.textSecondary.withValues(alpha: 0.8),
+          ),
+          textAlign: TextAlign.center,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRing({
+    required double size,
+    required int phaseIndex,
+    required bool reduceMotion,
+    required bool isRecording,
+  }) {
+    double scale = 1.0;
+    if (!reduceMotion) {
+      final phase = phaseIndex * (2 * pi / 3);
+      final amplitude = isRecording ? 0.035 : 0.02;
+      scale = 1.0 +
+          sin(_ringController.value * 2 * pi + phase) * amplitude;
+    }
+
+    // Inner rings (higher phaseIndex) = more visible
+    const idleOpacities = [0.04, 0.07, 0.11];
+    const recordOpacities = [0.10, 0.16, 0.22];
+    final opacity = isRecording
+        ? recordOpacities[phaseIndex]
+        : idleOpacities[phaseIndex];
+
+    return Transform.scale(
+      scale: scale,
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: AppColors.primary.withValues(alpha: opacity),
+            width: isRecording ? 1.5 : 1.0,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Ad Gate ────────────────────────────────────────────────────────
 
 enum _AdDecision { watch, skip }
 
