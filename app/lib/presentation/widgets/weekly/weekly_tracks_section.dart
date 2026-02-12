@@ -313,7 +313,9 @@ class _TrackCard extends StatelessWidget {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: AppConstants.spacing4),
+
+                // Pousse le compositeur en bas de la carte
+                const Spacer(),
 
                 // Compositeur + duree
                 Text(
