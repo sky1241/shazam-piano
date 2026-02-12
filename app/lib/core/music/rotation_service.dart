@@ -1,6 +1,6 @@
 /// ShazaPiano - Service de rotation hebdomadaire déterministe
 ///
-/// Algorithme : seed = year * 100 + weekNumber → shuffle déterministe → pick 5
+/// Algorithme : seed = year * 100 + weekNumber → shuffle déterministe → pick 6
 /// Même résultat sur tous les devices pour la même semaine.
 ///
 /// NOT connected to existing code. Ready to be integrated.
@@ -12,7 +12,7 @@ import 'models.dart';
 import 'free_tracks_catalog.dart';
 
 class RotationService {
-  /// Retourne les 5 musiques de la semaine courante
+  /// Retourne les 6 musiques de la semaine courante
   static WeeklyRotation getCurrentRotation() {
     final now = DateTime.now();
     return getRotationForDate(now);
@@ -26,6 +26,10 @@ class RotationService {
   }
 
   /// Retourne la rotation pour un numéro de semaine ISO
+  ///
+  /// Sélection catégorisée : 2 easy + 2 medium + 2 hard.
+  /// Page 1 = 1 facile + 1 difficile (contraste extrêmes).
+  /// Pages 2-3 = les 4 restants en ordre aléatoire.
   static WeeklyRotation getRotationForWeek(int weekNumber, int year) {
     final pool = FreeTracksCatalog.allTracks;
 
@@ -33,9 +37,35 @@ class RotationService {
     final seed = year * 100 + weekNumber;
     final rng = Random(seed);
 
-    // Shuffle et prendre les 5 premiers
-    final shuffled = List<FreeTrack>.from(pool)..shuffle(rng);
-    final selected = shuffled.take(5).toList();
+    // Séparer par difficulté et shuffle chaque groupe
+    final easy = List<FreeTrack>.from(
+      pool.where((t) => t.difficulty == 'easy'),
+    )..shuffle(rng);
+    final medium = List<FreeTrack>.from(
+      pool.where((t) => t.difficulty == 'medium'),
+    )..shuffle(rng);
+    final hard = List<FreeTrack>.from(
+      pool.where((t) => t.difficulty == 'hard'),
+    )..shuffle(rng);
+
+    // Prendre 2 de chaque
+    final pick2Easy = easy.take(2).toList();
+    final pick2Medium = medium.take(2).toList();
+    final pick2Hard = hard.take(2).toList();
+
+    // Page 1 : 1 facile + 1 difficile (les extrêmes)
+    // Pages 2-3 : les 4 restants mélangés
+    final remaining = <FreeTrack>[
+      pick2Easy[1],
+      ...pick2Medium,
+      pick2Hard[1],
+    ]..shuffle(rng);
+
+    final selected = <FreeTrack>[
+      pick2Easy[0], // Page 1 : facile
+      pick2Hard[0], // Page 1 : difficile
+      ...remaining, // Pages 2-3 : aléatoire
+    ];
 
     // Calculer début et fin de semaine
     final monday = _mondayOfISOWeek(weekNumber, year);

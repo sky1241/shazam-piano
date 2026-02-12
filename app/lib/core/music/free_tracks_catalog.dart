@@ -139,6 +139,22 @@ class FreeTracksCatalog {
       durationSec: 360,
       coverAssetPath: 'assets/covers/sonate_clair_lune.jpg',
     ),
+    const FreeTrack(
+      id: 'fantaisie_impromptu',
+      title: 'Fantaisie-Impromptu Op.66',
+      composer: 'Chopin',
+      difficulty: 'hard',
+      durationSec: 300,
+      coverAssetPath: 'assets/covers/fantaisie_impromptu.jpg',
+    ),
+    const FreeTrack(
+      id: 'liebestraum_3',
+      title: 'Liebestraum n°3',
+      composer: 'Liszt',
+      difficulty: 'hard',
+      durationSec: 270,
+      coverAssetPath: 'assets/covers/liebestraum_3.jpg',
+    ),
   ];
 
   /// Nombre total de musiques dans le pool

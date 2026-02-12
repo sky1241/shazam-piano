@@ -1,6 +1,6 @@
 /// ShazaPiano - Section "Cette semaine" pour la HomePage
 ///
-/// Affiche les 5 musiques en rotation avec timer et rang leaderboard.
+/// Affiche les 6 musiques en rotation avec timer et rang leaderboard.
 /// PageView par paires : chaque swipe = 2 nouvelles cartes.
 ///
 /// UX rules applied: touch targets 44px, min font 12px, InkWell feedback,
