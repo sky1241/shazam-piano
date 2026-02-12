@@ -89,15 +89,15 @@ class WeeklyRotation {
     return endsAt.difference(now);
   }
 
-  /// Texte formaté : "Rotation dans 3j 14h"
+  /// Texte formaté : "Nouveau dans 3j"
   String get timeRemainingText {
     final remaining = timeRemaining;
-    if (remaining == Duration.zero) return 'Nouvelle rotation !';
+    if (remaining == Duration.zero) return 'Nouveau !';
     final days = remaining.inDays;
     final hours = remaining.inHours % 24;
-    if (days > 0) return 'Rotation dans ${days}j ${hours}h';
+    if (days > 0) return 'Nouveau dans ${days}j';
     final minutes = remaining.inMinutes % 60;
-    return 'Rotation dans ${hours}h ${minutes}min';
+    return 'Nouveau dans ${hours}h${minutes > 0 ? ' ${minutes}m' : ''}';
   }
 
   /// Est-ce que la rotation est active ?

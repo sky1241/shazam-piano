@@ -58,78 +58,70 @@ class _WeeklyTracksSectionState extends ConsumerState<WeeklyTracksSection> {
           padding: const EdgeInsets.symmetric(
             horizontal: AppConstants.spacing16,
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Title
-              Text(
-                'Cette semaine',
-                style: AppTextStyles.title.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const Spacer(),
-              // Timer pill
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppConstants.spacing8,
-                  vertical: AppConstants.spacing4,
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(
-                    AppConstants.radiusButton,
+              // Row 1: Title + timer
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  Text(
+                    'Cette semaine',
+                    style: AppTextStyles.title.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                  border: Border.all(color: AppColors.divider),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.timer_outlined,
-                      size: 14,
-                      color: AppColors.primary,
+                  const SizedBox(width: AppConstants.spacing8),
+                  Text(
+                    rotation.timeRemainingText,
+                    style: AppTextStyles.caption.copyWith(
+                      color: AppColors.textSecondary,
                     ),
-                    const SizedBox(width: AppConstants.spacing4),
-                    Text(
-                      rotation.timeRemainingText,
-                      style: AppTextStyles.caption.copyWith(
-                        color: AppColors.textSecondary,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-              // Vote button
+              // Row 2: Vote CTA
               if (widget.onVoteTap != null) ...[
-                const SizedBox(width: AppConstants.spacing8),
+                const SizedBox(height: AppConstants.spacing8),
                 Material(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(
-                    AppConstants.radiusMedium,
-                  ),
+                  color: Colors.transparent,
                   child: InkWell(
                     borderRadius: BorderRadius.circular(
-                      AppConstants.radiusMedium,
+                      AppConstants.radiusButton,
                     ),
                     onTap: () {
                       HapticFeedback.selectionClick();
                       widget.onVoteTap?.call();
                     },
                     child: Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(
-                          AppConstants.radiusMedium,
-                        ),
-                        border: Border.all(color: AppColors.divider),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppConstants.spacing12,
+                        vertical: AppConstants.spacing8,
                       ),
-                      child: Icon(
-                        Icons.how_to_vote_rounded,
-                        size: 20,
-                        color: AppColors.warning,
+                      decoration: BoxDecoration(
+                        gradient: AppColors.buttonGradient,
+                        borderRadius: BorderRadius.circular(
+                          AppConstants.radiusButton,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.star_rounded,
+                            size: 16,
+                            color: Colors.white,
+                          ),
+                          const SizedBox(width: AppConstants.spacing4),
+                          Text(
+                            'Choisis la prochaine s\u00e9lection',
+                            style: AppTextStyles.caption.copyWith(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
