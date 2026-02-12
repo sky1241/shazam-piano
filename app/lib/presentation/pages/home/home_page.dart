@@ -194,25 +194,13 @@ class _HomePageState extends ConsumerState<HomePage>
                     ),
                   ),
 
-                  // ── Level chips ──
+                  // ── Level progress stepper ──
                   Padding(
                     padding: EdgeInsets.symmetric(
                       horizontal: sectionPad,
                       vertical: AppConstants.spacing12,
                     ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        for (int i = 1; i <= 4; i++) ...[
-                          ModeChip(
-                            level: i,
-                            status: levelStatuses[i] ?? ModeChipStatus.queued,
-                          ),
-                          if (i < 4)
-                            const SizedBox(width: AppConstants.spacing8),
-                        ],
-                      ],
-                    ),
+                    child: LevelProgressStepper(statuses: levelStatuses),
                   ),
                 ],
               );
@@ -226,7 +214,7 @@ class _HomePageState extends ConsumerState<HomePage>
   String _getButtonText() {
     switch (_buttonState) {
       case RecordButtonState.idle:
-        return 'Joue et enregistre';
+        return 'Enregistrer';
       case RecordButtonState.recording:
         return 'Enregistrement...';
       case RecordButtonState.processing:
@@ -237,11 +225,11 @@ class _HomePageState extends ConsumerState<HomePage>
   String _getSubtitleText() {
     switch (_buttonState) {
       case RecordButtonState.idle:
-        return '~${AppConstants.recommendedRecordingDurationSec}s de piano \u2192 4 niveaux';
+        return '~${AppConstants.recommendedRecordingDurationSec}s \u2192 4 niveaux de piano';
       case RecordButtonState.recording:
-        return 'Appuie pour arrêter';
+        return 'Appuie pour arr\u00eater';
       case RecordButtonState.processing:
-        return 'Création de tes 4 niveaux';
+        return 'Cr\u00e9ation de tes 4 niveaux';
     }
   }
 
@@ -600,45 +588,59 @@ class _RecordHeroState extends State<_RecordHero>
             animation: _ringController,
             builder: (context, child) {
               return SizedBox(
-                width: buttonSize * 1.9,
-                height: buttonSize * 1.9,
+                width: buttonSize * 2.15,
+                height: buttonSize * 2.15,
                 child: Stack(
                   alignment: Alignment.center,
                   children: [
                     // Ambient radial glow
                     Container(
-                      width: buttonSize * 1.5,
-                      height: buttonSize * 1.5,
+                      width: buttonSize * 1.7,
+                      height: buttonSize * 1.7,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         gradient: RadialGradient(
                           colors: [
                             AppColors.primary.withValues(
-                              alpha: isRecording ? 0.15 : 0.07,
+                              alpha: isRecording ? 0.45 : 0.28,
                             ),
                             AppColors.primary.withValues(alpha: 0.0),
                           ],
                         ),
                       ),
                     ),
-                    // Ring 3 — outermost
+                    // Ring 5 — outermost
                     _buildRing(
-                      size: buttonSize * 1.72,
+                      size: buttonSize * 1.92,
                       phaseIndex: 0,
                       reduceMotion: reduceMotion,
                       isRecording: isRecording,
                     ),
-                    // Ring 2 — middle
+                    // Ring 4
                     _buildRing(
-                      size: buttonSize * 1.44,
+                      size: buttonSize * 1.76,
                       phaseIndex: 1,
+                      reduceMotion: reduceMotion,
+                      isRecording: isRecording,
+                    ),
+                    // Ring 3
+                    _buildRing(
+                      size: buttonSize * 1.58,
+                      phaseIndex: 2,
+                      reduceMotion: reduceMotion,
+                      isRecording: isRecording,
+                    ),
+                    // Ring 2
+                    _buildRing(
+                      size: buttonSize * 1.40,
+                      phaseIndex: 3,
                       reduceMotion: reduceMotion,
                       isRecording: isRecording,
                     ),
                     // Ring 1 — closest to button
                     _buildRing(
-                      size: buttonSize * 1.2,
-                      phaseIndex: 2,
+                      size: buttonSize * 1.24,
+                      phaseIndex: 4,
                       reduceMotion: reduceMotion,
                       isRecording: isRecording,
                     ),
@@ -671,7 +673,7 @@ class _RecordHeroState extends State<_RecordHero>
           Text(
             widget.subText,
             style: AppTextStyles.caption.copyWith(
-              color: AppColors.textSecondary.withValues(alpha: 0.8),
+              color: AppColors.textSecondary,
             ),
             textAlign: TextAlign.center,
           ),
@@ -688,14 +690,14 @@ class _RecordHeroState extends State<_RecordHero>
   }) {
     double scale = 1.0;
     if (!reduceMotion) {
-      final phase = phaseIndex * (2 * pi / 3);
-      final amplitude = isRecording ? 0.035 : 0.02;
+      final phase = phaseIndex * (2 * pi / 5);
+      final amplitude = isRecording ? 0.04 : 0.025;
       scale = 1.0 + sin(_ringController.value * 2 * pi + phase) * amplitude;
     }
 
-    // Inner rings (higher phaseIndex) = more visible
-    const idleOpacities = [0.04, 0.07, 0.11];
-    const recordOpacities = [0.10, 0.16, 0.22];
+    // Inner rings — high contrast for mobile screens
+    const idleOpacities = [0.18, 0.26, 0.36, 0.48, 0.62];
+    const recordOpacities = [0.30, 0.42, 0.56, 0.70, 0.85];
     final opacity = isRecording
         ? recordOpacities[phaseIndex]
         : idleOpacities[phaseIndex];
@@ -709,7 +711,7 @@ class _RecordHeroState extends State<_RecordHero>
           shape: BoxShape.circle,
           border: Border.all(
             color: AppColors.primary.withValues(alpha: opacity),
-            width: isRecording ? 1.5 : 1.0,
+            width: isRecording ? 3.0 : 2.0,
           ),
         ),
       ),

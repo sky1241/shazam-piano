@@ -3,104 +3,159 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../core/constants/app_constants.dart';
 
-/// Progress chip for each level (L1-L4)
-class ModeChip extends StatelessWidget {
-  final int level;
-  final ModeChipStatus status;
+enum ModeChipStatus { queued, processing, completed, error }
 
-  const ModeChip({super.key, required this.level, required this.status});
+/// Horizontal stepper showing L1-L4 processing progress as connected nodes.
+///
+/// UX rules applied: 44px touch targets, 12px min font (WCAG),
+/// 4px spacing grid, status-aware glow halos.
+class LevelProgressStepper extends StatelessWidget {
+  final Map<int, ModeChipStatus> statuses;
+
+  const LevelProgressStepper({super.key, required this.statuses});
+
+  static const _labels = ['Intro', 'Facile', 'Moyen', 'Pro'];
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppConstants.spacing12,
-        vertical: AppConstants.spacing8,
-      ),
-      decoration: BoxDecoration(
-        color: _getBackgroundColor(),
-        borderRadius: BorderRadius.circular(AppConstants.radiusCard),
-        border: Border.all(color: _getBorderColor(), width: 1),
-      ),
-      child: Row(
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (int i = 1; i <= 4; i++) ...[
+          _LevelNode(
+            level: i,
+            label: _labels[i - 1],
+            status: statuses[i] ?? ModeChipStatus.queued,
+          ),
+          if (i < 4)
+            _Connector(
+              leftDone:
+                  (statuses[i] ?? ModeChipStatus.queued) ==
+                  ModeChipStatus.completed,
+            ),
+        ],
+      ],
+    );
+  }
+}
+
+class _LevelNode extends StatelessWidget {
+  final int level;
+  final String label;
+  final ModeChipStatus status;
+
+  const _LevelNode({
+    required this.level,
+    required this.label,
+    required this.status,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _color;
+    final isActive = status != ModeChipStatus.queued;
+
+    return SizedBox(
+      width: AppConstants.touchTargetMin,
+      child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _buildStatusIcon(),
-          const SizedBox(width: AppConstants.spacing8),
-          Text(
-            'L$level',
-            style: AppTextStyles.body.copyWith(
-              color: _getTextColor(),
-              fontWeight: FontWeight.w600,
+          // Node circle — max contrast for mobile
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isActive
+                  ? color.withValues(alpha: 0.25)
+                  : AppColors.divider,
+              border: Border.all(
+                color: isActive ? color : AppColors.textSecondary,
+                width: status == ModeChipStatus.processing ? 2.5 : 2.0,
+              ),
+              boxShadow: isActive
+                  ? [
+                      BoxShadow(
+                        color: color.withValues(alpha: 0.5),
+                        blurRadius: 14,
+                        spreadRadius: 1,
+                      ),
+                    ]
+                  : null,
             ),
+            child: Center(child: _buildIcon(color)),
+          ),
+          const SizedBox(height: AppConstants.spacing4),
+          // Level name
+          Text(
+            label,
+            style: AppTextStyles.caption.copyWith(
+              fontSize: AppConstants.fontSizeMin,
+              color: isActive ? color : AppColors.textSecondary,
+              fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+            ),
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
         ],
       ),
     );
   }
 
-  Widget _buildStatusIcon() {
-    switch (status) {
-      case ModeChipStatus.queued:
-        return const Icon(Icons.schedule, size: 16, color: AppColors.divider);
-      case ModeChipStatus.processing:
-        return const SizedBox(
-          width: 16,
-          height: 16,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: AppColors.warning,
-          ),
-        );
-      case ModeChipStatus.completed:
-        return const Icon(
-          Icons.check_circle,
-          size: 16,
-          color: AppColors.success,
-        );
-      case ModeChipStatus.error:
-        return const Icon(Icons.error, size: 16, color: AppColors.error);
-    }
+  Widget _buildIcon(Color color) {
+    return switch (status) {
+      ModeChipStatus.completed => Icon(
+        Icons.check_rounded,
+        size: 18,
+        color: color,
+      ),
+      ModeChipStatus.error => Icon(Icons.close_rounded, size: 18, color: color),
+      ModeChipStatus.processing => SizedBox(
+        width: 16,
+        height: 16,
+        child: CircularProgressIndicator(strokeWidth: 2, color: color),
+      ),
+      ModeChipStatus.queued => Text(
+        '$level',
+        style: AppTextStyles.caption.copyWith(
+          color: AppColors.textSecondary,
+          fontWeight: FontWeight.w700,
+          fontSize: 14,
+        ),
+      ),
+    };
   }
 
-  Color _getBackgroundColor() {
-    switch (status) {
-      case ModeChipStatus.queued:
-        return AppColors.surface;
-      case ModeChipStatus.processing:
-        return AppColors.warning.withValues(alpha: 0.1);
-      case ModeChipStatus.completed:
-        return AppColors.success.withValues(alpha: 0.1);
-      case ModeChipStatus.error:
-        return AppColors.error.withValues(alpha: 0.1);
-    }
-  }
-
-  Color _getBorderColor() {
-    switch (status) {
-      case ModeChipStatus.queued:
-        return AppColors.divider;
-      case ModeChipStatus.processing:
-        return AppColors.warning;
-      case ModeChipStatus.completed:
-        return AppColors.success;
-      case ModeChipStatus.error:
-        return AppColors.error;
-    }
-  }
-
-  Color _getTextColor() {
-    switch (status) {
-      case ModeChipStatus.queued:
-        return AppColors.textSecondary;
-      case ModeChipStatus.processing:
-        return AppColors.warning;
-      case ModeChipStatus.completed:
-        return AppColors.success;
-      case ModeChipStatus.error:
-        return AppColors.error;
-    }
-  }
+  Color get _color => switch (status) {
+    ModeChipStatus.queued => AppColors.textSecondary,
+    ModeChipStatus.processing => AppColors.primary,
+    ModeChipStatus.completed => AppColors.success,
+    ModeChipStatus.error => AppColors.error,
+  };
 }
 
-enum ModeChipStatus { queued, processing, completed, error }
+class _Connector extends StatelessWidget {
+  final bool leftDone;
+
+  const _Connector({required this.leftDone});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      // Vertically center with the 36px node circle
+      padding: const EdgeInsets.only(top: 17),
+      child: Container(
+        width: AppConstants.spacing20,
+        height: 2.0,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(1),
+          color: leftDone
+              ? AppColors.success.withValues(alpha: 0.8)
+              : AppColors.textSecondary.withValues(alpha: 0.4),
+        ),
+      ),
+    );
+  }
+}
