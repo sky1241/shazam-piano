@@ -590,90 +590,93 @@ class _RecordHeroState extends State<_RecordHero>
     final reduceMotion = MediaQuery.of(context).disableAnimations;
     final isRecording = widget.buttonState == RecordButtonState.recording;
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // ── Button + animated rings ──
-        AnimatedBuilder(
-          animation: _ringController,
-          builder: (context, child) {
-            return SizedBox(
-              width: buttonSize * 1.9,
-              height: buttonSize * 1.9,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  // Ambient radial glow
-                  Container(
-                    width: buttonSize * 1.5,
-                    height: buttonSize * 1.5,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: RadialGradient(
-                        colors: [
-                          AppColors.primary.withValues(
-                            alpha: isRecording ? 0.15 : 0.07,
-                          ),
-                          AppColors.primary.withValues(alpha: 0.0),
-                        ],
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // ── Button + animated rings ──
+          AnimatedBuilder(
+            animation: _ringController,
+            builder: (context, child) {
+              return SizedBox(
+                width: buttonSize * 1.9,
+                height: buttonSize * 1.9,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    // Ambient radial glow
+                    Container(
+                      width: buttonSize * 1.5,
+                      height: buttonSize * 1.5,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: RadialGradient(
+                          colors: [
+                            AppColors.primary.withValues(
+                              alpha: isRecording ? 0.15 : 0.07,
+                            ),
+                            AppColors.primary.withValues(alpha: 0.0),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                  // Ring 3 — outermost
-                  _buildRing(
-                    size: buttonSize * 1.72,
-                    phaseIndex: 0,
-                    reduceMotion: reduceMotion,
-                    isRecording: isRecording,
-                  ),
-                  // Ring 2 — middle
-                  _buildRing(
-                    size: buttonSize * 1.44,
-                    phaseIndex: 1,
-                    reduceMotion: reduceMotion,
-                    isRecording: isRecording,
-                  ),
-                  // Ring 1 — closest to button
-                  _buildRing(
-                    size: buttonSize * 1.2,
-                    phaseIndex: 2,
-                    reduceMotion: reduceMotion,
-                    isRecording: isRecording,
-                  ),
-                  // The button itself
-                  child!,
-                ],
-              ),
-            );
-          },
-          child: BigRecordButton(
-            state: widget.buttonState,
-            size: buttonSize,
-            onTap: widget.onTap,
+                    // Ring 3 — outermost
+                    _buildRing(
+                      size: buttonSize * 1.72,
+                      phaseIndex: 0,
+                      reduceMotion: reduceMotion,
+                      isRecording: isRecording,
+                    ),
+                    // Ring 2 — middle
+                    _buildRing(
+                      size: buttonSize * 1.44,
+                      phaseIndex: 1,
+                      reduceMotion: reduceMotion,
+                      isRecording: isRecording,
+                    ),
+                    // Ring 1 — closest to button
+                    _buildRing(
+                      size: buttonSize * 1.2,
+                      phaseIndex: 2,
+                      reduceMotion: reduceMotion,
+                      isRecording: isRecording,
+                    ),
+                    // The button itself
+                    child!,
+                  ],
+                ),
+              );
+            },
+            child: BigRecordButton(
+              state: widget.buttonState,
+              size: buttonSize,
+              onTap: widget.onTap,
+            ),
           ),
-        ),
 
-        SizedBox(
-          height: widget.isCompact
-              ? AppConstants.spacing12
-              : AppConstants.spacing24,
-        ),
-
-        // ── CTA text ──
-        Text(
-          widget.mainText,
-          style: AppTextStyles.title.copyWith(fontWeight: FontWeight.w700),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: AppConstants.spacing4),
-        Text(
-          widget.subText,
-          style: AppTextStyles.caption.copyWith(
-            color: AppColors.textSecondary.withValues(alpha: 0.8),
+          SizedBox(
+            height: widget.isCompact
+                ? AppConstants.spacing12
+                : AppConstants.spacing24,
           ),
-          textAlign: TextAlign.center,
-        ),
-      ],
+
+          // ── CTA text ──
+          Text(
+            widget.mainText,
+            style: AppTextStyles.title.copyWith(fontWeight: FontWeight.w700),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: AppConstants.spacing4),
+          Text(
+            widget.subText,
+            style: AppTextStyles.caption.copyWith(
+              color: AppColors.textSecondary.withValues(alpha: 0.8),
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
     );
   }
 
