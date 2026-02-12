@@ -141,24 +141,26 @@ class _HomePageState extends ConsumerState<HomePage>
                   : AppConstants.spacing24;
               return Column(
                 children: [
-                  // App bar — styled icon containers
+                  // App bar — minimal, no containers
                   Padding(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: AppConstants.spacing16,
-                      vertical: AppConstants.spacing8,
+                      horizontal: AppConstants.spacing8,
+                      vertical: AppConstants.spacing4,
                     ),
                     child: Row(
                       children: [
-                        _AppBarButton(
-                          icon: Icons.menu_rounded,
-                          onTap: _openSettings,
+                        IconButton(
+                          icon: const Icon(Icons.tune_rounded, size: 24),
+                          color: AppColors.textSecondary,
+                          onPressed: _openSettings,
                         ),
                         const Spacer(),
-                        const AppLogo(width: 110, height: 36),
+                        const AppLogo(width: 100, height: 32),
                         const Spacer(),
-                        _AppBarButton(
-                          icon: Icons.history_rounded,
-                          onTap: _openHistory,
+                        IconButton(
+                          icon: const Icon(Icons.history_rounded, size: 24),
+                          color: AppColors.textSecondary,
+                          onPressed: _openHistory,
                         ),
                       ],
                     ),
@@ -530,36 +532,6 @@ class _HomePageState extends ConsumerState<HomePage>
     Navigator.of(
       context,
     ).push(MaterialPageRoute(builder: (context) => const HistoryPage()));
-  }
-}
-
-// ─── App bar icon button ──────────────────────────────────────────
-
-class _AppBarButton extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback? onTap;
-
-  const _AppBarButton({required this.icon, this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: AppColors.surface,
-      borderRadius: BorderRadius.circular(AppConstants.radiusMedium),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(AppConstants.radiusMedium),
-        onTap: onTap,
-        child: Container(
-          width: AppConstants.touchTargetMin,
-          height: AppConstants.touchTargetMin,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(AppConstants.radiusMedium),
-            border: Border.all(color: AppColors.divider),
-          ),
-          child: Icon(icon, color: AppColors.textPrimary, size: 22),
-        ),
-      ),
-    );
   }
 }
 

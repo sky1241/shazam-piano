@@ -53,80 +53,50 @@ class _WeeklyTracksSectionState extends ConsumerState<WeeklyTracksSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // ── Header ──────────────────────────────────────
+        // ── Header — clean single row ─────────────────────
         Padding(
           padding: const EdgeInsets.symmetric(
             horizontal: AppConstants.spacing16,
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // Row 1: Title + timer
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.baseline,
-                textBaseline: TextBaseline.alphabetic,
-                children: [
-                  Text(
-                    'Cette semaine',
-                    style: AppTextStyles.title.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(width: AppConstants.spacing8),
-                  Text(
-                    rotation.timeRemainingText,
-                    style: AppTextStyles.caption.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
-              // Row 2: Vote CTA
-              if (widget.onVoteTap != null) ...[
-                const SizedBox(height: AppConstants.spacing8),
-                Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(
-                      AppConstants.radiusButton,
-                    ),
-                    onTap: () {
-                      HapticFeedback.selectionClick();
-                      widget.onVoteTap?.call();
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: AppConstants.spacing12,
-                        vertical: AppConstants.spacing8,
-                      ),
-                      decoration: BoxDecoration(
-                        gradient: AppColors.buttonGradient,
-                        borderRadius: BorderRadius.circular(
-                          AppConstants.radiusButton,
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.star_rounded,
-                            size: 16,
-                            color: Colors.white,
-                          ),
-                          const SizedBox(width: AppConstants.spacing4),
-                          Text(
-                            'Choisis la prochaine s\u00e9lection',
-                            style: AppTextStyles.caption.copyWith(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+              Text(
+                'Cette semaine',
+                style: AppTextStyles.title.copyWith(
+                  fontWeight: FontWeight.w700,
                 ),
-              ],
+              ),
+              const Spacer(),
+              // Timer as subtle metadata, right-aligned
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppConstants.spacing8,
+                  vertical: AppConstants.spacing4,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(AppConstants.radiusSmall),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.schedule_rounded,
+                      size: 13,
+                      color: AppColors.textSecondary.withValues(alpha: 0.7),
+                    ),
+                    const SizedBox(width: AppConstants.spacing4),
+                    Text(
+                      rotation.timeRemainingText,
+                      style: AppTextStyles.caption.copyWith(
+                        color: AppColors.textSecondary.withValues(alpha: 0.7),
+                        fontSize: AppConstants.fontSizeMin,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -169,39 +139,94 @@ class _WeeklyTracksSectionState extends ConsumerState<WeeklyTracksSection> {
           ),
         ),
 
-        // ── Page indicators ─────────────────────────────
-        if (pageCount > 1) ...[
-          const SizedBox(height: AppConstants.spacing12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(pageCount, (i) {
-              final isActive = i == _currentPage;
-              return AnimatedContainer(
-                duration: const Duration(
-                  milliseconds: AppConstants.animMicroMs,
+        // ── Footer: indicators + vote link ────────────────
+        const SizedBox(height: AppConstants.spacing12),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // Page indicators
+            if (pageCount > 1)
+              ...List.generate(pageCount, (i) {
+                final isActive = i == _currentPage;
+                return AnimatedContainer(
+                  duration: const Duration(
+                    milliseconds: AppConstants.animMicroMs,
+                  ),
+                  width: isActive ? 20 : 8,
+                  height: 5,
+                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  decoration: BoxDecoration(
+                    color: isActive
+                        ? AppColors.primary
+                        : AppColors.textSecondary.withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(3),
+                    boxShadow: isActive
+                        ? [
+                            BoxShadow(
+                              color: AppColors.primary.withValues(alpha: 0.4),
+                              blurRadius: 6,
+                              spreadRadius: 1,
+                            ),
+                          ]
+                        : null,
+                  ),
+                );
+              }),
+
+            // Separator dot between indicators and vote
+            if (pageCount > 1 && widget.onVoteTap != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppConstants.spacing8,
                 ),
-                width: isActive ? 20 : 8,
-                height: 5,
-                margin: const EdgeInsets.symmetric(horizontal: 3),
-                decoration: BoxDecoration(
-                  color: isActive
-                      ? AppColors.primary
-                      : AppColors.textSecondary.withValues(alpha: 0.3),
-                  borderRadius: BorderRadius.circular(3),
-                  boxShadow: isActive
-                      ? [
-                          BoxShadow(
-                            color: AppColors.primary.withValues(alpha: 0.4),
-                            blurRadius: 6,
-                            spreadRadius: 1,
+                child: Text(
+                  '\u00b7',
+                  style: TextStyle(
+                    color: AppColors.textSecondary.withValues(alpha: 0.4),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+
+            // Vote link — subtle, tappable
+            if (widget.onVoteTap != null)
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(AppConstants.radiusSmall),
+                  onTap: () {
+                    HapticFeedback.selectionClick();
+                    widget.onVoteTap?.call();
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppConstants.spacing8,
+                      vertical: AppConstants.spacing4,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.how_to_vote_rounded,
+                          size: 14,
+                          color: AppColors.primary.withValues(alpha: 0.8),
+                        ),
+                        const SizedBox(width: AppConstants.spacing4),
+                        Text(
+                          'Voter',
+                          style: AppTextStyles.caption.copyWith(
+                            color: AppColors.primary.withValues(alpha: 0.8),
+                            fontWeight: FontWeight.w600,
                           ),
-                        ]
-                      : null,
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-              );
-            }),
-          ),
-        ],
+              ),
+          ],
+        ),
       ],
     );
   }
@@ -319,7 +344,7 @@ class _TrackCard extends StatelessWidget {
 
                 // Compositeur + duree
                 Text(
-                  '${track.composer} · ${track.durationFormatted}',
+                  '${track.composer} \u00b7 ${track.durationFormatted}',
                   style: AppTextStyles.caption,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
