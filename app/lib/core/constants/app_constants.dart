@@ -28,12 +28,7 @@ class AppConstants {
 
   // Levels
   static const int totalLevels = 4;
-  static const List<String> levelNames = [
-    'Hyper Facile',
-    'Facile',
-    'Moyen',
-    'Pro',
-  ];
+  static const List<String> levelNames = ['Intro', 'Facile', 'Moyen', 'Pro'];
   static const List<String> levelDescriptions = [
     'Mélodie simple, main droite seule',
     'Mélodie + basse simple',

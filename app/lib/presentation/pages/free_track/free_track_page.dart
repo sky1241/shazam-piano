@@ -1,9 +1,12 @@
 /// ShazaPiano - Page détail d'une musique gratuite
 ///
-/// Affiche : preview vidéo, leaderboard résumé, bouton Practice, vote.
+/// Single-screen layout: no scroll. Compact header, circular level selector
+/// matching the home page stepper, piano roll preview, inline leaderboard.
 ///
-/// NOT connected to existing code. Ready to be integrated.
+/// UX rules: 44px touch targets, 12px min font, haptic, 4px grid, no scroll.
 library;
+
+import 'dart:math' show Random;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -41,131 +44,119 @@ class _FreeTrackPageState extends ConsumerState<FreeTrackPage> {
   @override
   Widget build(BuildContext context) {
     final leaderboard = ref.watch(leaderboardProvider);
+    final track = widget.track;
 
     return Scaffold(
       backgroundColor: AppColors.bg,
-      body: CustomScrollView(
-        slivers: [
-          // App bar avec image
-          SliverAppBar(
-            backgroundColor: AppColors.surface,
-            expandedHeight: 200,
-            pinned: true,
-            flexibleSpace: FlexibleSpaceBar(
-              title: Text(
-                widget.track.title,
-                style: AppTextStyles.title.copyWith(fontSize: 14),
+      // ── App bar ──────────────────────────────────────────
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          color: AppColors.textPrimary,
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+
+      // ── Body: single screen, no scroll ──────────────────
+      body: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            // ── Track header ──────────────────────────────
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppConstants.spacing16,
               ),
-              background: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      AppColors.primary.withValues(alpha: 0.3),
-                      AppColors.bg,
-                    ],
+              child: Column(
+                children: [
+                  // Title
+                  Text(
+                    track.title,
+                    style: AppTextStyles.title.copyWith(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 20,
+                    ),
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                ),
-                child: Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
+                  const SizedBox(height: AppConstants.spacing4),
+                  // Composer · difficulty · duration
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const SizedBox(height: AppConstants.spacing40),
-                      const Text('🎹', style: TextStyle(fontSize: 48)),
-                      const SizedBox(height: AppConstants.spacing8),
                       Text(
-                        widget.track.composer,
-                        style: AppTextStyles.body.copyWith(
+                        track.composer,
+                        style: AppTextStyles.caption.copyWith(
                           color: AppColors.textSecondary,
                         ),
                       ),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(widget.track.difficultyEmoji),
-                          const SizedBox(width: AppConstants.spacing4),
-                          Text(
-                            widget.track.difficulty.toUpperCase(),
-                            style: AppTextStyles.caption,
-                          ),
-                          const SizedBox(width: AppConstants.spacing12),
-                          const Icon(
-                            Icons.timer_outlined,
-                            size: 16,
-                            color: AppColors.textSecondary,
-                          ),
-                          const SizedBox(width: AppConstants.spacing4),
-                          Text(
-                            widget.track.durationFormatted,
-                            style: AppTextStyles.caption,
-                          ),
-                        ],
+                      _dot(),
+                      _DifficultyBadge(difficulty: track.difficulty),
+                      _dot(),
+                      Icon(
+                        Icons.schedule_rounded,
+                        size: 13,
+                        color: AppColors.textSecondary,
+                      ),
+                      const SizedBox(width: 3),
+                      Text(
+                        track.durationFormatted,
+                        style: AppTextStyles.caption,
                       ),
                     ],
                   ),
-                ),
-              ),
-            ),
-          ),
-
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.all(AppConstants.spacing16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // ─── Sélection niveau ──────────────────────
-                  _SectionHeader(title: 'Niveau', icon: Icons.stairs_rounded),
-                  const SizedBox(height: AppConstants.spacing8),
-                  _LevelSelector(
-                    selectedLevel: _selectedLevel,
-                    onLevelChanged: (level) {
-                      setState(() => _selectedLevel = level);
-                    },
-                  ),
-                  const SizedBox(height: AppConstants.spacing24),
-
-                  // ─── Preview vidéo ─────────────────────────
-                  _SectionHeader(
-                    title: 'Preview',
-                    icon: Icons.play_circle_outline,
-                  ),
-                  const SizedBox(height: AppConstants.spacing8),
-                  _VideoPreviewPlaceholder(level: _selectedLevel),
-                  const SizedBox(height: AppConstants.spacing24),
-
-                  // ─── Leaderboard résumé ────────────────────
-                  _SectionHeader(
-                    title: 'Leaderboard',
-                    icon: Icons.emoji_events_outlined,
-                    trailing: TextButton(
-                      onPressed: () => _openFullLeaderboard(context),
-                      child: Text(
-                        'Voir tout',
-                        style: AppTextStyles.caption.copyWith(
-                          color: AppColors.primary,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: AppConstants.spacing8),
-                  _LeaderboardPreview(
-                    entries: leaderboard.entries.take(5).toList(),
-                    isLoading: leaderboard.isLoading,
-                    userEntry: leaderboard.userEntry,
-                  ),
-                  const SizedBox(height: AppConstants.spacing32),
                 ],
               ),
             ),
-          ),
-        ],
+            const SizedBox(height: AppConstants.spacing16),
+
+            // ── Level selector (circles) ──────────────────
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppConstants.spacing24,
+              ),
+              child: _CircleLevelSelector(
+                selectedLevel: _selectedLevel,
+                onLevelChanged: (level) {
+                  HapticFeedback.selectionClick();
+                  setState(() => _selectedLevel = level);
+                },
+              ),
+            ),
+            const SizedBox(height: AppConstants.spacing16),
+
+            // ── Piano roll preview (takes remaining space) ─
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppConstants.spacing16,
+                ),
+                child: _PianoRollPreview(level: _selectedLevel),
+              ),
+            ),
+            const SizedBox(height: AppConstants.spacing12),
+
+            // ── Leaderboard inline ────────────────────────
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppConstants.spacing16,
+              ),
+              child: _InlineLeaderboard(
+                entries: leaderboard.entries,
+                isLoading: leaderboard.isLoading,
+                onTap: () => _openFullLeaderboard(context),
+              ),
+            ),
+            const SizedBox(height: AppConstants.spacing8),
+          ],
+        ),
       ),
 
-      // ─── Bottom bar : bouton Practice ──────────────────
+      // ── Bottom bar: Practice button ─────────────────────
       bottomNavigationBar: _BottomBar(
-        trackId: widget.track.id,
         onPracticeTap: _startPractice,
         onLeaderboardTap: () => _openFullLeaderboard(context),
       ),
@@ -174,13 +165,10 @@ class _FreeTrackPageState extends ConsumerState<FreeTrackPage> {
 
   void _startPractice() {
     final track = widget.track;
-
-    // Build URLs for the selected level
     final previewUrl = track.previewUrls[_selectedLevel] ?? '';
     final videoUrl = track.fullVideoUrls[_selectedLevel] ?? '';
     final midiUrl = track.midiUrl ?? '';
 
-    // Create a LevelResult from the FreeTrack
     final levelResult = LevelResult(
       level: _selectedLevel,
       name: track.title,
@@ -193,10 +181,7 @@ class _FreeTrackPageState extends ConsumerState<FreeTrackPage> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => PracticePage(
-          level: levelResult,
-          freeTrackId: track.id, // Enables leaderboard submission
-        ),
+        builder: (_) => PracticePage(level: levelResult, freeTrackId: track.id),
       ),
     );
   }
@@ -212,41 +197,72 @@ class _FreeTrackPageState extends ConsumerState<FreeTrackPage> {
       ),
     );
   }
-}
 
-// ─── Section Header ──────────────────────────────────────
-
-class _SectionHeader extends StatelessWidget {
-  final String title;
-  final IconData icon;
-  final Widget? trailing;
-
-  const _SectionHeader({
-    required this.title,
-    required this.icon,
-    this.trailing,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(icon, size: 18, color: AppColors.primary),
-        const SizedBox(width: AppConstants.spacing8),
-        Text(title, style: AppTextStyles.title),
-        if (trailing != null) ...[const Spacer(), trailing!],
-      ],
+  static Widget _dot() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: AppConstants.spacing8),
+      child: Text(
+        '\u00b7',
+        style: TextStyle(
+          color: AppColors.textSecondary.withValues(alpha: 0.5),
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
     );
   }
 }
 
-// ─── Sélecteur de niveau ─────────────────────────────────
+// ─── Difficulty badge ─────────────────────────────────────
 
-class _LevelSelector extends StatelessWidget {
+class _DifficultyBadge extends StatelessWidget {
+  final String difficulty;
+
+  const _DifficultyBadge({required this.difficulty});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (difficulty) {
+      'easy' => AppColors.success,
+      'medium' => AppColors.warning,
+      'hard' => AppColors.error,
+      _ => AppColors.textSecondary,
+    };
+    final label = switch (difficulty) {
+      'easy' => 'Facile',
+      'medium' => 'Moyen',
+      'hard' => 'Difficile',
+      _ => difficulty,
+    };
+
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppConstants.spacing8,
+        vertical: 2,
+      ),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(AppConstants.radiusButton),
+      ),
+      child: Text(
+        label,
+        style: AppTextStyles.caption.copyWith(
+          color: color,
+          fontWeight: FontWeight.w600,
+          fontSize: AppConstants.fontSizeMin,
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Circle level selector (matches home stepper) ─────────
+
+class _CircleLevelSelector extends StatelessWidget {
   final int selectedLevel;
   final ValueChanged<int> onLevelChanged;
 
-  const _LevelSelector({
+  const _CircleLevelSelector({
     required this.selectedLevel,
     required this.onLevelChanged,
   });
@@ -254,108 +270,102 @@ class _LevelSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Row(
-      children: List.generate(AppConstants.totalLevels, (index) {
-        final level = index + 1;
-        final isSelected = level == selectedLevel;
-        return Expanded(
-          child: Padding(
-            padding: EdgeInsets.only(
-              right: index < 3 ? AppConstants.spacing4 : 0,
-            ),
-            child: Material(
-              color: isSelected
-                  ? AppColors.primary.withValues(alpha: 0.2)
-                  : AppColors.card,
-              borderRadius: BorderRadius.circular(AppConstants.radiusSmall),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(AppConstants.radiusSmall),
-                onTap: () {
-                  HapticFeedback.selectionClick();
-                  onLevelChanged(level);
-                },
-                child: Container(
-                  constraints: const BoxConstraints(
-                    minHeight: AppConstants.touchTargetMin,
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                    vertical: AppConstants.spacing8,
-                  ),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(
-                      AppConstants.radiusSmall,
-                    ),
-                    border: Border.all(
-                      color: isSelected ? AppColors.primary : AppColors.divider,
-                    ),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        '$level',
-                        style: AppTextStyles.body.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: isSelected
-                              ? AppColors.primary
-                              : AppColors.textPrimary,
-                        ),
-                      ),
-                      Text(
-                        AppConstants.levelNames[index],
-                        style: AppTextStyles.caption,
-                        textAlign: TextAlign.center,
-                        maxLines: 1,
-                      ),
-                    ],
-                  ),
-                ),
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        for (int i = 1; i <= 4; i++) ...[
+          _SelectableNode(
+            level: i,
+            label: AppConstants.levelNames[i - 1],
+            isSelected: i == selectedLevel,
+            onTap: () => onLevelChanged(i),
+          ),
+          if (i < 4)
+            // Connector line
+            Container(
+              width: AppConstants.spacing20,
+              height: 2,
+              margin: const EdgeInsets.only(bottom: 18),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(1),
+                color: i < selectedLevel
+                    ? AppColors.primary.withValues(alpha: 0.6)
+                    : AppColors.textSecondary.withValues(alpha: 0.3),
               ),
             ),
-          ),
-        );
-      }),
+        ],
+      ],
     );
   }
 }
 
-// ─── Placeholder vidéo ───────────────────────────────────
-
-class _VideoPreviewPlaceholder extends StatelessWidget {
+class _SelectableNode extends StatelessWidget {
   final int level;
+  final String label;
+  final bool isSelected;
+  final VoidCallback onTap;
 
-  const _VideoPreviewPlaceholder({required this.level});
+  const _SelectableNode({
+    required this.level,
+    required this.label,
+    required this.isSelected,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 200,
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(AppConstants.radiusCard),
-        border: Border.all(color: AppColors.divider),
-      ),
-      child: Center(
+    final color = isSelected ? AppColors.primary : AppColors.textSecondary;
+
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: SizedBox(
+        width: AppConstants.touchTargetMin,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Circle
             Container(
-              width: 56,
-              height: 56,
+              width: 36,
+              height: 36,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: AppColors.primary.withValues(alpha: 0.2),
+                color: isSelected
+                    ? AppColors.primary.withValues(alpha: 0.20)
+                    : AppColors.divider,
+                border: Border.all(color: color, width: isSelected ? 2.5 : 2.0),
+                boxShadow: isSelected
+                    ? [
+                        BoxShadow(
+                          color: AppColors.primary.withValues(alpha: 0.4),
+                          blurRadius: 12,
+                          spreadRadius: 1,
+                        ),
+                      ]
+                    : null,
               ),
-              child: const Icon(
-                Icons.play_arrow_rounded,
-                size: 32,
-                color: AppColors.primary,
+              child: Center(
+                child: Text(
+                  '$level',
+                  style: AppTextStyles.caption.copyWith(
+                    color: color,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
               ),
             ),
-            const SizedBox(height: AppConstants.spacing8),
-            Text('Preview Niveau $level', style: AppTextStyles.body),
+            const SizedBox(height: AppConstants.spacing4),
+            // Label
             Text(
-              '${AppConstants.previewDurationSec}s • Gratuit',
-              style: AppTextStyles.caption,
+              label,
+              style: AppTextStyles.caption.copyWith(
+                fontSize: AppConstants.fontSizeMin,
+                color: color,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+              ),
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ],
         ),
@@ -364,101 +374,276 @@ class _VideoPreviewPlaceholder extends StatelessWidget {
   }
 }
 
-// ─── Preview leaderboard (5 premiers) ────────────────────
+// ─── Piano roll preview ───────────────────────────────────
 
-class _LeaderboardPreview extends StatelessWidget {
+class _PianoRollPreview extends StatelessWidget {
+  final int level;
+
+  const _PianoRollPreview({required this.level});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(AppConstants.radiusCard),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(AppConstants.radiusCard - 1),
+        child: Stack(
+          children: [
+            // Falling note bars
+            Positioned.fill(child: _NotesBars(level: level)),
+
+            // Top fade (notes appearing)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: 40,
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      AppColors.card,
+                      AppColors.card.withValues(alpha: 0),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            // Bottom keyboard line
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              child: Container(
+                height: 3,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      AppColors.primary.withValues(alpha: 0.0),
+                      AppColors.primary.withValues(alpha: 0.6),
+                      AppColors.primary,
+                      AppColors.primary.withValues(alpha: 0.6),
+                      AppColors.primary.withValues(alpha: 0.0),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            // Bottom glow
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              height: 30,
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.bottomCenter,
+                    end: Alignment.topCenter,
+                    colors: [
+                      AppColors.primary.withValues(alpha: 0.08),
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            // Play overlay
+            Center(
+              child: Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: AppColors.primary.withValues(alpha: 0.25),
+                  border: Border.all(
+                    color: AppColors.primary.withValues(alpha: 0.5),
+                    width: 2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.primary.withValues(alpha: 0.3),
+                      blurRadius: 20,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.play_arrow_rounded,
+                  size: 32,
+                  color: AppColors.primary,
+                ),
+              ),
+            ),
+
+            // Level + duration label at bottom
+            Positioned(
+              bottom: AppConstants.spacing12,
+              left: AppConstants.spacing16,
+              right: AppConstants.spacing16,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Niveau $level',
+                    style: AppTextStyles.caption.copyWith(
+                      color: AppColors.textSecondary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Text(
+                    '${AppConstants.previewDurationSec}s \u00b7 Gratuit',
+                    style: AppTextStyles.caption.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// Stylized falling note bars to simulate a piano roll
+
+class _NotesBars extends StatelessWidget {
+  final int level;
+
+  const _NotesBars({required this.level});
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final w = constraints.maxWidth;
+        final h = constraints.maxHeight;
+
+        // Generate pseudo-random but deterministic note positions based on level
+        final rng = Random(level * 42);
+        // More notes for higher levels
+        final noteCount = 10 + level * 4;
+
+        final notes = <Widget>[];
+        for (int i = 0; i < noteCount; i++) {
+          final left = rng.nextDouble() * (w - 20);
+          final top = rng.nextDouble() * (h - 30) + 15;
+          final noteWidth = 6.0 + rng.nextDouble() * 12;
+          final noteHeight = 16.0 + rng.nextDouble() * 40;
+          final opacity = 0.15 + rng.nextDouble() * 0.35;
+
+          notes.add(
+            Positioned(
+              left: left,
+              top: top,
+              child: Container(
+                width: noteWidth,
+                height: noteHeight,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(3),
+                  color: AppColors.primary.withValues(alpha: opacity),
+                ),
+              ),
+            ),
+          );
+        }
+
+        return Stack(children: notes);
+      },
+    );
+  }
+}
+
+// ─── Inline leaderboard (compact single row) ──────────────
+
+class _InlineLeaderboard extends StatelessWidget {
   final List<LeaderboardEntry> entries;
   final bool isLoading;
-  final LeaderboardEntry? userEntry;
+  final VoidCallback onTap;
 
-  const _LeaderboardPreview({
+  const _InlineLeaderboard({
     required this.entries,
     required this.isLoading,
-    this.userEntry,
+    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    if (isLoading) {
-      return const SizedBox(
-        height: 100,
-        child: Center(
-          child: CircularProgressIndicator(
-            color: AppColors.primary,
-            strokeWidth: 2,
+    return Material(
+      color: AppColors.card,
+      borderRadius: BorderRadius.circular(AppConstants.radiusMedium),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppConstants.radiusMedium),
+        onTap: () {
+          HapticFeedback.lightImpact();
+          onTap();
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppConstants.spacing16,
+            vertical: AppConstants.spacing12,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppConstants.radiusMedium),
+            border: Border.all(color: AppColors.divider),
+          ),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.emoji_events_rounded,
+                size: 18,
+                color: AppColors.warning,
+              ),
+              const SizedBox(width: AppConstants.spacing8),
+              Expanded(child: _buildContent()),
+              Icon(
+                Icons.chevron_right_rounded,
+                size: 20,
+                color: AppColors.textSecondary.withValues(alpha: 0.6),
+              ),
+            ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildContent() {
+    if (isLoading) {
+      return Text(
+        'Chargement...',
+        style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
       );
     }
 
     if (entries.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.all(AppConstants.spacing16),
-        decoration: BoxDecoration(
-          color: AppColors.card,
-          borderRadius: BorderRadius.circular(AppConstants.radiusCard),
-        ),
-        child: Center(
-          child: Text(
-            'Pas encore de scores. Soyez le premier !',
-            style: AppTextStyles.body.copyWith(color: AppColors.textSecondary),
-          ),
-        ),
+      return Text(
+        'Aucun score \u2014 Sois le premier !',
+        style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
       );
     }
 
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(AppConstants.radiusCard),
+    final top = entries.first;
+    return Text(
+      '\u{1f947} ${top.displayName} \u00b7 ${top.scoreFormatted}',
+      style: AppTextStyles.caption.copyWith(
+        color: AppColors.textPrimary,
+        fontWeight: FontWeight.w500,
       ),
-      child: Column(
-        children: entries.asMap().entries.map((e) {
-          final rank = e.key + 1;
-          final entry = e.value;
-          final isUser = userEntry?.uid == entry.uid;
-
-          return Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppConstants.spacing12,
-              vertical: AppConstants.spacing8,
-            ),
-            decoration: BoxDecoration(
-              border: e.key < entries.length - 1
-                  ? const Border(
-                      bottom: BorderSide(color: AppColors.divider, width: 0.5),
-                    )
-                  : null,
-              color: isUser ? AppColors.primary.withValues(alpha: 0.1) : null,
-            ),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 28,
-                  child: Text(
-                    rank <= 3 ? ['🥇', '🥈', '🥉'][rank - 1] : '#$rank',
-                    style: AppTextStyles.caption,
-                  ),
-                ),
-                const SizedBox(width: AppConstants.spacing8),
-                Expanded(
-                  child: Text(
-                    entry.displayName,
-                    style: AppTextStyles.body,
-                    maxLines: 1,
-                  ),
-                ),
-                Text(
-                  entry.scoreFormatted,
-                  style: AppTextStyles.body.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          );
-        }).toList(),
-      ),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
     );
   }
 }
@@ -466,12 +651,10 @@ class _LeaderboardPreview extends StatelessWidget {
 // ─── Bottom bar ──────────────────────────────────────────
 
 class _BottomBar extends StatelessWidget {
-  final String trackId;
   final VoidCallback onPracticeTap;
   final VoidCallback onLeaderboardTap;
 
   const _BottomBar({
-    required this.trackId,
     required this.onPracticeTap,
     required this.onLeaderboardTap,
   });
@@ -479,7 +662,10 @@ class _BottomBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(AppConstants.spacing16),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppConstants.spacing16,
+        vertical: AppConstants.spacing12,
+      ),
       decoration: const BoxDecoration(
         color: AppColors.surface,
         border: Border(top: BorderSide(color: AppColors.divider)),
@@ -487,7 +673,7 @@ class _BottomBar extends StatelessWidget {
       child: SafeArea(
         child: Row(
           children: [
-            // Bouton leaderboard
+            // Leaderboard icon
             IconButton(
               onPressed: onLeaderboardTap,
               icon: const Icon(
@@ -496,31 +682,52 @@ class _BottomBar extends StatelessWidget {
               ),
             ),
             const SizedBox(width: AppConstants.spacing8),
-            // Bouton Practice
+            // Practice button
             Expanded(
-              child: ElevatedButton(
-                onPressed: onPracticeTap,
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(
-                      AppConstants.radiusButton,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(
+                    AppConstants.radiusButton,
+                  ),
+                  onTap: () {
+                    HapticFeedback.mediumImpact();
+                    onPracticeTap();
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: AppConstants.spacing12,
+                    ),
+                    decoration: BoxDecoration(
+                      gradient: AppColors.buttonGradient,
+                      borderRadius: BorderRadius.circular(
+                        AppConstants.radiusButton,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.primary.withValues(alpha: 0.3),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.piano, size: 20, color: Colors.white),
+                        SizedBox(width: AppConstants.spacing8),
+                        Text(
+                          'PRACTICE MODE',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1,
+                            color: Colors.white,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ),
-                child: const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.piano, size: 20),
-                    SizedBox(width: AppConstants.spacing8),
-                    Text(
-                      'PRACTICE MODE',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1,
-                      ),
-                    ),
-                  ],
                 ),
               ),
             ),
